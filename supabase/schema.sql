@@ -1,5 +1,5 @@
 -- ============================================================================
---  연못문파 (Yeonmot Munpa) · Supabase 스키마 v1
+--  연못 (Yeonmot Munpa) · Supabase 스키마 v1
 --  대상: Supabase 프로젝트의 SQL Editor 에서 한 번 실행 (Postgres 15+)
 --
 --  ■ 무엇을 담당하나
@@ -144,7 +144,7 @@ $fn$;
 -- 2-1. 문파 설정 (한 줄짜리 테이블)
 create table if not exists private.clan_settings (
   id                    smallint primary key default 1 check (id = 1),
-  clan_name             text not null default '연못문파'
+  clan_name             text not null default '연못'
                           check (char_length(clan_name) between 1 and 40),
   clan_motto            text not null default '물결이 모여 연못이 되고, 연못이 모여 강이 된다'
                           check (char_length(clan_motto) between 1 and 120),
@@ -2264,7 +2264,7 @@ end $$;
 -- 13. 초기 데이터
 -- ===========================================================================
 insert into private.clan_settings (id, clan_name, clan_motto, member_capacity, invite_code)
-values (1, '연못문파', '물결이 모여 연못이 되고, 연못이 모여 강이 된다', 30, 'YEONMOT')
+values (1, '연못', '물결이 모여 연못이 되고, 연못이 모여 강이 된다', 30, 'YEONMOT')
 on conflict (id) do nothing;
 
 -- ⚠️ 초대 코드 'YEONMOT' 은 README 에 적힌 체험용 코드입니다.
@@ -2272,7 +2272,7 @@ on conflict (id) do nothing;
 
 -- 첫 화면이 비어 보이지 않도록 환영 시스템 메시지 한 줄
 insert into public.chat_messages (member_id, kind, body)
-select null, 'system', '연못문파 채팅방에 오신 것을 환영합니다. 서로의 속도를 존중해 주세요.'
+select null, 'system', '연못 채팅방에 오신 것을 환영합니다. 서로의 속도를 존중해 주세요.'
 where not exists (select 1 from public.chat_messages c);
 
 

@@ -1,4 +1,4 @@
-/* 연못문파 — 도깨비의 세계
+/* 연못 — 도깨비의 세계
  * 화면 로직: 체험 모드(이 기기 안에서만)와 실제 문파 모드(Supabase)를 같은 화면 코드로 그립니다.
  *
  *  · 체험 모드 : js/data.js 의 예시 데이터 + localStorage (로그인 없이 둘러보기)
@@ -843,7 +843,7 @@
           var ok = $('#first-admin-ok');
           if (ok) { ok.addEventListener('click', closeModal); }
         } else {
-          toast('연못문파에 오신 것을 환영해요, ' + nick + ' 님 🪷');
+          toast('연못에 오신 것을 환영해요, ' + nick + ' 님 🪷');
         }
       }).catch(function (err) {
         S.mode = 'trial';
@@ -1026,17 +1026,17 @@
 
     html += '<header class="screen__head">' +
       '<p class="kicker">도깨비의 세계' + (isLive() ? ' · 문파' : ' · 체험') + '</p>' +
-      '<h2 class="screen__title">' + esc(clan.name || '연못문파') + '</h2>' +
+      '<h2 class="screen__title">' + esc(clan.name || '연못') + '</h2>' +
       '<p class="screen__sub">' + esc(clan.motto || '') + '</p>' +
       '</header>';
 
-    html += '<section class="hero" aria-label="연못문파 배너">' + ART.hero() +
+    html += '<section class="hero" aria-label="연못 배너">' + ART.hero() +
       '<div class="hero__pills">' +
       (clan.level ? '<span class="pill pill--gold">문파 레벨 ' + esc(clan.level) + '</span>' : '') +
       '<span class="pill">문파원 ' + fmtNum(clan.member_count) + ' / ' + fmtNum(clan.capacity) + '</span>' +
       '</div>' +
       '<div class="hero__overlay">' +
-      '<div class="hero__caption"><strong>' + esc(clan.name || '연못문파') + '</strong><span>오늘도 고요한 연못에 물결을 남겨요</span></div>' +
+      '<div class="hero__caption"><strong>' + esc(clan.name || '연못') + '</strong><span>오늘도 고요한 연못에 물결을 남겨요</span></div>' +
       '<button type="button" class="wave-btn' + (wave.today_done ? ' is-done' : '') + '" id="wave-btn"' +
       (wave.today_done ? ' aria-pressed="true"' : ' aria-pressed="false"') + '>' +
       '<span class="wave-btn__ring" aria-hidden="true"></span>' +
@@ -1162,9 +1162,9 @@
 
     html += '<section class="section"><div class="privacy"><strong>이 연못에 대해</strong>' +
       (isLive()
-        ? '<p>연못문파 문파원이 함께 쓰는 공간이에요. 공지 · 일정 · 쿠폰은 문주가, 채팅과 앨범은 문파원 모두가 채웁니다.</p>' +
+        ? '<p>연못 문파원이 함께 쓰는 공간이에요. 공지 · 일정 · 쿠폰은 문주가, 채팅과 앨범은 문파원 모두가 채웁니다.</p>' +
           '<p>이름 · 전화번호 · 이메일은 받지 않아요. 닉네임과 PIN 만 쓰고, PIN 은 되돌릴 수 없는 암호로만 저장돼요.</p>'
-        : '<p>연못문파를 위한 작은 커뮤니티 앱의 체험 모드예요. 공지 · 일정 · 쿠폰 · 앨범 · 대화는 예시로 채워져 있습니다.</p>' +
+        : '<p>연못을 위한 작은 커뮤니티 앱의 체험 모드예요. 공지 · 일정 · 쿠폰 · 앨범 · 대화는 예시로 채워져 있습니다.</p>' +
           '<p>입력한 닉네임과 기록은 이 기기에만 저장돼요.</p>') +
       '</div></section>';
 
@@ -2265,7 +2265,7 @@
       '<div class="profile__avatar" aria-hidden="true">' + esc(initial(name)) + '</div>' +
       '<div><div class="profile__name"><strong>' + esc(name) + '</strong>' +
       '<span class="role ' + roleClass + '">' + esc(roleLabel) + '</span></div>' +
-      '<p class="profile__meta"><span>' + (guest ? '둘러보는 중' : '연못문파 문파원') + '</span><span class="sep">·</span><span>' + esc(sinceText) + '부터</span></p>' +
+      '<p class="profile__meta"><span>' + (guest ? '둘러보는 중' : '연못 문파원') + '</span><span class="sep">·</span><span>' + esc(sinceText) + '부터</span></p>' +
       '</div></div>' +
       '<div class="profile__level">' +
       '<div class="profile__level-head"><span>오늘의 물결 <b>' + (wave.today_done ? '남겼어요' : '아직이에요') + '</b></span>' +
@@ -2294,7 +2294,7 @@
       '<button type="button" class="row row--action" id="install-row">' +
       '<span class="row__icon"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19h14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>' +
       '<span class="row__text"><span class="row__label">홈 화면에 추가</span>' +
-      '<span class="row__desc" id="install-desc">연못문파를 앱처럼 열 수 있어요</span></span>' +
+      '<span class="row__desc" id="install-desc">연못을 앱처럼 열 수 있어요</span></span>' +
       '<span class="row__chevron" aria-hidden="true"><svg viewBox="0 0 24 24" width="15" height="15" focusable="false"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>' +
       '</button>' +
       '<div class="steps" id="install-steps">' +
@@ -2339,7 +2339,7 @@
       '<button type="button" class="btn btn--quiet" id="reset-btn">기록 지우기</button>' +
       '</div>';
 
-    html += '<p class="version">연못문파 · v0.2' + (isLive() ? ' · 실제 문파' : ' · 체험') + '</p>';
+    html += '<p class="version">연못 · v0.2' + (isLive() ? ' · 실제 문파' : ' · 체험') + '</p>';
 
     $('#me-body').innerHTML = html;
 
@@ -2375,7 +2375,7 @@
       var steps = $('#install-steps');
       var open = steps.classList.toggle('is-open');
       this.setAttribute('aria-expanded', String(open));
-      $('#install-desc').textContent = open ? '아래 순서를 따라 눌러보세요' : '연못문파를 앱처럼 열 수 있어요';
+      $('#install-desc').textContent = open ? '아래 순서를 따라 눌러보세요' : '연못을 앱처럼 열 수 있어요';
     });
 
     $('#logout-btn').addEventListener('click', function () {

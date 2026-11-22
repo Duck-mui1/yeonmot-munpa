@@ -1,4 +1,4 @@
-/* 연못문파 — 오리지널 SVG 일러스트
+/* 연못 — 오리지널 SVG 일러스트
  * 연못 · 연꽃 · 물결 · 반딧불 · 잉어만으로 그린 자체 제작 그래픽입니다.
  */
 (function () {
@@ -15,7 +15,7 @@
     var s = size || 40;
     var g = uid('mk');
     return (
-      '<svg class="mark" width="' + s + '" height="' + s + '" viewBox="0 0 64 64" role="img" aria-label="연못문파 연꽃 문양">' +
+      '<svg class="mark" width="' + s + '" height="' + s + '" viewBox="0 0 64 64" role="img" aria-label="연못 연꽃 문양">' +
       '<defs>' +
       '<linearGradient id="' + g + 'a" x1="0" y1="0" x2="0" y2="1">' +
       '<stop offset="0" stop-color="#ffe3ec"/><stop offset="1" stop-color="#ee8fab"/>' +
