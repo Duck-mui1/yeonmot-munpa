@@ -709,6 +709,7 @@ svg { max-width: 100%; }
 }
 .notice.is-open .notice__body { display: block; }
 .notice__body p {
+  white-space: pre-line;
   margin: 0 0 9px;
   font-size: 12px;
   line-height: 1.75;
@@ -1302,8 +1303,8 @@ svg { max-width: 100%; }
 .row__icon { flex: none; width: 30px; height: 30px; border-radius: 10px; display: grid; place-items: center; background: rgba(127, 209, 189, .08); color: var(--jade-soft); }
 .row__icon svg { width: 15px; height: 15px; }
 .row__text { flex: 1; min-width: 0; }
-.row__label { font-size: 12.5px; font-weight: 600; color: #e9f5ef; }
-.row__desc { margin-top: 2px; font-size: 10px; color: var(--muted); line-height: 1.5; }
+.row__label { display: block; font-size: 12.5px; font-weight: 600; color: #e9f5ef; }
+.row__desc { display: block; margin-top: 2px; font-size: 10px; color: var(--muted); line-height: 1.5; }
 .row--action { width: 100%; }
 .row__chevron { flex: none; color: var(--muted); transition: transform .25s ease; }
 .row[aria-expanded="true"] .row__chevron { transform: rotate(180deg); }
@@ -1458,3 +1459,173 @@ body.is-locked { overflow: hidden; }
     transition-duration: .001ms !important;
   }
 }
+
+/* =========================================================
+   실제 문파 · 관리자 도구 (v0.2)
+   기존 연못·연꽃 테마의 색과 질감을 그대로 이어 씁니다.
+   ========================================================= */
+.section__hadd { display: flex; align-items: center; gap: 8px; }
+
+.tool {
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(127, 209, 189, .22);
+  background: rgba(127, 209, 189, .07);
+  color: var(--ink-dim);
+  font-size: 10.5px;
+  line-height: 1.35;
+  white-space: nowrap;
+  transition: background .18s ease, border-color .18s ease;
+}
+.tool:hover { background: rgba(127, 209, 189, .15); }
+.tool--add {
+  color: var(--gold-soft);
+  border-color: rgba(240, 217, 165, .32);
+  background: rgba(240, 217, 165, .08);
+}
+.tool--add:hover { background: rgba(240, 217, 165, .16); }
+.tool--danger {
+  color: var(--lotus-soft);
+  border-color: rgba(242, 162, 185, .3);
+  background: rgba(242, 162, 185, .07);
+}
+.tool--danger:hover { background: rgba(242, 162, 185, .15); }
+
+.item-tools {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 11px;
+  border-top: 1px solid rgba(127, 209, 189, .08);
+}
+
+/* 일정 카드: 내용 줄 + 도구 줄 */
+.event { flex-direction: column; align-items: stretch; gap: 0; }
+.event__main { display: flex; align-items: center; gap: 12px; }
+.event .item-tools { padding: 8px 0 0; border-top: 0; }
+.coupon .item-tools { padding: 6px 0 0; border-top: 0; }
+
+/* 문파원 도구 줄 */
+.member--admin { flex-wrap: wrap; }
+.member__tools {
+  flex-basis: 100%;
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+/* 앨범 (실제 사진) */
+.shot { cursor: pointer; }
+.shot__img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  background: #061e21;
+}
+.shot__loading {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  font-size: 10px;
+  color: var(--muted);
+  background: rgba(6, 30, 33, .82);
+}
+.shot__del {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid rgba(242, 162, 185, .35);
+  background: rgba(4, 20, 22, .78);
+  color: var(--lotus-soft);
+  font-size: 15px;
+  line-height: 1;
+}
+.shot__del:hover { background: rgba(242, 162, 185, .22); }
+
+/* 채팅 지우기 */
+.msg__del {
+  border: 0;
+  padding: 0 2px;
+  background: none;
+  color: rgba(242, 162, 185, .8);
+  font-size: 9px;
+  text-decoration: underline;
+}
+
+/* 모달 안의 입력 폼 */
+.form { display: flex; flex-direction: column; gap: 11px; }
+.form__row { display: flex; gap: 10px; align-items: flex-end; }
+.form__row .field { flex: 1; min-width: 0; }
+.field__textarea { resize: vertical; min-height: 86px; font-family: var(--sans); line-height: 1.6; }
+.field__file { padding: 9px 11px; font-size: 11.5px; color: var(--muted); }
+.check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding-bottom: 10px;
+  font-size: 11.5px;
+  color: var(--ink-dim);
+  white-space: nowrap;
+}
+.check input { width: 16px; height: 16px; accent-color: #4f9f8c; }
+
+/* 초대 코드 */
+.invite {
+  margin-top: 14px;
+  padding: 13px 14px;
+  border-radius: 16px;
+  border: 1px dashed rgba(240, 217, 165, .28);
+  background: rgba(240, 217, 165, .05);
+}
+.invite__label { font-size: 10px; letter-spacing: .06em; color: var(--muted); }
+.invite__code {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 6px;
+}
+.invite__code b {
+  font-family: var(--serif);
+  font-size: 20px;
+  letter-spacing: .14em;
+  color: var(--gold-soft);
+}
+.invite__meta { margin: 8px 0 0; font-size: 10px; line-height: 1.6; color: var(--muted); }
+
+.profile__hint { margin: 8px 0 0; font-size: 10px; color: var(--muted); }
+.lightbox__caption {
+  margin: 10px 0 0;
+  font-size: 11.5px;
+  line-height: 1.7;
+  color: var(--ink-dim);
+  white-space: pre-wrap;
+}
+
+/* 새 소식 표시 */
+.tab.has-news::before {
+  content: "";
+  position: absolute;
+  top: 7px;
+  right: 12px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--lotus-soft);
+  box-shadow: 0 0 6px rgba(242, 162, 185, .8);
+  z-index: 2;
+}
+
+/* 펼친 공지에서는 첫 줄 요약을 숨겨 같은 문장이 두 번 보이지 않게 합니다. */
+.notice.is-open .notice__summary { display: none; }

@@ -1,0 +1,465 @@
+/* 연못문파 — Supabase 연결 계층
+ *
+ *  · 앱에 필요한 모든 서버 호출(RPC · 조회 · 실시간 구독)을 이 파일 하나에 모았습니다.
+ *  · 공개용(publishable) 키만 씁니다. 개인 식별 정보는 서버에 보내지 않습니다.
+ *    (닉네임 · PIN → PIN 은 서버에서 bcrypt 해시로만 저장)
+ *  · 화면 코드는 YM_DB 의 메서드만 부르고, 오류는 message 가 한국어인 Error 로 올라옵니다.
+ *
+ *  설정 바꾸기: 아래 SUPABASE_URL · SUPABASE_KEY 만 바꾸면 됩니다.
+ */
+(function () {
+  'use strict';
+
+  var SUPABASE_URL = 'https://cwkyvpummgwelylcaayy.supabase.co';
+  var SUPABASE_KEY = 'sb_publishable_UqsgxOOkRAmkL3tAqNQUdw_IfC5A9t2';
+
+  // 테스트 · 다른 프로젝트로 옮길 때: <script>window.YM_SUPABASE = {url, key}</script> 를 먼저 두면 그 값이 우선합니다.
+  var override = window.YM_SUPABASE || {};
+  var BASE = String(override.url || SUPABASE_URL).replace(/\/+$/, '');
+  var KEY = override.key || SUPABASE_KEY;
+
+  var TIMEOUT = 20000;
+
+  function failure(message, cause) {
+    var err = new Error(message);
+    if (cause) { err.cause = cause; }
+    return err;
+  }
+
+  function request(path, options) {
+    var opts = options || {};
+    var controller = null;
+    var timer = null;
+    if (typeof window.AbortController === 'function') {
+      controller = new window.AbortController();
+      timer = window.setTimeout(function () { controller.abort(); }, TIMEOUT);
+    }
+
+    var headers = {
+      'apikey': KEY,
+      'Authorization': 'Bearer ' + KEY,
+      'Accept': 'application/json'
+    };
+    if (opts.body !== undefined) {
+      headers['Content-Type'] = 'application/json';
+    }
+    if (opts.prefer) { headers['Prefer'] = opts.prefer; }
+
+    return window.fetch(BASE + path, {
+      method: opts.method || 'GET',
+      headers: headers,
+      body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+      cache: 'no-store',
+      signal: controller ? controller.signal : undefined
+    }).then(function (res) {
+      if (timer) { window.clearTimeout(timer); }
+      return res.text().then(function (text) {
+        var data = null;
+        if (text) {
+          try { data = JSON.parse(text); } catch (e) { data = null; }
+        }
+        if (!res.ok) {
+          var message = data && (data.message || data.error_description || data.msg);
+          if (!message) {
+            message = res.status === 404
+              ? '서버에 문파 자료가 아직 준비되지 않았어요. 관리자에게 알려 주세요.'
+              : '연못과 연결하지 못했어요. 잠시 뒤 다시 시도해 주세요.';
+          }
+          if (res.status === 404 && data && data.code === 'PGRST202') {
+            message = '서버에 이 기능이 아직 준비되지 않았어요. supabase/schema.sql 을 실행해 주세요.';
+          }
+          var err = failure(message);
+          err.code = (data && data.code) || String(res.status);
+          err.status = res.status;
+          throw err;
+        }
+        return data;
+      });
+    }, function (err) {
+      if (timer) { window.clearTimeout(timer); }
+      if (err && err.name === 'AbortError') {
+        throw failure('연못이 조용해서 응답이 없어요. 잠시 뒤 다시 시도해 주세요.', err);
+      }
+      throw failure('인터넷 연결을 확인해 주세요.', err);
+    });
+  }
+
+  /* ---------------- RPC ---------------- */
+  function rpc(name, args) {
+    return request('/rest/v1/rpc/' + name, { method: 'POST', body: args || {} });
+  }
+
+  /* ---------------- 공개 테이블 읽기 ----------------
+   * notices / events 는 Realtime 구독 때문에 anon 읽기가 열려 있는 공개 내용입니다.
+   * (개인정보 없음 — schema.sql 의 RLS 설계 참고)
+   */
+  function select(table, query, options) {
+    var qs = query ? '?' + query : '';
+    return request('/rest/v1/' + table + qs, { method: 'GET', prefer: options && options.prefer });
+  }
+
+  /* ---------------- 세션 보관 ---------------- */
+  var SESSION_KEY = 'ym.live.session';
+
+  function readSession() {
+    try {
+      var raw = window.localStorage.getItem(SESSION_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) { return null; }
+  }
+  function writeSession(session) {
+    try {
+      if (session) { window.localStorage.setItem(SESSION_KEY, JSON.stringify(session)); }
+      else { window.localStorage.removeItem(SESSION_KEY); }
+    } catch (e) { /* 저장 못 해도 이번 방문은 계속 */ }
+  }
+  function token() {
+    var s = readSession();
+    return s && s.token ? s.token : null;
+  }
+  function session() { return readSession(); }
+
+  function withToken(promiseFactory) {
+    var t = token();
+    if (!t) { return Promise.reject(failure('로그인이 필요해요. 다시 로그인해 주세요.')); }
+    return promiseFactory(t);
+  }
+
+  /* ---------------- 실시간 구독 ---------------- */
+  var client = null;
+  var channel = null;
+
+  function ensureClient() {
+    if (client) { return client; }
+    if (!window.supabase || typeof window.supabase.createClient !== 'function') { return null; }
+    try {
+      client = window.supabase.createClient(BASE, KEY, {
+        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
+      });
+    } catch (e) {
+      client = null;
+    }
+    return client;
+  }
+
+  var realtimeHandlers = null;
+  var realtimeTries = 0;
+
+  /**
+   * 실시간 구독 시작.
+   *  handlers = { onChat(payload), onClanChange(), onStatus(status) }
+   *    payload = { eventType: 'INSERT'|'UPDATE'|'DELETE', new, old } (supabase-js 형식)
+   *  → { ok: true }  또는  { ok: false, reason }
+   */
+  function startRealtime(handlers) {
+    stopRealtime();
+    realtimeHandlers = handlers || {};
+    var c = ensureClient();
+    if (!c) { return { ok: false, reason: 'realtime-unavailable' }; }
+
+    try {
+      channel = c.channel('yeonmot-clan-' + Date.now().toString(36));
+      channel.on('postgres_changes',
+        { event: '*', schema: 'public', table: 'chat_messages' },
+        function (payload) {
+          if (realtimeHandlers && realtimeHandlers.onChat && payload) {
+            realtimeHandlers.onChat(payload);
+          }
+        });
+      channel.on('postgres_changes',
+        { event: '*', schema: 'public', table: 'notices' },
+        function () { if (realtimeHandlers && realtimeHandlers.onClanChange) { realtimeHandlers.onClanChange(); } });
+      channel.on('postgres_changes',
+        { event: '*', schema: 'public', table: 'events' },
+        function () { if (realtimeHandlers && realtimeHandlers.onClanChange) { realtimeHandlers.onClanChange(); } });
+
+      channel.subscribe(function (status) {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          realtimeTries += 1;
+          if (realtimeHandlers && realtimeHandlers.onStatus) {
+            realtimeHandlers.onStatus(realtimeTries > 2 ? 'down' : 'retrying');
+          }
+        } else if (status === 'SUBSCRIBED') {
+          realtimeTries = 0;
+          if (realtimeHandlers && realtimeHandlers.onStatus) { realtimeHandlers.onStatus('live'); }
+        }
+      });
+      return { ok: true };
+    } catch (e) {
+      channel = null;
+      return { ok: false, reason: 'realtime-error' };
+    }
+  }
+
+  function stopRealtime() {
+    if (channel && client) {
+      try { client.removeChannel ? client.removeChannel(channel) : channel.unsubscribe(); } catch (e) { /* noop */ }
+    }
+    channel = null;
+    realtimeHandlers = null;
+  }
+
+  /* ---------------- 앨범 사진 압축 ----------------
+   * 서버는 data URL 1,130,000자 · 원본 800KB 이하만 받습니다.
+   * 긴 변 1280px, JPEG 품질을 0.82 → 0.5 로 낮춰가며 한도를 맞춥니다.
+   */
+  var MAX_DATA_URL = 1080000;   // 여유를 둔 상한
+  var MAX_SIDE = 1280;
+
+  function readAsDataUrl(file) {
+    return new Promise(function (resolve, reject) {
+      var reader = new window.FileReader();
+      reader.onload = function () { resolve(String(reader.result || '')); };
+      reader.onerror = function () { reject(failure('사진을 읽지 못했어요. 다시 골라 주세요.')); };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function loadImage(src) {
+    return new Promise(function (resolve, reject) {
+      var img = new window.Image();
+      img.onload = function () { resolve(img); };
+      img.onerror = function () { reject(failure('이 사진은 열 수 없어요. 다른 사진으로 해 보세요.')); };
+      img.src = src;
+    });
+  }
+
+  function drawToDataUrl(img, maxSide, quality) {
+    var w = img.naturalWidth || img.width;
+    var h = img.naturalHeight || img.height;
+    if (!w || !h) { throw failure('사진 크기를 알 수 없어요.'); }
+    var scale = Math.min(1, maxSide / Math.max(w, h));
+    var cw = Math.max(1, Math.round(w * scale));
+    var ch = Math.max(1, Math.round(h * scale));
+    var canvas = document.createElement('canvas');
+    canvas.width = cw;
+    canvas.height = ch;
+    var ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#061e21';
+    ctx.fillRect(0, 0, cw, ch);
+    ctx.drawImage(img, 0, 0, cw, ch);
+    return canvas.toDataURL('image/jpeg', quality);
+  }
+
+  /** 사진 파일 → { dataUrl, mime, bytes } (서버 한도에 맞춰 줄입니다) */
+  function compressPhoto(file) {
+    if (!file) { return Promise.reject(failure('사진을 골라 주세요.')); }
+    if (file.type && ['image/jpeg', 'image/png', 'image/webp'].indexOf(file.type) === -1) {
+      return Promise.reject(failure('JPEG · PNG · WebP 사진만 올릴 수 있어요.'));
+    }
+    return readAsDataUrl(file).then(function (raw) {
+      return loadImage(raw).then(function (img) {
+        var quality = 0.82;
+        var side = MAX_SIDE;
+        var dataUrl = drawToDataUrl(img, side, quality);
+
+        while (dataUrl.length > MAX_DATA_URL && quality > 0.5) {
+          quality -= 0.08;
+          dataUrl = drawToDataUrl(img, side, quality);
+        }
+        while (dataUrl.length > MAX_DATA_URL && side > 480) {
+          side = Math.round(side * 0.75);
+          dataUrl = drawToDataUrl(img, side, 0.7);
+        }
+        if (dataUrl.length > MAX_DATA_URL) {
+          throw failure('사진이 너무 커요. 조금 작은 사진으로 올려 주세요.');
+        }
+        var bytes = Math.round((dataUrl.length - dataUrl.indexOf(',') - 1) * 0.75);
+        return { dataUrl: dataUrl, mime: 'image/jpeg', bytes: bytes };
+      });
+    }, function (err) {
+      // 이미지가 아니라 읽기 실패 → 위 메시지 그대로
+      throw err;
+    });
+  }
+
+  window.YM_DB = {
+    url: BASE,
+    key: KEY,
+    configured: !!(BASE && KEY),
+    rpc: rpc,
+    select: select,
+    token: token,
+    session: session,
+    setSession: writeSession,
+    clearSession: function () { writeSession(null); },
+    withToken: withToken,
+    compressPhoto: compressPhoto,
+    startRealtime: startRealtime,
+    stopRealtime: stopRealtime,
+
+    /* --- 가입 · 로그인 --- */
+    register: function (nickname, pin, inviteCode) {
+      return rpc('register_member', { p_nickname: nickname, p_pin: pin, p_invite_code: inviteCode })
+        .then(function (data) {
+          writeSession({ token: data.token, member: data.member, at: Date.now() });
+          return data;
+        });
+    },
+    login: function (nickname, pin) {
+      return rpc('login_member', { p_nickname: nickname, p_pin: pin })
+        .then(function (data) {
+          // schema.sql 의 login_member 는 PIN 오입력 횟수를 남기려고 예외 대신 { ok:false, code, message } 를 돌려줍니다.
+          if (!data || data.ok === false) {
+            var err = failure((data && data.message) || '닉네임 또는 PIN이 맞지 않아요.');
+            err.code = (data && data.code) || '28P01';
+            throw err;
+          }
+          writeSession({ token: data.token, member: data.member, at: Date.now() });
+          return data;
+        });
+    },
+    logout: function () {
+      var t = token();
+      if (!t) { return Promise.resolve({ ok: true }); }
+      return rpc('logout_member', { p_token: t }).catch(function () { return { ok: true }; })
+        .then(function (res) { writeSession(null); return res; });
+    },
+    profile: function () {
+      return withToken(function (t) { return rpc('my_profile', { p_token: t }); });
+    },
+
+    /* --- 문파 --- */
+    overview: function () {
+      return withToken(function (t) { return rpc('clan_overview', { p_token: t }); });
+    },
+    markAttendance: function () {
+      return withToken(function (t) { return rpc('mark_attendance', { p_token: t }); });
+    },
+
+    /* --- 채팅 --- */
+    listChat: function (limit, before) {
+      return withToken(function (t) {
+        return rpc('list_chat_messages', { p_token: t, p_limit: limit || 50, p_before: before || null });
+      });
+    },
+    postChat: function (body) {
+      return withToken(function (t) { return rpc('post_chat_message', { p_token: t, p_body: body }); });
+    },
+
+    /* --- 앨범 --- */
+    listAlbum: function (limit, before) {
+      return withToken(function (t) {
+        return rpc('list_album_posts', { p_token: t, p_limit: limit || 12, p_before: before || null });
+      });
+    },
+    albumImage: function (postId) {
+      return withToken(function (t) { return rpc('get_album_image', { p_token: t, p_post_id: postId }); });
+    },
+    createAlbumPost: function (title, dataUrl, caption, mime) {
+      return withToken(function (t) {
+        return rpc('create_album_post', {
+          p_token: t, p_title: title, p_image_data: dataUrl,
+          p_caption: caption || '', p_image_mime: mime || 'image/jpeg'
+        });
+      });
+    },
+    toggleAlbumLike: function (postId) {
+      return withToken(function (t) { return rpc('toggle_album_like', { p_token: t, p_post_id: postId }); });
+    },
+    deleteOwnAlbumPost: function (postId) {
+      return withToken(function (t) { return rpc('delete_own_album_post', { p_token: t, p_post_id: postId }); });
+    },
+
+    /* --- 쿠폰 --- */
+    listCoupons: function () {
+      return withToken(function (t) { return rpc('list_coupons', { p_token: t }); });
+    },
+
+    /* --- 문파원 --- */
+    listMembers: function () {
+      return select('public_members', 'select=id,nickname,member_role,member_level,joined_at,last_seen_at&order=joined_at.asc');
+    },
+
+    /* --- 공지 · 일정 (공개 읽기) --- */
+    listNotices: function () {
+      return select('notices',
+        'select=id,title,body,tag,pinned,author_id,created_at&deleted_at=is.null&order=pinned.desc,created_at.desc&limit=30');
+    },
+    listEvents: function () {
+      return select('events',
+        'select=id,title,place,tag,note,starts_at,ends_at,created_by&deleted_at=is.null&order=starts_at.asc&limit=30');
+    },
+
+    /* --- 관리자(문주) --- */
+    admin: {
+      getSettings: function () {
+        return withToken(function (t) { return rpc('admin_get_settings', { p_token: t }); });
+      },
+      updateInviteCode: function (code) {
+        return withToken(function (t) { return rpc('admin_update_invite_code', { p_token: t, p_new_code: code }); });
+      },
+      listMembers: function () {
+        return withToken(function (t) { return rpc('admin_list_members', { p_token: t }); });
+      },
+      kick: function (memberId, reason) {
+        return withToken(function (t) {
+          return rpc('admin_kick_member', { p_token: t, p_member_id: memberId, p_reason: reason || null });
+        });
+      },
+      ban: function (memberId, reason) {
+        return withToken(function (t) {
+          return rpc('admin_ban_member', { p_token: t, p_member_id: memberId, p_reason: reason || null });
+        });
+      },
+      restore: function (memberId) {
+        return withToken(function (t) { return rpc('admin_restore_member', { p_token: t, p_member_id: memberId }); });
+      },
+      setRole: function (memberId, role) {
+        return withToken(function (t) {
+          return rpc('admin_set_role', { p_token: t, p_member_id: memberId, p_role: role });
+        });
+      },
+      createNotice: function (title, body, tag, pinned) {
+        return withToken(function (t) {
+          return rpc('admin_create_notice', {
+            p_token: t, p_title: title, p_body: body,
+            p_tag: tag || '공지', p_pinned: !!pinned
+          });
+        });
+      },
+      deleteNotice: function (noticeId) {
+        return withToken(function (t) { return rpc('admin_delete_notice', { p_token: t, p_notice_id: noticeId }); });
+      },
+      createEvent: function (payload) {
+        return withToken(function (t) {
+          return rpc('admin_create_event', {
+            p_token: t,
+            p_title: payload.title,
+            p_starts_at: payload.startsAt,
+            p_place: payload.place || '',
+            p_tag: payload.tag || '모임',
+            p_note: payload.note || '',
+            p_ends_at: payload.endsAt || null
+          });
+        });
+      },
+      deleteEvent: function (eventId) {
+        return withToken(function (t) { return rpc('admin_delete_event', { p_token: t, p_event_id: eventId }); });
+      },
+      createCoupon: function (payload) {
+        return withToken(function (t) {
+          return rpc('admin_create_coupon', {
+            p_token: t,
+            p_code: payload.code,
+            p_title: payload.title,
+            p_reward: payload.reward,
+            p_expires_on: payload.expiresOn || null,
+            p_tone: payload.tone || 'lotus'
+          });
+        });
+      },
+      deleteCoupon: function (couponId) {
+        return withToken(function (t) { return rpc('admin_delete_coupon', { p_token: t, p_coupon_id: couponId }); });
+      },
+      deleteChatMessage: function (messageId) {
+        return withToken(function (t) {
+          return rpc('admin_delete_chat_message', { p_token: t, p_message_id: messageId });
+        });
+      },
+      deleteAlbumPost: function (postId) {
+        return withToken(function (t) { return rpc('admin_delete_album_post', { p_token: t, p_post_id: postId }); });
+      }
+    }
+  };
+})();

@@ -50,11 +50,7 @@
         </label>
         <label class="field">
           <span class="field__label">PIN</span>
-          <input class="field__input" id="login-pin" type="password" inputmode="numeric" autocomplete="current-password" placeholder="숫자 4자리" maxlength="4" enterkeyhint="next">
-        </label>
-        <label class="field">
-          <span class="field__label">초대 코드</span>
-          <input class="field__input" id="login-code" type="text" placeholder="운영진에게 받은 코드" maxlength="16" autocapitalize="characters" enterkeyhint="go">
+          <input class="field__input" id="login-pin" type="password" inputmode="numeric" autocomplete="current-password" placeholder="숫자 4자리" maxlength="4" enterkeyhint="go">
         </label>
         <p class="form__error" id="login-error" role="alert" hidden></p>
         <button type="submit" class="btn btn--primary">연못으로 들어가기</button>
@@ -83,12 +79,12 @@
 
       <div class="auth__trial">
         <button type="button" class="btn btn--ghost" id="trial-btn">체험 모드로 둘러보기</button>
-        <p class="auth__hint">아직 초대 코드가 없다면 체험 모드로 안을 먼저 둘러보세요. 둘러보기에는 초대 코드 <b>YEONMOT</b> 도 쓸 수 있어요.</p>
+        <p class="auth__hint">처음 오셨다면 <b>가입하기</b>에서 닉네임·PIN·초대 코드를 넣어 주세요. 아직 코드가 없다면 체험 모드로 안을 먼저 둘러볼 수 있어요.</p>
       </div>
 
       <p class="auth__fine">
         <span class="dot" aria-hidden="true"></span>
-        이름·전화번호·이메일은 받지 않아요. 닉네임과 PIN은 로그인 확인에만 쓰고 서버로 보내지 않습니다.
+        이름·전화번호·이메일은 받지 않아요. 닉네임과 PIN만 문파 서버로 보내고, PIN은 되돌릴 수 없는 암호로만 저장됩니다.
       </p>
     </div>
 
@@ -103,7 +99,7 @@
         <strong>연못문파</strong>
         <span class="topbar__sub">도깨비의 세계</span>
       </div>
-      <span class="topbar__live"><span class="dot" aria-hidden="true"></span><span id="topbar-online">8명 접속</span></span>
+      <span class="topbar__live"><span class="dot" aria-hidden="true"></span><span id="topbar-online">연결 중</span></span>
     </header>
 
     <main class="screens" id="screens">
@@ -120,7 +116,7 @@
           <h2 class="chat__title">연못가 이야기</h2>
           <p class="chat__sub">잠깐 들러 인사만 남겨도 좋아요</p>
         </div>
-        <p class="chat__notice">체험용 대화방이에요. 보낸 메시지는 이 기기에만 저장되고 다른 사람에게는 전달되지 않아요.</p>
+        <p class="chat__notice" id="chat-notice">체험용 대화방이에요. 보낸 메시지는 이 기기에만 저장되고 다른 사람에게는 전달되지 않아요.</p>
         <div class="chat" id="chat-list" role="log" aria-live="polite" aria-label="대화 내용"></div>
         <form class="composer" id="composer">
           <div class="composer__chips" id="chat-chips"></div>
@@ -190,6 +186,9 @@
 
 <script src="./js/data.js"></script>
 <script src="./js/art.js"></script>
+<!-- Supabase 실시간 구독용 (문파 채팅 · 공지 · 일정). 오프라인에서도 열리도록 저장소에 함께 둡니다. -->
+<script src="./js/vendor/supabase.js"></script>
+<script src="./js/db.js"></script>
 <script src="./js/app.js"></script>
 </body>
 </html>

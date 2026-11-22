@@ -1,11 +1,16 @@
 /* 연못문파 — 도깨비의 세계
- * 프로토타입 앱 로직 (서버 없음 · 모든 데이터는 이 기기에만)
+ * 화면 로직: 체험 모드(이 기기 안에서만)와 실제 문파 모드(Supabase)를 같은 화면 코드로 그립니다.
+ *
+ *  · 체험 모드 : js/data.js 의 예시 데이터 + localStorage (로그인 없이 둘러보기)
+ *  · 실제 모드 : js/db.js → Supabase RPC (가입 · 로그인 · 출석 · 채팅 · 앨범 · 쿠폰 · 관리자)
+ *  · 개인정보 제로 원칙: 닉네임과 PIN 만 다루고, 이름 · 전화번호 · 이메일은 받지 않습니다.
  */
 (function () {
   'use strict';
 
   var D = window.YM_DATA;
   var ART = window.YM_ART;
+  var DB = window.YM_DB;
 
   var $ = function (sel, root) { return (root || document).querySelector(sel); };
   var $$ = function (sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); };
@@ -19,13 +24,8 @@
     'linear-gradient(145deg,#cfe6c0,#7aa86f)',
     'linear-gradient(145deg,#e6d0ea,#9a7bb0)'
   ];
-  var ROLE_CLASS = {
-    '문주': 'role--master',
-    '부문주': 'role--vice',
-    '장로': 'role--elder',
-    '정예': 'role--elite',
-    '문파원': ''
-  };
+  var ROLE_LABEL = { admin: '문주', officer: '운영진', member: '문파원', guest: '체험' };
+  var ROLE_CLASS = { admin: 'role--master', officer: 'role--elder', member: '', guest: 'role--elite' };
   var CATEGORY = {
     '전체': null,
     '풍경': ['moon', 'firefly', 'reed'],
@@ -50,21 +50,35 @@
   };
 
   var S = {
-    user: null,
-    tab: 'home',
+    mode: 'trial',        // 'trial' | 'live'
+    ready: false,
+    me: null,
+    clan: null,
+    notices: [],
+    events: [],
+    coupons: [],
+    members: [],
+    album: [],
+    albumImages: {},
     chat: [],
+    tab: 'home',
     category: '전체',
     memberFilter: 'all',
     query: '',
     likes: {},
     attendance: null,
     installEvent: null,
-    firstSendNoted: false
+    firstSendNoted: false,
+    realtime: 'off',
+    busy: false,
+    adminSettings: null
   };
 
-  /* ---------------- 유틸 ---------------- */
+  /* ============================================================
+     유틸
+     ============================================================ */
   function esc(value) {
-    return String(value).replace(/[&<>"']/g, function (ch) {
+    return String(value === null || value === undefined ? '' : value).replace(/[&<>"']/g, function (ch) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch];
     });
   }
@@ -75,8 +89,9 @@
     for (var i = 0; i < str.length; i++) { h = (h * 31 + str.charCodeAt(i)) % 9973; }
     return h;
   }
-  function avatarStyle(name) { return AVATARS[hash(name) % AVATARS.length]; }
-  function initial(name) { return String(name).trim().charAt(0) || '연'; }
+  function avatarStyle(name) { return AVATARS[hash(String(name || '연')) % AVATARS.length]; }
+  function initial(name) { return String(name || '연').trim().charAt(0) || '연'; }
+  function fmtNum(n) { return String(n || 0).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
 
   function dayStart(date) {
     return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
@@ -97,25 +112,50 @@
     target.setDate(target.getDate() + diff);
     return target;
   }
-  function eventDate(ev) {
-    if (ev.type === 'weekly') { return nextWeekday(ev.weekday, ev.hour, ev.minute); }
-    var d = addDays(ev.days || 0);
-    d.setHours(ev.hour, ev.minute, 0, 0);
-    return d;
-  }
   function ddayOf(date) {
     var diff = Math.round((dayStart(date) - dayStart(new Date())) / 86400000);
     if (diff <= 0) { return '오늘'; }
     if (diff === 1) { return '내일'; }
     return 'D-' + diff;
   }
-  function fmtNum(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
-  function relDay(daysAgo) {
-    var d = addDays(-daysAgo);
+  function relDayLabel(value) {
+    var d = new Date(value);
+    if (isNaN(d.getTime())) { return ''; }
     return (d.getMonth() + 1) + '.' + d.getDate();
   }
+  function timeLabel(value) {
+    var d = new Date(value);
+    if (isNaN(d.getTime())) { return ''; }
+    return pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+  function dateLabel(value) {
+    var d = new Date(value);
+    if (isNaN(d.getTime())) { return ''; }
+    return d.getFullYear() + '.' + pad(d.getMonth() + 1) + '.' + pad(d.getDate());
+  }
+  function seenLabel(value) {
+    if (!value) { return '오랫동안 조용했어요'; }
+    var d = new Date(value);
+    var mins = Math.floor((Date.now() - d.getTime()) / 60000);
+    if (isNaN(mins)) { return ''; }
+    if (mins < 5) { return '지금 접속 중'; }
+    if (mins < 60) { return mins + '분 전'; }
+    if (mins < 60 * 24) { return Math.floor(mins / 60) + '시간 전'; }
+    if (mins < 60 * 48) { return '어제'; }
+    return (d.getMonth() + 1) + '.' + d.getDate();
+  }
+  function isOnline(value) {
+    if (!value) { return false; }
+    var d = new Date(value);
+    return Date.now() - d.getTime() < 5 * 60 * 1000;
+  }
+  function paragraphs(text) {
+    return String(text || '').split(/\n{2,}/).map(function (p) { return p.trim(); }).filter(Boolean);
+  }
 
-  /* ---------------- 토스트 / 모달 ---------------- */
+  /* ============================================================
+     토스트 / 모달
+     ============================================================ */
   var toastTimer = null;
   function toast(message) {
     var el = $('#toast');
@@ -126,7 +166,7 @@
     toastTimer = window.setTimeout(function () {
       el.classList.remove('is-show');
       window.setTimeout(function () { el.hidden = true; }, 260);
-    }, 2400);
+    }, 2800);
   }
 
   function openModal(html) {
@@ -145,7 +185,344 @@
     document.body.classList.remove('is-locked');
   }
 
-  /* ---------------- 배경 반딧불 ---------------- */
+  function modalTitle(text) {
+    return '<h3 class="lightbox__title" id="modal-title" style="margin-top:0">' + esc(text) + '</h3>';
+  }
+
+  function errorMessage(err) {
+    if (!err) { return '알 수 없는 문제가 생겼어요.'; }
+    return err.message || '알 수 없는 문제가 생겼어요.';
+  }
+
+  function isAuthError(err) {
+    if (!err) { return false; }
+    var code = String(err.code || '');
+    var msg = String(err.message || '');
+    if (code === '28000' || code === '28P01') { return true; }
+    return msg.indexOf('다시 로그인') !== -1;
+  }
+
+  /* ============================================================
+     권한 · 모드 도우미
+     ============================================================ */
+  function isLive() { return S.mode === 'live'; }
+  function isAdmin() { return isLive() && S.me && S.me.role === 'admin'; }
+  function myId() { return S.me ? S.me.id : null; }
+  function myNick() { return S.me ? S.me.nickname : ''; }
+
+  /* ============================================================
+     체험 모드 데이터
+     ============================================================ */
+  function trialEventDate(ev) {
+    if (ev.type === 'weekly') { return nextWeekday(ev.weekday, ev.hour, ev.minute); }
+    var d = addDays(ev.days || 0);
+    d.setHours(ev.hour, ev.minute, 0, 0);
+    return d;
+  }
+
+  function buildTrialState() {
+    var attendance = attendanceState();
+
+    S.clan = {
+      name: D.guild.name,
+      motto: D.guild.motto,
+      capacity: D.guild.capacity,
+      member_count: D.guild.members,
+      new_members_7d: D.guild.newMembers,
+      today_waves: D.guild.weeklyAttendance,
+      week_waves: D.guild.weeklyAttendance,
+      level: D.guild.level
+    };
+
+    S.me = {
+      id: 'guest',
+      nickname: S.user.nick,
+      role: 'guest',
+      level: 0,
+      joined_at: S.user.since,
+      wave: { today_done: attendance.done, streak: attendance.streak, total: attendance.done ? attendance.streak : Math.max(0, attendance.streak) }
+    };
+
+    S.notices = D.notices.map(function (n, i) {
+      return {
+        id: n.id,
+        title: n.title,
+        body: n.body.join('\n\n'),
+        tag: n.tag,
+        pinned: !!n.pinned,
+        author: n.author,
+        roleLabel: n.role,
+        created_at: addDays(-(n.daysAgo || i)).toISOString()
+      };
+    });
+
+    S.events = D.events.map(function (ev, i) {
+      return {
+        id: 'e' + i,
+        title: ev.title,
+        place: ev.place,
+        tag: ev.tag,
+        note: ev.note,
+        starts_at: trialEventDate(ev).toISOString(),
+        ends_at: null
+      };
+    }).sort(function (a, b) { return new Date(a.starts_at) - new Date(b.starts_at); });
+
+    S.coupons = D.coupons.map(function (c, i) {
+      return { id: 'cp' + i, code: c.code, title: c.title, reward: c.reward, until: c.until, tone: c.tone };
+    });
+
+    S.members = D.members.map(function (m, i) {
+      var role = m.role === '문주' ? 'admin' : (m.role === '문파원' ? 'member' : 'officer');
+      return {
+        id: 'm' + i,
+        nickname: m.name,
+        role: role,
+        roleLabel: m.role,
+        roleClass: m.role === '문주' ? 'role--master' : (m.role === '부문주' ? 'role--vice' : (m.role === '장로' ? 'role--elder' : (m.role === '정예' ? 'role--elite' : ''))),
+        level: m.level,
+        status: 'active',
+        filterKey: m.status === 'on' ? 'on' : (m.status === 'away' ? 'away' : 'off'),
+        online: m.status === 'on',
+        lastLabel: m.last,
+        statusLabel: m.status === 'on' ? '접속 중' : (m.status === 'away' ? '자리 비움' : '오프라인'),
+        joined_at: null,
+        me: false
+      };
+    });
+    S.members.unshift({
+      id: 'guest',
+      nickname: S.user.nick,
+      role: 'guest',
+      roleLabel: '체험',
+      roleClass: 'role--elite',
+      level: 0,
+      status: 'active',
+      filterKey: 'on',
+      online: true,
+      lastLabel: '지금 접속 중',
+      statusLabel: '접속 중',
+      joined_at: S.user.since,
+      me: true
+    });
+
+    S.album = D.album.map(function (a) {
+      return {
+        id: a.id,
+        title: a.title,
+        caption: '',
+        author_id: null,
+        author: a.author,
+        author_role: '',
+        kind: a.kind,
+        likes: a.likes,
+        liked: !!S.likes[a.id],
+        created_at: addDays(-(a.daysAgo || 0)).toISOString()
+      };
+    });
+
+    S.chat = loadTrialChat();
+    S.ready = true;
+  }
+
+  function loadTrialChat() {
+    var saved = store.get('chat', null);
+    if (saved && saved.length) {
+      return saved.map(function (m) {
+        return {
+          id: m.id,
+          member_id: m.mine ? 'guest' : null,
+          nickname: m.system ? null : m.name,
+          roleLabel: m.system ? '' : (m.mine ? '체험' : (m.role || '')),
+          kind: m.system ? 'system' : 'text',
+          body: m.text,
+          created_at: new Date(m.ts).toISOString(),
+          mine: !!m.mine
+        };
+      });
+    }
+    var now = Date.now();
+    var seeded = D.chatSeed.map(function (m, i) {
+      return {
+        id: 'seed-' + i,
+        member_id: null,
+        nickname: m.system ? null : m.name,
+        roleLabel: m.system ? '' : (m.role || ''),
+        kind: m.system ? 'system' : 'text',
+        body: m.text,
+        created_at: new Date(m.system ? now - 1000 * 60 * 180 : now - 1000 * 60 * (m.minutesAgo || 0)).toISOString(),
+        mine: false
+      };
+    });
+    store.set('chat', seeded.map(function (m) {
+      return { id: m.id, name: m.nickname, role: m.roleLabel, text: m.body, ts: new Date(m.created_at).getTime(), system: m.kind === 'system', mine: false };
+    }));
+    return seeded;
+  }
+
+  function persistTrialChat() {
+    store.set('chat', S.chat.map(function (m) {
+      return {
+        id: m.id,
+        name: m.nickname,
+        role: m.roleLabel,
+        text: m.body,
+        ts: new Date(m.created_at).getTime(),
+        system: m.kind === 'system',
+        mine: !!m.mine
+      };
+    }));
+  }
+
+  function attendanceState() {
+    var saved = store.get('attendance', null);
+    var today = dayKey(new Date());
+    if (saved && saved.date === today) {
+      return { done: true, streak: saved.streak || 1 };
+    }
+    return { done: false, streak: saved ? (saved.streak || 0) : 0 };
+  }
+
+  /* ============================================================
+     실제 문파 데이터 불러오기
+     ============================================================ */
+  function mapNotice(n) {
+    var author = S.members.filter(function (m) { return m.id === n.author_id; })[0];
+    return {
+      id: n.id,
+      title: n.title,
+      body: n.body || '',
+      tag: n.tag || '공지',
+      pinned: !!n.pinned,
+      author: author ? author.nickname : '운영진',
+      roleLabel: author ? author.roleLabel : '',
+      created_at: n.created_at
+    };
+  }
+
+  function mapMember(m, fromAdmin) {
+    var role = m.member_role || m.role || 'member';
+    var online = isOnline(m.last_seen_at);
+    return {
+      id: m.id,
+      nickname: m.nickname,
+      role: role,
+      roleLabel: ROLE_LABEL[role] || '문파원',
+      roleClass: ROLE_CLASS[role] || '',
+      level: m.member_level || m.level || 0,
+      status: m.status || 'active',
+      filterKey: m.status === 'kicked' ? 'kicked' : (m.status === 'banned' ? 'banned' : (online ? 'online' : 'offline')),
+      online: online,
+      lastLabel: seenLabel(m.last_seen_at),
+      statusLabel: m.status === 'kicked' ? '내보냄' : (m.status === 'banned' ? '차단됨' : (online ? '접속 중' : '자리 비움')),
+      last_seen_at: m.last_seen_at,
+      wave_today: !!m.wave_today,
+      joined_at: m.joined_at,
+      me: m.id === myId()
+    };
+  }
+
+  function mapChat(c) {
+    return {
+      id: c.id,
+      member_id: c.member_id,
+      nickname: c.nickname || (c.kind === 'system' ? null : '문파원'),
+      roleLabel: c.kind === 'system' ? '' : (ROLE_LABEL[c.role] || ''),
+      kind: c.kind || 'text',
+      body: c.body,
+      created_at: c.created_at,
+      mine: !!c.member_id && c.member_id === myId()
+    };
+  }
+
+  function mapAlbum(p) {
+    return {
+      id: p.id,
+      title: p.title,
+      caption: p.caption || '',
+      author_id: p.author_id,
+      author: p.author || '문파원',
+      author_role: p.author_role || '',
+      image_mime: p.image_mime,
+      image_bytes: p.image_bytes,
+      likes: p.likes || 0,
+      liked: !!p.liked,
+      created_at: p.created_at
+    };
+  }
+
+  function loadLiveAll() {
+    return DB.overview().then(function (data) {
+      S.clan = data.clan;
+      S.me = {
+        id: data.me.id,
+        nickname: data.me.nickname,
+        role: data.me.role,
+        level: data.me.level,
+        joined_at: (S.me && S.me.joined_at) || data.me.joined_at || null,
+        wave: { today_done: data.me.today_wave, streak: data.me.streak, total: data.me.total_waves }
+      };
+      return Promise.all([
+        DB.listMembers().then(function (rows) {
+          S.members = (rows || []).map(function (m) { return mapMember(m, false); });
+        }, function () { S.members = []; }),
+        DB.listNotices().then(function (rows) {
+          S.noticeRows = rows || [];
+        }, function () { S.noticeRows = []; }),
+        DB.listEvents().then(function (rows) {
+          S.events = (rows || []).map(function (e) {
+            return {
+              id: e.id, title: e.title, place: e.place || '', tag: e.tag || '모임',
+              note: e.note || '', starts_at: e.starts_at, ends_at: e.ends_at
+            };
+          });
+        }, function () { S.events = []; }),
+        DB.listCoupons().then(function (rows) {
+          S.coupons = (rows || []).map(function (c) {
+            return { id: c.id, code: c.code, title: c.title, reward: c.reward, expires_on: c.expires_on, tone: c.tone || 'lotus' };
+          });
+        }, function () { S.coupons = []; }),
+        DB.listAlbum(12).then(function (rows) {
+          S.album = (rows || []).map(mapAlbum);
+        }, function () { S.album = []; }),
+        DB.listChat(50).then(function (rows) {
+          S.chat = (rows || []).map(mapChat).sort(function (a, b) { return a.id - b.id; });
+        }, function () { S.chat = []; })
+      ]);
+    }).then(function () {
+      S.notices = (S.noticeRows || []).map(mapNotice);
+      S.ready = true;
+    });
+  }
+
+  /** 관리자 화면용: 강퇴 · 차단까지 포함한 전체 목록 */
+  function loadAdminMembers() {
+    return DB.admin.listMembers().then(function (rows) {
+      S.members = (rows || []).map(function (m) { return mapMember(m, true); });
+      return S.members;
+    });
+  }
+
+  /** 공지 · 일정은 공개 테이블에서 읽고, 작성자 닉네임은 문파원 목록으로 맞춥니다. */
+  function reloadClanContent() {
+    return Promise.all([
+      DB.listNotices().then(function (rows) { S.noticeRows = rows || []; }, function () {}),
+      DB.listEvents().then(function (rows) {
+        S.events = (rows || []).map(function (e) {
+          return {
+            id: e.id, title: e.title, place: e.place || '', tag: e.tag || '모임',
+            note: e.note || '', starts_at: e.starts_at, ends_at: e.ends_at
+          };
+        });
+      }, function () {})
+    ]).then(function () {
+      S.notices = (S.noticeRows || []).map(mapNotice);
+    });
+  }
+
+  /* ============================================================
+     배경 반딧불
+     ============================================================ */
   function buildFireflies() {
     var host = $('#fireflies');
     if (!host) { return; }
@@ -162,7 +539,9 @@
     host.innerHTML = html;
   }
 
-  /* ---------------- 시작 ---------------- */
+  /* ============================================================
+     시작
+     ============================================================ */
   function init() {
     buildFireflies();
     $('#auth-art').innerHTML = ART.hero();
@@ -181,13 +560,212 @@
     S.likes = store.get('likes', {}) || {};
     S.attendance = store.get('attendance', null);
 
+    resume();
+  }
+
+  function resume() {
+    var liveSession = DB && DB.session ? DB.session() : null;
+    if (liveSession && liveSession.token) {
+      S.mode = 'live';
+      S.user = { nick: (liveSession.member && liveSession.member.nickname) || '문파원', guest: false };
+      showMain(true);
+      DB.profile().then(function (profile) {
+        S.me = {
+          id: profile.id,
+          nickname: profile.nickname,
+          role: profile.role,
+          level: profile.level,
+          joined_at: profile.joined_at,
+          wave: { today_done: profile.wave.today_done, streak: profile.wave.streak, total: profile.wave.total }
+        };
+        return loadLiveAll();
+      }).then(function () {
+        afterEnter();
+      }).catch(function (err) {
+        if (isAuthError(err)) {
+          DB.clearSession();
+          S.mode = 'trial';
+          showAuth();
+          showError('login-error', '로그인 시간이 지났어요. 다시 들어와 주세요.', ['#login-nick', '#login-pin']);
+        } else {
+          renderLoadError(errorMessage(err));
+        }
+      });
+      return;
+    }
+
     var session = store.get('session', null);
     if (session && session.nick) {
-      enterApp(false, session.nick, guestFromSession(session), session.since);
+      S.mode = 'trial';
+      S.user = { nick: session.nick, guest: !!session.guest, since: session.since };
+      showMain(true);
+      buildTrialState();
+      afterEnter();
     }
   }
 
-  /* ---------------- 로그인 / 가입 ---------------- */
+  function showMain(loading) {
+    $('#auth-view').hidden = true;
+    $('#main-view').hidden = false;
+    S.user = S.user || {};
+    if (loading && !S.ready) {
+      S.ready = false;
+      ['home', 'album', 'members', 'me'].forEach(function (tab) {
+        var host = $('#' + tab + '-body');
+        if (host) {
+          host.innerHTML = '<div class="empty">연못을 불러오는 중이에요…</div>';
+        }
+      });
+    }
+  }
+
+  function showAuth() {
+    $('#main-view').hidden = true;
+    $('#auth-view').hidden = false;
+    window.scrollTo(0, 0);
+    $('#auth-view').scrollTop = 0;
+  }
+
+  function afterEnter() {
+    renderAll();
+    updateTopbar();
+    switchTab(S.tab || 'home', true);
+    startRealtime();
+    startChatPoll();
+  }
+
+  /** 서버에서 문파 자료를 끝까지 못 받았을 때 — 다시 시도할 수 있는 자리 */
+  function renderLoadError(message) {
+    var host = $('#home-body');
+    if (!host) { return; }
+    host.innerHTML = '<div class="empty">' + esc(message) +
+      '<div style="margin-top:12px"><button type="button" class="btn btn--small btn--ghost" id="retry-load">다시 불러오기</button></div></div>';
+    var btn = $('#retry-load');
+    if (btn) { btn.addEventListener('click', retryLoad); }
+  }
+
+  function retryLoad() {
+    showMain(true);
+    DB.profile().then(function (profile) {
+      S.me = {
+        id: profile.id, nickname: profile.nickname, role: profile.role, level: profile.level,
+        joined_at: profile.joined_at,
+        wave: { today_done: profile.wave.today_done, streak: profile.wave.streak, total: profile.wave.total }
+      };
+      return loadLiveAll();
+    }).then(function () {
+      afterEnter();
+    }).catch(function (err) {
+      if (isAuthError(err)) {
+        DB.clearSession();
+        S.mode = 'trial';
+        showAuth();
+        return;
+      }
+      renderLoadError(errorMessage(err));
+    });
+  }
+
+  function renderAll() {
+    renderHome();
+    renderChat();
+    renderAlbum();
+    renderMembers();
+    renderMe();
+  }
+
+  /* ============================================================
+     실시간
+     ============================================================ */
+  function startRealtime() {
+    if (!isLive()) { return; }
+    var result = DB.startRealtime({
+      onChat: onRealtimeChat,
+      onClanChange: onRealtimeClan,
+      onStatus: function (status) {
+        S.realtime = status;
+        updateLiveBadge();
+      }
+    });
+    S.realtime = result.ok ? 'connecting' : 'off';
+    updateLiveBadge();
+  }
+
+  function updateLiveBadge() {
+    var label = $('#topbar-online');
+    if (!label) { return; }
+    if (isLive()) {
+      var text = S.clan ? ('문파원 ' + (S.clan.member_count || 0) + '명') : '연결 중';
+      if (S.realtime === 'live') { text += ' · 실시간'; }
+      else if (S.realtime === 'down') { text += ' · 다시 연결 중'; }
+      label.textContent = text;
+    }
+  }
+
+  var clanRefreshTimer = null;
+  function onRealtimeClan() {
+    if (!isLive()) { return; }
+    window.clearTimeout(clanRefreshTimer);
+    clanRefreshTimer = window.setTimeout(function () {
+      reloadClanContent().then(function () {
+        if (S.tab === 'home') { renderHome(); }
+      }).catch(function () {});
+    }, 400);
+  }
+
+  function onRealtimeChat(payload) {
+    if (!isLive() || !payload) { return; }
+    var record = payload.new || payload.record || payload;
+    if (!record || record.id === undefined) { return; }
+
+    // 삭제는 본문이 비워진 UPDATE 로 옵니다.
+    if (payload.eventType === 'UPDATE' && record.deleted_at) {
+      var before = S.chat.length;
+      S.chat = S.chat.filter(function (m) { return String(m.id) !== String(record.id); });
+      if (before !== S.chat.length && S.tab === 'chat') { renderChat(); }
+      return;
+    }
+
+    if (S.chat.some(function (m) { return String(m.id) === String(record.id); })) { return; }
+
+    var known = S.members.filter(function (m) { return m.id === record.member_id; })[0];
+    var msg = mapChat({
+      id: record.id,
+      member_id: record.member_id,
+      nickname: known ? known.nickname : (record.member_id === myId() ? myNick() : null),
+      role: known ? known.role : null,
+      kind: record.kind,
+      body: record.body,
+      created_at: record.created_at
+    });
+    if (!msg.nickname && msg.kind !== 'system') { msg.nickname = '문파원'; }
+
+    S.chat.push(msg);
+    S.chat.sort(function (a, b) { return a.id - b.id; });
+
+    if (S.tab === 'chat') {
+      renderChat();
+      scrollChat(true);
+    } else {
+      var tab = $('.tab[data-tab="chat"]');
+      if (tab && !msg.mine) { tab.classList.add('has-news'); }
+    }
+  }
+
+  var chatPollTimer = null;
+  function startChatPoll() {
+    window.clearInterval(chatPollTimer);
+    if (!isLive()) { return; }
+    // 실시간 구독이 끊긴 환경에서도 채팅 탭은 10초마다 새 소식을 확인합니다.
+    chatPollTimer = window.setInterval(function () {
+      if (!isLive() || S.tab !== 'chat' || S.realtime === 'live') { return; }
+      refreshChat();
+    }, 10000);
+  }
+
+  /* ============================================================
+     로그인 / 가입
+     ============================================================ */
   function bindAuth() {
     var segLogin = $('#seg-login');
     var segSignup = $('#seg-signup');
@@ -199,14 +777,38 @@
       e.preventDefault();
       var nick = $('#login-nick').value.trim();
       var pin = $('#login-pin').value.trim();
-      var code = $('#login-code').value.trim().toUpperCase();
 
-      var problem = validateNick(nick) || validatePin(pin) || validateCode(code);
-      showError('login-error', problem, ['#login-nick', '#login-pin', '#login-code']);
+      var problem = validateNick(nick) || validatePin(pin);
+      showError('login-error', problem, ['#login-nick', '#login-pin']);
       if (problem) { return; }
 
-      enterApp(true, nick, false);
-      toast(nick + ' 님, 다시 오셨네요 🪷');
+      setFormBusy('login-form', true, '연못으로 들어가는 중…');
+      S.mode = 'live';
+      S.user = { nick: nick, guest: false };
+      DB.login(nick, pin).then(function () {
+        showMain(true);
+        return DB.profile();
+      }).then(function (profile) {
+        S.me = {
+          id: profile.id,
+          nickname: profile.nickname,
+          role: profile.role,
+          level: profile.level,
+          joined_at: profile.joined_at,
+          wave: { today_done: profile.wave.today_done, streak: profile.wave.streak, total: profile.wave.total }
+        };
+        S.user = { nick: profile.nickname, guest: false };
+        return loadLiveAll();
+      }).then(function () {
+        afterEnter();
+        toast(profileGreeting());
+      }).catch(function (err) {
+        S.mode = 'trial';
+        DB.clearSession();
+        showError('login-error', errorMessage(err), ['#login-nick', '#login-pin']);
+      }).then(function () {
+        setFormBusy('login-form', false);
+      });
     });
 
     $('#signup-form').addEventListener('submit', function (e) {
@@ -214,21 +816,61 @@
       var nick = $('#signup-nick').value.trim();
       var pin = $('#signup-pin').value.trim();
       var pin2 = $('#signup-pin2').value.trim();
-      var code = $('#signup-code').value.trim().toUpperCase();
+      var code = $('#signup-code').value.trim();
 
       var problem = validateNick(nick) || validatePin(pin) || validateCode(code);
       if (!problem && pin !== pin2) { problem = 'PIN이 서로 달라요. 같은 숫자를 두 번 입력해 주세요.'; }
       showError('signup-error', problem, ['#signup-nick', '#signup-pin', '#signup-pin2', '#signup-code']);
       if (problem) { return; }
 
-      enterApp(true, nick, false);
-      toast('연못문파에 오신 것을 환영해요, ' + nick + ' 님 🪷');
+      setFormBusy('signup-form', true, '문파원으로 들이는 중…');
+      S.mode = 'live';
+      DB.register(nick, pin, code).then(function (data) {
+        S.user = { nick: nick, guest: false };
+        showMain(true);
+        return loadLiveAll().then(function () { return data; });
+      }).then(function (data) {
+        afterEnter();
+        if (data && data.is_first_admin) {
+          openModal(modalTitle('문주가 되셨어요 🪷') +
+            '<p class="lightbox__meta">아직 문주가 없던 연못이라, 첫 가입자이신 ' + esc(nick) + ' 님이 자동으로 문주가 되었어요.</p>' +
+            '<div class="privacy" style="margin-top:14px">' +
+            '<p>· 홈에서 공지 · 일정 · 쿠폰을 만들고 지울 수 있어요.</p>' +
+            '<p>· 문파원 탭에서 직위 변경 · 내보내기 · 차단을 할 수 있어요.</p>' +
+            '<p>· 내정보의 <b>문파 관리</b>에서 초대 코드를 확인하고 바꿀 수 있어요.</p>' +
+            '<p>· 처음 초대 코드는 <b>YEONMOT</b> 이에요. 문파원을 들이기 전에 새 코드로 바꿔 두세요.</p>' +
+            '</div><div class="lightbox__actions"><button type="button" class="btn btn--primary" id="first-admin-ok">알겠어요</button></div>');
+          var ok = $('#first-admin-ok');
+          if (ok) { ok.addEventListener('click', closeModal); }
+        } else {
+          toast('연못문파에 오신 것을 환영해요, ' + nick + ' 님 🪷');
+        }
+      }).catch(function (err) {
+        S.mode = 'trial';
+        DB.clearSession();
+        showError('signup-error', errorMessage(err), ['#signup-nick', '#signup-pin', '#signup-code']);
+      }).then(function () {
+        setFormBusy('signup-form', false);
+      });
     });
 
     $('#trial-btn').addEventListener('click', function () {
-      enterApp(true, '연못손님', true);
+      S.mode = 'trial';
+      S.user = { nick: '연못손님', guest: true, since: new Date().toISOString() };
+      store.set('session', S.user);
+      showMain(true);
+      buildTrialState();
+      afterEnter();
       toast('체험 모드예요. 편하게 둘러보세요 🌿');
     });
+  }
+
+  function profileGreeting() {
+    var hour = new Date().getHours();
+    if (hour < 6) { return myNick() + ' 님, 늦은 시간에도 연못에 들러 주셨네요 🪷'; }
+    if (hour < 12) { return myNick() + ' 님, 좋은 아침이에요 ☀️'; }
+    if (hour < 18) { return myNick() + ' 님, 다시 오셨네요 🪷'; }
+    return myNick() + ' 님, 오늘 하루도 수고 많으셨어요 🌙';
   }
 
   function switchAuth(mode) {
@@ -256,9 +898,7 @@
   }
   function validateCode(code) {
     if (!code) { return '초대 코드를 입력해 주세요.'; }
-    if (['YEONMOT', '연못', '연못문파'].indexOf(code) === -1) {
-      return '초대 코드가 맞지 않아요. 운영진에게 확인해 주세요. (체험용 코드: YEONMOT)';
-    }
+    if (code.length < 4 || code.length > 20) { return '초대 코드는 4~20자예요. 운영진에게 확인해 주세요.'; }
     return '';
   }
   function showError(id, message, fields) {
@@ -266,7 +906,7 @@
     if (!el) { return; }
     el.textContent = message || '';
     el.hidden = !message;
-    fields.forEach(function (sel) {
+    (fields || []).forEach(function (sel) {
       var input = $(sel);
       if (!input) { return; }
       if (message) { input.setAttribute('aria-invalid', 'true'); }
@@ -274,44 +914,57 @@
     });
   }
 
-  function guestFromSession(session) {
-    return !!(session && session.guest);
-  }
-
-  function enterApp(save, nick, guest, since) {
-    S.user = {
-      nick: nick,
-      guest: !!guest,
-      since: since || new Date().toISOString()
-    };
-    if (save) { store.set('session', S.user); }
-
-    $('#auth-view').hidden = true;
-    $('#main-view').hidden = false;
-
-    renderHome();
-    renderChat();
-    renderAlbum();
-    renderMembers();
-    renderMe();
-    updateTopbar();
-    switchTab('home', true);
+  function setFormBusy(formSel, busy, label) {
+    var form = $(formSel);
+    if (!form) { return; }
+    var btn = $('button[type="submit"]', form);
+    if (!btn) { return; }
+    if (busy) {
+      btn.dataset.label = btn.dataset.label || btn.textContent;
+      btn.textContent = label || '잠시만요…';
+      btn.disabled = true;
+    } else {
+      if (btn.dataset.label) { btn.textContent = btn.dataset.label; }
+      btn.disabled = false;
+    }
   }
 
   function logout() {
-    S.user = null;
-    store.remove('session');
-    closeModal();
-    $('#main-view').hidden = true;
-    $('#auth-view').hidden = false;
-    $('#login-pin').value = '';
-    $('#signup-form').reset();
-    window.scrollTo(0, 0);
-    $('#auth-view').scrollTop = 0;
-    toast('연못을 잠시 떠났어요. 다시 오시길 기다릴게요.');
+    var wasLive = isLive();
+    var finish = function () {
+      if (wasLive) { DB.stopRealtime(); }
+      S.mode = 'trial';
+      S.user = null;
+      S.me = null;
+      S.clan = null;
+      S.ready = false;
+      S.notices = [];
+      S.events = [];
+      S.coupons = [];
+      S.members = [];
+      S.album = [];
+      S.albumImages = {};
+      S.chat = [];
+      S.realtime = 'off';
+      store.remove('session');
+      closeModal();
+      showAuth();
+      $('#login-pin').value = '';
+      $('#signup-form').reset();
+      $('#login-form').reset();
+      toast('연못을 잠시 떠났어요. 다시 오시길 기다릴게요.');
+    };
+
+    if (wasLive) {
+      DB.logout().then(finish, finish);
+    } else {
+      finish();
+    }
   }
 
-  /* ---------------- 탭 ---------------- */
+  /* ============================================================
+     탭
+     ============================================================ */
   function bindTabs() {
     $$('.tab').forEach(function (btn) {
       btn.addEventListener('click', function () { switchTab(btn.getAttribute('data-tab')); });
@@ -326,6 +979,9 @@
       if (on) { btn.setAttribute('aria-current', 'page'); }
       else { btn.removeAttribute('aria-current'); }
     });
+    var activeTabBtn = $('.tab[data-tab="' + tab + '"]');
+    if (activeTabBtn) { activeTabBtn.classList.remove('has-news'); }
+
     $$('.screen').forEach(function (screen) {
       screen.classList.toggle('is-active', screen.getAttribute('data-screen') === tab);
     });
@@ -333,62 +989,83 @@
     if (active) { active.scrollTop = 0; }
     if (tab === 'chat') {
       window.requestAnimationFrame(function () { scrollChat(false); });
+      if (isLive() && !silent) { refreshChat(); }
     }
     if (!silent) {
-      if (tab === 'home') { updateTopbar(); }
-      if (tab === 'members') { renderMembers(); }
+      if (tab === 'home') { renderHome(); }
+      if (tab === 'members') { refreshMembers(); }
+      if (tab === 'album') { renderAlbum(); }
+      if (tab === 'me') { renderMe(); }
     }
   }
 
   function updateTopbar() {
     var el = $('#topbar-online');
     if (!el) { return; }
-    var online = membersAll().filter(function (m) { return m.status === 'on'; }).length;
+    if (isLive()) {
+      updateLiveBadge();
+      return;
+    }
+    var online = S.members.filter(function (m) { return m.online; }).length;
     el.textContent = online + '명 접속';
   }
 
-  /* ---------------- 홈 ---------------- */
+  /* ============================================================
+     홈
+     ============================================================ */
   function renderHome() {
-    var g = D.guild;
-    var attendance = attendanceState();
+    if (!S.ready || !S.clan) {
+      $('#home-body').innerHTML = '<div class="empty">연못을 불러오는 중이에요…</div>';
+      return;
+    }
+
+    var clan = S.clan;
+    var wave = (S.me && S.me.wave) || { today_done: false, streak: 0, total: 0 };
+    var admin = isAdmin();
     var html = '';
 
     html += '<header class="screen__head">' +
-      '<p class="kicker">' + esc(g.game) + '</p>' +
-      '<h2 class="screen__title">연못문파</h2>' +
-      '<p class="screen__sub">' + esc(g.motto) + '</p>' +
+      '<p class="kicker">도깨비의 세계' + (isLive() ? ' · 문파' : ' · 체험') + '</p>' +
+      '<h2 class="screen__title">' + esc(clan.name || '연못문파') + '</h2>' +
+      '<p class="screen__sub">' + esc(clan.motto || '') + '</p>' +
       '</header>';
 
     html += '<section class="hero" aria-label="연못문파 배너">' + ART.hero() +
       '<div class="hero__pills">' +
-      '<span class="pill pill--gold">문파 레벨 ' + g.level + '</span>' +
-      '<span class="pill">문파원 ' + g.members + ' / ' + g.capacity + '</span>' +
+      (clan.level ? '<span class="pill pill--gold">문파 레벨 ' + esc(clan.level) + '</span>' : '') +
+      '<span class="pill">문파원 ' + fmtNum(clan.member_count) + ' / ' + fmtNum(clan.capacity) + '</span>' +
       '</div>' +
       '<div class="hero__overlay">' +
-      '<div class="hero__caption"><strong>연못문파</strong><span>오늘도 고요한 연못에 물결을 남겨요</span></div>' +
-      '<button type="button" class="wave-btn' + (attendance.done ? ' is-done' : '') + '" id="wave-btn"' +
-      (attendance.done ? ' aria-pressed="true"' : ' aria-pressed="false"') + '>' +
+      '<div class="hero__caption"><strong>' + esc(clan.name || '연못문파') + '</strong><span>오늘도 고요한 연못에 물결을 남겨요</span></div>' +
+      '<button type="button" class="wave-btn' + (wave.today_done ? ' is-done' : '') + '" id="wave-btn"' +
+      (wave.today_done ? ' aria-pressed="true"' : ' aria-pressed="false"') + '>' +
       '<span class="wave-btn__ring" aria-hidden="true"></span>' +
-      '<span id="wave-label">' + attendanceLabel(attendance) + '</span>' +
+      '<span id="wave-label">' + waveLabel(wave) + '</span>' +
       '</button>' +
       '</div></section>';
 
     html += '<div class="stats">' +
-      '<div class="stat"><strong>' + fmtNum(g.weeklyContribution) + '</strong><span>이번 주 기여도</span></div>' +
-      '<div class="stat"><strong>' + g.weeklyAttendance + '명</strong><span>이번 주 출석</span></div>' +
-      '<div class="stat"><strong>+' + g.newMembers + '</strong><span>새 문파원</span></div>' +
+      '<div class="stat"><strong>' + fmtNum(clan.today_waves) + '</strong><span>오늘의 물결</span></div>' +
+      '<div class="stat"><strong>' + fmtNum(clan.week_waves) + '</strong><span>이번 주 출석</span></div>' +
+      '<div class="stat"><strong>+' + fmtNum(clan.new_members_7d) + '</strong><span>새 문파원</span></div>' +
       '</div>';
 
     /* 공지 */
     html += '<section class="section" aria-labelledby="home-notice-title">' +
       '<div class="section__head"><h3 class="section__title" id="home-notice-title">공지</h3>' +
-      '<span class="section__more">' + D.notices.length + '개</span></div>';
-    D.notices.forEach(function (n, i) {
+      '<span class="section__hadd">' + (admin ? '<button type="button" class="tool tool--add" data-add="notice">+ 공지 추가</button>' : '') +
+      '<span class="section__more">' + S.notices.length + '개</span></span></div>';
+
+    if (!S.notices.length) {
+      html += '<div class="empty">아직 공지가 없어요.' + (admin ? ' 위의 <b>+ 공지 추가</b>로 첫 공지를 남겨 보세요.' : '') + '</div>';
+    }
+
+    S.notices.forEach(function (n, i) {
       var open = i === 0;
       var body = '';
-      n.body.forEach(function (p) { body += '<p>' + esc(p) + '</p>'; });
+      paragraphs(n.body).forEach(function (p) { body += '<p>' + esc(p) + '</p>'; });
       html += '<article class="notice' + (open ? ' is-open' : '') + '">' +
-        '<button type="button" class="notice__head" aria-expanded="' + (open ? 'true' : 'false') + '" aria-controls="notice-body-' + n.id + '">' +
+        '<button type="button" class="notice__head" aria-expanded="' + (open ? 'true' : 'false') + '" aria-controls="notice-body-' + esc(n.id) + '">' +
         '<span class="notice__pin" aria-hidden="true">' +
         (n.pinned
           ? '<svg viewBox="0 0 16 16" width="13" height="13" focusable="false"><path d="M5.2 1.6 10.8 7.2 9 9l2 4-4-2-1.8 1.8L1.5 7.3 5.2 1.6z" fill="currentColor" opacity=".85"/></svg>'
@@ -400,13 +1077,16 @@
         '<span class="badge badge--jade">' + esc(n.tag) + '</span>' +
         esc(n.title) +
         '</span>' +
-        '<span class="notice__meta">' + esc(n.author) + ' · ' + esc(n.role) + ' · ' + relDay(n.daysAgo) + '</span>' +
-        '<span class="notice__summary">' + esc(n.summary) + '</span>' +
+        '<span class="notice__meta">' + esc(n.author) + (n.roleLabel ? ' · ' + esc(n.roleLabel) : '') + ' · ' + relDayLabel(n.created_at) + '</span>' +
+        '<span class="notice__summary">' + esc(String(n.body || '').split('\n')[0]) + '</span>' +
         '</span>' +
         '<span class="notice__chevron" aria-hidden="true">' +
         '<svg viewBox="0 0 24 24" width="15" height="15" focusable="false"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
         '</span></button>' +
-        '<div class="notice__body" id="notice-body-' + n.id + '">' + body + '</div>' +
+        '<div class="notice__body" id="notice-body-' + esc(n.id) + '">' + body + '</div>' +
+        (admin ? '<div class="item-tools"><button type="button" class="tool" data-pin="' + esc(n.id) + '" data-pinned="' + (n.pinned ? '1' : '0') + '">' +
+          (n.pinned ? '고정 해제' : '고정') + '</button>' +
+          '<button type="button" class="tool tool--danger" data-del-notice="' + esc(n.id) + '">삭제</button></div>' : '') +
         '</article>';
     });
     html += '</section>';
@@ -414,37 +1094,60 @@
     /* 일정 */
     html += '<section class="section" aria-labelledby="home-event-title">' +
       '<div class="section__head"><h3 class="section__title" id="home-event-title">모임 일정</h3>' +
-      '<span class="section__more">다가오는 일정</span></div><div class="events">';
-    D.events.forEach(function (ev) {
-      var date = eventDate(ev);
-      var dd = ddayOf(date);
-      html += '<article class="event">' +
-        '<div class="event__date"><span class="event__d">' + date.getDate() + '</span>' +
-        '<span class="event__m">' + (date.getMonth() + 1) + '월 · ' + WEEKDAYS[date.getDay()] + '</span></div>' +
-        '<div class="event__info"><div class="event__title">' + esc(ev.title) + '</div>' +
-        '<div class="event__meta"><span>' + pad(ev.hour) + ':' + pad(ev.minute) + '</span><span>·</span><span>' + esc(ev.place) + '</span></div>' +
-        '<div class="event__meta"><span>' + esc(ev.note) + '</span></div></div>' +
-        '<span class="event__dday' + (dd === '오늘' || dd === '내일' ? ' is-soon' : '') + '">' + dd + '</span>' +
-        '</article>';
-    });
-    html += '</div></section>';
+      '<span class="section__hadd">' + (admin ? '<button type="button" class="tool tool--add" data-add="event">+ 일정 추가</button>' : '') +
+      '<span class="section__more">다가오는 일정</span></span></div>';
+
+    if (!S.events.length) {
+      html += '<div class="empty">아직 잡힌 일정이 없어요.' + (admin ? ' 위의 <b>+ 일정 추가</b>로 첫 모임을 잡아 보세요.' : '') + '</div>';
+    } else {
+      html += '<div class="events">';
+      S.events.forEach(function (ev) {
+        var date = new Date(ev.starts_at);
+        var dd = ddayOf(date);
+        html += '<article class="event">' +
+          '<div class="event__main">' +
+          '<div class="event__date"><span class="event__d">' + date.getDate() + '</span>' +
+          '<span class="event__m">' + (date.getMonth() + 1) + '월 · ' + WEEKDAYS[date.getDay()] + '</span></div>' +
+          '<div class="event__info"><div class="event__title">' + esc(ev.title) + '</div>' +
+          '<div class="event__meta"><span>' + timeLabel(ev.starts_at) + '</span><span>·</span><span>' + esc(ev.place || '장소 미정') + '</span></div>' +
+          (ev.note ? '<div class="event__meta"><span>' + esc(ev.note) + '</span></div>' : '') +
+          '</div>' +
+          '<span class="event__dday' + (dd === '오늘' || dd === '내일' ? ' is-soon' : '') + '">' + dd + '</span>' +
+          '</div>' +
+          (admin ? '<div class="item-tools"><button type="button" class="tool tool--danger" data-del-event="' + esc(ev.id) + '">일정 삭제</button></div>' : '') +
+          '</article>';
+      });
+      html += '</div>';
+    }
+    html += '</section>';
 
     /* 쿠폰 */
     html += '<section class="section" aria-labelledby="home-coupon-title">' +
       '<div class="section__head"><h3 class="section__title" id="home-coupon-title">도깨비의 세계 쿠폰</h3>' +
-      '<span class="section__more">옆으로 넘겨보세요</span></div>' +
-      '<div class="coupons">';
-    D.coupons.forEach(function (c) {
-      html += '<article class="coupon">' +
-        '<div class="coupon__head"><span class="coupon__title">' + esc(c.title) + '</span>' +
-        '<span class="badge badge--lotus">' + esc(c.until) + '까지</span></div>' +
-        '<p class="coupon__reward">' + esc(c.reward) + '</p>' +
-        '<div class="coupon__code"><span>' + esc(c.code) + '</span>' +
-        '<button type="button" class="coupon__copy" data-copy="' + esc(c.code) + '">복사</button></div>' +
-        '<p class="coupon__until">게임 내 쿠폰 등록창에 입력해 보세요</p>' +
-        '</article>';
-    });
-    html += '</div><p class="section__note">프로토타입용 예시 쿠폰이에요. 실제 게임에서 쓰이는 코드가 아닙니다.</p></section>';
+      '<span class="section__hadd">' + (admin ? '<button type="button" class="tool tool--add" data-add="coupon">+ 쿠폰 추가</button>' : '') +
+      '<span class="section__more">옆으로 넘겨보세요</span></span></div>';
+
+    if (!S.coupons.length) {
+      html += '<div class="empty">지금은 쓸 수 있는 쿠폰이 없어요.</div>';
+    } else {
+      html += '<div class="coupons">';
+      S.coupons.forEach(function (c) {
+        var until = c.expires_on ? String(c.expires_on).replace(/-/g, '.').replace(/^(\d{4})\./, '') + '까지'
+          : (c.until ? c.until + '까지' : '기한 없음');
+        html += '<article class="coupon">' +
+          '<div class="coupon__head"><span class="coupon__title">' + esc(c.title) + '</span>' +
+          '<span class="badge badge--lotus">' + esc(until) + '</span></div>' +
+          '<p class="coupon__reward">' + esc(c.reward) + '</p>' +
+          '<div class="coupon__code"><span>' + esc(c.code) + '</span>' +
+          '<button type="button" class="coupon__copy" data-copy="' + esc(c.code) + '">복사</button></div>' +
+          '<p class="coupon__until">게임 내 쿠폰 등록창에 입력해 보세요</p>' +
+          (admin ? '<div class="item-tools"><button type="button" class="tool tool--danger" data-del-coupon="' + esc(c.id) + '">쿠폰 삭제</button></div>' : '') +
+          '</article>';
+      });
+      html += '</div>';
+      if (!isLive()) { html += '<p class="section__note">체험 모드의 예시 쿠폰이에요. 실제 게임에서 쓰이는 코드가 아닙니다.</p>'; }
+    }
+    html += '</section>';
 
     /* 사냥 팁 */
     html += '<section class="section" aria-labelledby="home-tip-title">' +
@@ -457,9 +1160,13 @@
     });
     html += '</div></section>';
 
-    html += '<section class="section"><div class="privacy"><strong>이 앱에 대해</strong>' +
-      '<p>연못문파를 위한 작은 커뮤니티 앱 프로토타입이에요. 공지·일정·쿠폰·앨범·대화는 체험용 예시로 채워져 있습니다.</p>' +
-      '<p>이름·전화번호·이메일은 받지 않고, 입력한 닉네임과 기록은 이 기기에만 저장돼요.</p></div></section>';
+    html += '<section class="section"><div class="privacy"><strong>이 연못에 대해</strong>' +
+      (isLive()
+        ? '<p>연못문파 문파원이 함께 쓰는 공간이에요. 공지 · 일정 · 쿠폰은 문주가, 채팅과 앨범은 문파원 모두가 채웁니다.</p>' +
+          '<p>이름 · 전화번호 · 이메일은 받지 않아요. 닉네임과 PIN 만 쓰고, PIN 은 되돌릴 수 없는 암호로만 저장돼요.</p>'
+        : '<p>연못문파를 위한 작은 커뮤니티 앱의 체험 모드예요. 공지 · 일정 · 쿠폰 · 앨범 · 대화는 예시로 채워져 있습니다.</p>' +
+          '<p>입력한 닉네임과 기록은 이 기기에만 저장돼요.</p>') +
+      '</div></section>';
 
     $('#home-body').innerHTML = html;
 
@@ -485,35 +1192,78 @@
         copyText(btn.getAttribute('data-copy'));
       });
     });
+
+    if (admin) {
+      $$('[data-add]', $('#home-body')).forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var kind = btn.getAttribute('data-add');
+          if (kind === 'notice') { openNoticeForm(); }
+          else if (kind === 'event') { openEventForm(); }
+          else if (kind === 'coupon') { openCouponForm(); }
+        });
+      });
+      $$('[data-del-notice]', $('#home-body')).forEach(function (btn) {
+        btn.addEventListener('click', function () { confirmDeleteNotice(btn.getAttribute('data-del-notice')); });
+      });
+      $$('[data-pin]', $('#home-body')).forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          toggleNoticePin(btn.getAttribute('data-pin'), btn.getAttribute('data-pinned') === '1');
+        });
+      });
+      $$('[data-del-event]', $('#home-body')).forEach(function (btn) {
+        btn.addEventListener('click', function () { confirmDeleteEvent(btn.getAttribute('data-del-event')); });
+      });
+      $$('[data-del-coupon]', $('#home-body')).forEach(function (btn) {
+        btn.addEventListener('click', function () { confirmDeleteCoupon(btn.getAttribute('data-del-coupon')); });
+      });
+    }
   }
 
-  function attendanceState() {
-    var saved = store.get('attendance', null);
-    var today = dayKey(new Date());
-    if (saved && saved.date === today) {
-      return { done: true, streak: saved.streak || 1 };
-    }
-    return { done: false, streak: saved ? (saved.streak || 0) : 0 };
-  }
-  function attendanceLabel(state) {
-    if (state.done) { return '오늘의 물결 · ' + state.streak + '일째'; }
+  function waveLabel(wave) {
+    if (wave.today_done) { return '오늘의 물결 · ' + (wave.streak || 1) + '일째'; }
+    if (wave.streak) { return '오늘의 물결 남기기 · ' + wave.streak + '일 이어가는 중'; }
     return '오늘의 물결 남기기';
   }
+
   function markAttendance(btn) {
-    var state = attendanceState();
-    if (state.done) {
-      toast('오늘은 이미 물결을 남기셨어요 · ' + state.streak + '일 연속');
+    var wave = (S.me && S.me.wave) || { today_done: false, streak: 0 };
+    if (wave.today_done) {
+      toast('오늘은 이미 물결을 남기셨어요 · ' + (wave.streak || 1) + '일 연속');
       return;
     }
+
+    if (isLive()) {
+      DB.markAttendance().then(function (res) {
+        S.me.wave = { today_done: true, streak: res.streak, total: res.total };
+        if (S.clan) {
+          S.clan.today_waves = (S.clan.today_waves || 0) + (res.already ? 0 : 1);
+          S.clan.week_waves = (S.clan.week_waves || 0) + (res.already ? 0 : 1);
+        }
+        updateWaveButton(btn, S.me.wave);
+        toast(res.already ? '오늘은 이미 물결을 남기셨어요 · ' + res.streak + '일 연속' : '물결을 남겼어요 · ' + res.streak + '일 연속 🪷');
+      }).catch(function (err) {
+        toast(errorMessage(err));
+      });
+      return;
+    }
+
     var prev = store.get('attendance', null);
     var yesterday = dayKey(addDays(-1));
     var streak = prev && prev.date === yesterday ? (prev.streak || 1) + 1 : 1;
     store.set('attendance', { date: dayKey(new Date()), streak: streak });
+    S.attendance = { date: dayKey(new Date()), streak: streak };
+    S.me.wave = { today_done: true, streak: streak, total: streak };
+    if (S.clan) { S.clan.today_waves = (S.clan.today_waves || 0) + 1; }
+    updateWaveButton(btn, S.me.wave);
+    toast(streak > 1 ? '물결을 남겼어요 · ' + streak + '일 연속 🪷' : '오늘의 첫 물결을 남겼어요 🪷');
+  }
+
+  function updateWaveButton(btn, wave) {
+    if (!btn) { return; }
     btn.classList.add('is-done');
     btn.setAttribute('aria-pressed', 'true');
     var label = $('#wave-label', btn);
-    if (label) { label.textContent = attendanceLabel({ done: true, streak: streak }); }
-    toast(streak > 1 ? '물결을 남겼어요 · ' + streak + '일 연속 🪷' : '오늘의 첫 물결을 남겼어요 🪷');
+    if (label) { label.textContent = waveLabel(wave); }
   }
 
   function copyText(text) {
@@ -537,31 +1287,9 @@
     document.body.removeChild(ta);
   }
 
-  /* ---------------- 채팅 ---------------- */
-  function chatTime(ts) {
-    var d = new Date(ts);
-    return pad(d.getHours()) + ':' + pad(d.getMinutes());
-  }
-
-  function loadChat() {
-    var saved = store.get('chat', null);
-    if (saved && saved.length) { return saved; }
-    var now = Date.now();
-    var seeded = D.chatSeed.map(function (m, i) {
-      return {
-        id: 'seed-' + i,
-        name: m.system ? '' : m.name,
-        role: m.role || '',
-        text: m.text,
-        ts: m.system ? now - 1000 * 60 * 180 : now - 1000 * 60 * (m.minutesAgo || 0),
-        system: !!m.system,
-        mine: false
-      };
-    });
-    store.set('chat', seeded);
-    return seeded;
-  }
-
+  /* ============================================================
+     채팅
+     ============================================================ */
   function bindChat() {
     var form = $('#composer');
     var input = $('#chat-input');
@@ -589,33 +1317,67 @@
     $('#chat-send').disabled = true;
   }
 
+  function refreshChat() {
+    if (!isLive()) { return; }
+    DB.listChat(50).then(function (rows) {
+      S.chat = (rows || []).map(mapChat).sort(function (a, b) { return a.id - b.id; });
+      renderChat();
+    }).catch(function () {});
+  }
+
   function sendChat(raw) {
-    var text = String(raw || '').trim().slice(0, 200);
+    var text = String(raw || '').trim().slice(0, 500);
     if (!text) { return; }
+
+    if (isLive()) {
+      var input = $('#chat-input');
+      var send = $('#chat-send');
+      send.disabled = true;
+      DB.postChat(text).then(function (msg) {
+        input.value = '';
+        if (!S.chat.some(function (m) { return m.id === msg.id; })) {
+          S.chat.push(mapChat({
+            id: msg.id, member_id: msg.member_id, nickname: msg.nickname,
+            role: msg.role, kind: 'text', body: msg.body, created_at: msg.created_at
+          }));
+          renderChat();
+        }
+        scrollChat(true);
+      }).catch(function (err) {
+        toast(errorMessage(err));
+        send.disabled = false;
+      });
+      return;
+    }
+
     var msg = {
       id: 'm-' + Date.now(),
-      name: S.user ? S.user.nick : '연못손님',
-      role: S.user && S.user.guest ? '체험' : '문파원',
-      text: text,
-      ts: Date.now(),
+      member_id: 'guest',
+      nickname: S.user ? S.user.nick : '연못손님',
+      roleLabel: '체험',
+      kind: 'text',
+      body: text,
+      created_at: new Date().toISOString(),
       mine: true
     };
     S.chat.push(msg);
-    store.set('chat', S.chat);
 
     if (!S.firstSendNoted && !store.get('firstSendNoted', false)) {
       S.chat.push({
         id: 'sys-' + Date.now(),
-        system: true,
-        text: '체험 모드 안내 · 지금 보낸 메시지는 이 기기에만 남고 다른 문파원에게는 전달되지 않아요.',
-        ts: Date.now() + 1,
+        member_id: null,
+        nickname: null,
+        roleLabel: '',
+        kind: 'system',
+        body: '체험 모드 안내 · 지금 보낸 메시지는 이 기기에만 남고 다른 문파원에게는 전달되지 않아요.',
+        created_at: new Date(Date.now() + 1).toISOString(),
         mine: false
       });
-      store.set('chat', S.chat);
       store.set('firstSendNoted', true);
       S.firstSendNoted = true;
     }
 
+    persistTrialChat();
     renderChat();
     $('#chat-input').value = '';
     $('#chat-send').disabled = true;
@@ -635,73 +1397,108 @@
   }
 
   function renderChat() {
-    if (!S.chat.length) { S.chat = loadChat(); }
+    var notice = $('#chat-notice');
+    if (notice) {
+      notice.textContent = isLive()
+        ? '문파 채팅방이에요. 보낸 메시지는 문파원 모두에게 바로 보여요. 서로의 속도를 존중해 주세요.'
+        : '체험용 대화방이에요. 보낸 메시지는 이 기기에만 저장되고 다른 사람에게는 전달되지 않아요.';
+    }
+
     var list = $('#chat-list');
+    if (!list) { return; }
+    if (!S.chat.length) {
+      list.innerHTML = '<div class="msg--system">아직 대화가 없어요. 먼저 인사 한마디 건네볼까요?</div>';
+      return;
+    }
+
+    var admin = isAdmin();
     var html = '';
     S.chat.forEach(function (m) {
-      if (m.system) {
-        html += '<div class="msg--system">' + esc(m.text) + '</div>';
+      if (m.kind === 'system') {
+        html += '<div class="msg--system">' + esc(m.body) + '</div>';
         return;
       }
+      var who = m.mine ? '나' : (m.nickname || '문파원');
       html += '<div class="msg' + (m.mine ? ' msg--mine' : '') + '">' +
-        '<span class="msg__avatar" style="background:' + avatarStyle(m.name) + '" aria-hidden="true">' + esc(initial(m.name)) + '</span>' +
+        '<span class="msg__avatar" style="background:' + avatarStyle(m.nickname || '연') + '" aria-hidden="true">' + esc(initial(m.nickname || '연')) + '</span>' +
         '<div class="msg__col">' +
-        '<div class="msg__who"><span>' + esc(m.mine ? '나' : m.name) + '</span>' +
-        (m.role ? '<span class="msg__role">' + esc(m.role) + '</span>' : '') +
+        '<div class="msg__who"><span>' + esc(who) + '</span>' +
+        (m.roleLabel ? '<span class="msg__role">' + esc(m.roleLabel) + '</span>' : '') +
+        (admin ? '<button type="button" class="msg__del" data-del-msg="' + esc(m.id) + '" aria-label="메시지 지우기">지우기</button>' : '') +
         '</div>' +
-        '<div class="msg__bubble">' + esc(m.text) + '</div>' +
-        '<div class="msg__time">' + chatTime(m.ts) + '</div>' +
+        '<div class="msg__bubble">' + esc(m.body) + '</div>' +
+        '<div class="msg__time">' + timeLabel(m.created_at) + '</div>' +
         '</div></div>';
     });
     list.innerHTML = html;
     scrollChat(false);
+
+    if (admin) {
+      $$('[data-del-msg]', list).forEach(function (btn) {
+        btn.addEventListener('click', function () { confirmDeleteMessage(btn.getAttribute('data-del-msg')); });
+      });
+    }
   }
 
-  /* ---------------- 앨범 ---------------- */
-  function albumLikes(item) {
-    var liked = !!S.likes[item.id];
-    return { liked: liked, count: item.likes + (liked ? 1 : 0) };
-  }
-
+  /* ============================================================
+     앨범
+     ============================================================ */
   function renderAlbum() {
+    var admin = isAdmin();
     var html = '<header class="screen__head">' +
       '<p class="kicker">문파앨범</p>' +
       '<h2 class="screen__title">연못에 남긴 장면들</h2>' +
       '<p class="screen__sub">스크린샷과 추억을 함께 모아두는 곳이에요</p>' +
       '</header>';
 
-    html += '<div class="filters" role="group" aria-label="앨범 분류">';
-    Object.keys(CATEGORY).forEach(function (name) {
-      html += '<button type="button" class="chip' + (S.category === name ? ' is-active' : '') +
-        '" data-category="' + esc(name) + '" aria-pressed="' + (S.category === name) + '">' + esc(name) + '</button>';
-    });
-    html += '</div>';
+    if (!isLive()) {
+      html += '<div class="filters" role="group" aria-label="앨범 분류">';
+      Object.keys(CATEGORY).forEach(function (name) {
+        html += '<button type="button" class="chip' + (S.category === name ? ' is-active' : '') +
+          '" data-category="' + esc(name) + '" aria-pressed="' + (S.category === name) + '">' + esc(name) + '</button>';
+      });
+      html += '</div>';
+    }
 
+    // 체험 모드는 그림 종류로 나누고, 실제 문파 앨범은 올라온 사진을 그대로 보여 줍니다.
     var allowed = CATEGORY[S.category];
-    var items = D.album.filter(function (item) {
+    var items = isLive() ? S.album : S.album.filter(function (item) {
       return !allowed || allowed.indexOf(item.kind) !== -1;
     });
 
     html += '<div class="gallery">';
-    if (!items.length) {
-      html += '<div class="empty" style="grid-column:1/-1">아직 이 분류의 장면이 없어요.</div>';
+    if (!S.ready) {
+      html += '<div class="empty" style="grid-column:1/-1">앨범을 불러오는 중이에요…</div>';
+    } else if (!items.length) {
+      html += '<div class="empty" style="grid-column:1/-1">아직 이곳에 남긴 장면이 없어요.</div>';
     }
     items.forEach(function (item) {
-      var like = albumLikes(item);
-      html += '<button type="button" class="shot" data-shot="' + esc(item.id) + '" aria-label="' + esc(item.title) + ' 크게 보기">' +
-        '<span class="shot__art">' + ART.scene(item.kind) + '</span>' +
-        (relDay(item.daysAgo) === relDay(0) ? '<span class="shot__new">NEW</span>' : '') +
+      var img = S.albumImages[item.id];
+      var ready = img && img !== 'loading' && img !== 'failed';
+      var art = ready
+        ? '<img class="shot__img" src="' + esc(img) + '" alt="' + esc(item.title) + '" loading="lazy">'
+        : ((item.image_mime && img !== 'failed')
+          ? '<span class="shot__loading">사진을 불러오는 중…</span>'
+          : ART.scene(item.kind || 'moon'));
+      var canDelete = admin || (isLive() && item.author_id && item.author_id === myId());
+      html += '<div class="shot" role="button" tabindex="0" data-shot="' + esc(item.id) + '" aria-label="' + esc(item.title) + ' 크게 보기">' +
+        '<span class="shot__art">' + art + '</span>' +
+        (relDayLabel(item.created_at) === relDayLabel(new Date()) ? '<span class="shot__new">NEW</span>' : '') +
+        (canDelete ? '<button type="button" class="shot__del" data-del-album="' + esc(item.id) + '" aria-label="사진 지우기">×</button>' : '') +
         '<span class="shot__meta">' +
         '<span class="shot__title">' + esc(item.title) + '</span>' +
         '<span class="shot__sub"><span>' + esc(item.author) + '</span>' +
         '<span class="shot__like" data-like-count="' + esc(item.id) + '">' +
-        heartSvg(like.liked) + ' ' + like.count + '</span></span>' +
-        '</span></button>';
+        heartSvg(item.liked) + ' ' + item.likes + '</span></span>' +
+        '</span></div>';
     });
     html += '</div>';
 
-    html += '<div class="section"><button type="button" class="btn btn--ghost" id="upload-btn">스크린샷 올리기</button>' +
-      '<p class="section__note">프로토타입에서는 실제 사진 업로드가 열려 있지 않아요. 정식 버전에서 문파원 모두가 올릴 수 있게 붙일 예정입니다.</p></div>';
+    html += '<div class="section"><button type="button" class="btn btn--ghost" id="upload-btn">사진 올리기</button>' +
+      '<p class="section__note">' + (isLive()
+        ? '사진은 긴 변 1,280px · 800KB 이하로 자동으로 줄여서 올라가요. 하루 10장까지 올릴 수 있습니다.'
+        : '체험 모드에서는 사진 올리기가 열려 있지 않아요. 실제 문파로 들어가면 문파원 모두가 올릴 수 있습니다.') +
+      '</p></div>';
 
     $('#album-body').innerHTML = html;
 
@@ -711,15 +1508,57 @@
         renderAlbum();
       });
     });
-    $$('[data-shot]', $('#album-body')).forEach(function (btn) {
-      btn.addEventListener('click', function () { openLightbox(btn.getAttribute('data-shot')); });
+
+    $$('[data-shot]', $('#album-body')).forEach(function (card) {
+      var open = function () { openLightbox(card.getAttribute('data-shot')); };
+      card.addEventListener('click', function (e) {
+        if (e.target.closest && e.target.closest('[data-del-album]')) { return; }
+        open();
+      });
+      card.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+      });
     });
+
+    if (isLive()) {
+      $$('[data-del-album]', $('#album-body')).forEach(function (btn) {
+        btn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          confirmDeleteAlbum(btn.getAttribute('data-del-album'));
+        });
+      });
+    }
+
     var upload = $('#upload-btn');
     if (upload) {
       upload.addEventListener('click', function () {
-        toast('지금은 둘러보기만 열려 있어요. 정식 버전에서 올릴 수 있게 준비할게요.');
+        if (!isLive()) {
+          toast('체험 모드에서는 사진 올리기가 열려 있지 않아요. 실제 문파에서 올릴 수 있습니다.');
+          return;
+        }
+        openAlbumForm();
       });
     }
+
+    if (isLive()) { loadAlbumImages(items); }
+  }
+
+  function loadAlbumImages(items) {
+    items.forEach(function (item) {
+      if (!item.image_mime || S.albumImages[item.id]) { return; }
+      S.albumImages[item.id] = 'loading';
+      DB.albumImage(item.id).then(function (res) {
+        S.albumImages[item.id] = res.data_url;
+        var img = $('[data-shot="' + item.id + '"] .shot__art');
+        if (img) {
+          img.innerHTML = '<img class="shot__img" src="' + esc(res.data_url) + '" alt="' + esc(item.title) + '" loading="lazy">';
+        }
+      }).catch(function () {
+        S.albumImages[item.id] = 'failed';
+        var img = $('[data-shot="' + item.id + '"] .shot__art');
+        if (img) { img.innerHTML = ART.scene('moon'); }
+      });
+    });
   }
 
   function heartSvg(filled) {
@@ -727,65 +1566,156 @@
       (filled ? 'currentColor' : 'none') + '" stroke="currentColor" stroke-width="1.3"/></svg>';
   }
 
+  function findAlbumItem(id) {
+    return S.album.filter(function (a) { return a.id === id; })[0] || null;
+  }
+
   function openLightbox(id) {
-    var item = null;
-    D.album.forEach(function (a) { if (a.id === id) { item = a; } });
+    var item = findAlbumItem(id);
     if (!item) { return; }
-    var like = albumLikes(item);
+    var image = S.albumImages[item.id];
+    var art = (image && image !== 'loading' && image !== 'failed')
+      ? '<img class="shot__img" src="' + esc(image) + '" alt="' + esc(item.title) + '">'
+      : (item.image_mime && image !== 'failed' ? '<span class="shot__loading">사진을 불러오는 중…</span>' : ART.scene(item.kind || 'moon'));
+
+    var canDelete = isAdmin() || (isLive() && item.author_id && item.author_id === myId());
+
     var html = '<div class="lightbox">' +
-      '<div class="lightbox__art">' + ART.scene(item.kind) + '</div>' +
-      '<h3 class="lightbox__title" id="modal-title">' + esc(item.title) + '</h3>' +
-      '<p class="lightbox__meta">' + esc(item.author) + ' · ' + relDay(item.daysAgo) + ' · 문파앨범</p>' +
+      '<div class="lightbox__art">' + art + '</div>' +
+      modalTitle(item.title) +
+      '<p class="lightbox__meta">' + esc(item.author) + ' · ' + relDayLabel(item.created_at) + ' · 문파앨범</p>' +
+      (item.caption ? '<p class="lightbox__caption">' + esc(item.caption) + '</p>' : '') +
       '<div class="lightbox__actions">' +
-      '<button type="button" class="like-btn" id="like-btn" aria-pressed="' + like.liked + '">' +
-      heartSvg(like.liked) + '<span id="like-text">물결 ' + like.count + '</span></button>' +
+      '<button type="button" class="like-btn" id="like-btn" aria-pressed="' + item.liked + '">' +
+      heartSvg(item.liked) + '<span id="like-text">물결 ' + item.likes + '</span></button>' +
       '<span class="section__more">마음이 닿으면 한 번 눌러주세요</span>' +
-      '</div></div>';
+      '</div>' +
+      (canDelete ? '<div class="item-tools" style="justify-content:flex-start;margin-top:12px"><button type="button" class="tool tool--danger" id="album-del">이 사진 지우기</button></div>' : '') +
+      '</div>';
     openModal(html);
 
     var likeBtn = $('#like-btn');
     likeBtn.addEventListener('click', function () {
-      S.likes[item.id] = !S.likes[item.id];
-      store.set('likes', S.likes);
-      var updated = albumLikes(item);
-      likeBtn.setAttribute('aria-pressed', String(updated.liked));
-      likeBtn.innerHTML = heartSvg(updated.liked) + '<span id="like-text">물결 ' + updated.count + '</span>';
-      var counter = $('[data-like-count="' + item.id + '"]');
-      if (counter) {
-        counter.innerHTML = heartSvg(updated.liked) + ' ' + updated.count;
+      if (isLive()) {
+        DB.toggleAlbumLike(item.id).then(function (res) {
+          item.liked = res.liked;
+          item.likes = res.likes;
+          likeBtn.setAttribute('aria-pressed', String(item.liked));
+          likeBtn.innerHTML = heartSvg(item.liked) + '<span id="like-text">물결 ' + item.likes + '</span>';
+          var counter = $('[data-like-count="' + item.id + '"]');
+          if (counter) { counter.innerHTML = heartSvg(item.liked) + ' ' + item.likes; }
+        }).catch(function (err) { toast(errorMessage(err)); });
+        return;
       }
+      item.liked = !item.liked;
+      item.likes += item.liked ? 1 : -1;
+      S.likes[item.id] = item.liked;
+      store.set('likes', S.likes);
+      likeBtn.setAttribute('aria-pressed', String(item.liked));
+      likeBtn.innerHTML = heartSvg(item.liked) + '<span id="like-text">물결 ' + item.likes + '</span>';
+      var counter = $('[data-like-count="' + item.id + '"]');
+      if (counter) { counter.innerHTML = heartSvg(item.liked) + ' ' + item.likes; }
+    });
+
+    var del = $('#album-del');
+    if (del) {
+      del.addEventListener('click', function () {
+        closeModal();
+        confirmDeleteAlbum(item.id);
+      });
+    }
+  }
+
+  function openAlbumForm() {
+    openModal(modalTitle('사진 올리기') +
+      '<p class="lightbox__meta">스크린샷이나 연못에서 찍은 장면을 남겨 보세요.</p>' +
+      '<form class="form" id="album-form" novalidate style="margin-top:14px">' +
+      '<label class="field"><span class="field__label">사진</span>' +
+      '<input class="field__input field__file" type="file" accept="image/jpeg,image/png,image/webp" id="album-file">' +
+      '</label>' +
+      '<label class="field"><span class="field__label">제목</span>' +
+      '<input class="field__input" type="text" id="album-title" maxlength="40" placeholder="예) 달빛 아래 연못"></label>' +
+      '<label class="field"><span class="field__label">설명 (선택)</span>' +
+      '<textarea class="field__input field__textarea" id="album-caption" maxlength="300" rows="3" placeholder="어떤 순간이었는지 적어 주세요"></textarea></label>' +
+      '<p class="form__error" id="album-error" role="alert" hidden></p>' +
+      '<button type="submit" class="btn btn--primary">연못에 남기기</button>' +
+      '</form>');
+
+    var form = $('#album-form');
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var fileInput = $('#album-file');
+      var title = $('#album-title').value.trim();
+      var caption = $('#album-caption').value.trim();
+      var errEl = $('#album-error');
+      var file = fileInput.files && fileInput.files[0];
+
+      var problem = '';
+      if (!file) { problem = '사진을 골라 주세요.'; }
+      else if (!title) { problem = '제목을 적어 주세요.'; }
+      if (problem) {
+        errEl.textContent = problem;
+        errEl.hidden = false;
+        return;
+      }
+      errEl.hidden = true;
+
+      var btn = $('button[type="submit"]', form);
+      btn.disabled = true;
+      btn.textContent = '사진을 줄이는 중…';
+
+      DB.compressPhoto(file).then(function (photo) {
+        btn.textContent = '연못에 남기는 중…';
+        return DB.createAlbumPost(title, photo.dataUrl, caption, photo.mime).then(function (created) {
+          if (created && created.id) { S.albumImages[created.id] = photo.dataUrl; }
+          return created;
+        });
+      }).then(function () {
+        closeModal();
+        toast('사진을 남겼어요 🪷');
+        return DB.listAlbum(12).then(function (rows) {
+          S.album = (rows || []).map(mapAlbum);
+          renderAlbum();
+        });
+      }).catch(function (err) {
+        btn.disabled = false;
+        btn.textContent = '연못에 남기기';
+        errEl.textContent = errorMessage(err);
+        errEl.hidden = false;
+      });
     });
   }
 
-  /* ---------------- 문파원 ---------------- */
-  function membersAll() {
-    var list = D.members.slice();
-    if (S.user) {
-      list.unshift({
-        name: S.user.nick,
-        role: S.user.guest ? '체험' : '신규',
-        level: 0,
-        status: 'on',
-        last: '지금 접속 중',
-        me: true
-      });
-    }
-    return list;
+  /* ============================================================
+     문파원
+     ============================================================ */
+  function refreshMembers() {
+    if (!isLive()) { renderMembers(); return; }
+    var job = isAdmin() ? loadAdminMembers() : DB.listMembers().then(function (rows) {
+      S.members = (rows || []).map(function (m) { return mapMember(m, false); });
+    });
+    job.then(renderMembers).catch(function (err) {
+      toast(errorMessage(err));
+      renderMembers();
+    });
   }
 
   function renderMembers() {
-    var all = membersAll();
-    var online = all.filter(function (m) { return m.status === 'on'; }).length;
+    var admin = isAdmin();
+    var all = S.members.slice();
+    var online = all.filter(function (m) { return m.online; }).length;
+    var activeCount = all.filter(function (m) { return m.status === 'active'; }).length;
+
     var html = '<header class="screen__head">' +
       '<p class="kicker">문파원</p>' +
       '<h2 class="screen__title">함께 있는 사람들</h2>' +
-      '<p class="screen__sub">' + D.guild.members + '명의 문파원이 연못을 지키고 있어요</p>' +
+      '<p class="screen__sub">' + fmtNum(activeCount) + '명의 문파원이 연못을 지키고 있어요</p>' +
       '</header>';
 
     html += '<div class="member-stats">' +
-      '<div class="stat"><strong>' + (all.length) + '</strong><span>전체 문파원</span></div>' +
-      '<div class="stat"><strong>' + online + '</strong><span>지금 접속</span></div>' +
-      '<div class="stat"><strong>+' + D.guild.newMembers + '</strong><span>이번 주 새 식구</span></div>' +
+      '<div class="stat"><strong>' + fmtNum(activeCount) + '</strong><span>전체 문파원</span></div>' +
+      '<div class="stat"><strong>' + fmtNum(online) + '</strong><span>지금 접속</span></div>' +
+      '<div class="stat"><strong>+' + fmtNum(S.clan ? S.clan.new_members_7d : 0) + '</strong><span>이번 주 새 식구</span></div>' +
       '</div>';
 
     html += '<div class="member-tools">' +
@@ -794,8 +1724,13 @@
       '<input type="search" id="member-search" placeholder="닉네임으로 찾기" aria-label="문파원 닉네임 검색" value="' + esc(S.query) + '">' +
       '</div></div>';
 
+    var filters = isLive()
+      ? [['all', '전체'], ['online', '접속 중'], ['offline', '조용한 문파원']]
+      : [['all', '전체'], ['on', '접속 중'], ['away', '자리 비움']];
+    if (admin) { filters = filters.concat([['kicked', '내보냄'], ['banned', '차단']]); }
+
     html += '<div class="filters" role="group" aria-label="접속 상태 필터" style="margin-left:0;margin-right:0;padding-left:0;padding-right:0">';
-    [['all', '전체'], ['on', '접속 중'], ['away', '자리 비움']].forEach(function (pair) {
+    filters.forEach(function (pair) {
       html += '<button type="button" class="chip' + (S.memberFilter === pair[0] ? ' is-active' : '') +
         '" data-mfilter="' + pair[0] + '" aria-pressed="' + (S.memberFilter === pair[0]) + '">' + pair[1] + '</button>';
     });
@@ -803,32 +1738,58 @@
 
     var q = S.query.trim().toLowerCase();
     var rows = all.filter(function (m) {
-      if (S.memberFilter !== 'all' && m.status !== S.memberFilter) { return false; }
-      if (q && m.name.toLowerCase().indexOf(q) === -1) { return false; }
+      if (isLive() && m.status !== 'active' && S.memberFilter !== 'kicked' && S.memberFilter !== 'banned') { return false; }
+      if (S.memberFilter !== 'all' && m.filterKey !== S.memberFilter && !(S.memberFilter === 'offline' && m.filterKey === 'off') && !(S.memberFilter === 'away' && m.filterKey === 'off')) { return false; }
+      if (q && m.nickname.toLowerCase().indexOf(q) === -1) { return false; }
       return true;
     });
 
     html += '<div class="member-list">';
-    if (!rows.length) {
+    if (!S.ready && isLive()) {
+      html += '<div class="empty">문파원을 불러오는 중이에요…</div>';
+    } else if (!rows.length) {
       html += '<div class="empty">조건에 맞는 문파원이 없어요.</div>';
     }
     rows.forEach(function (m) {
-      var statusLabel = m.status === 'on' ? '접속 중' : (m.status === 'away' ? '자리 비움' : '오프라인');
-      html += '<article class="member' + (m.me ? ' member--me' : '') + '">' +
-        '<span class="member__avatar" style="background:' + avatarStyle(m.name) + '" aria-hidden="true">' + esc(initial(m.name)) +
-        '<span class="status status--' + (m.status === 'on' ? 'on' : (m.status === 'away' ? 'away' : 'off')) + '"></span></span>' +
+      var statusLabel = m.statusLabel || (m.online ? '접속 중' : '자리 비움');
+      var metaRight = (m.online && m.status === 'active') ? '' : m.lastLabel;
+      var statusClass = m.online ? 'on' : 'off';
+      var tools = '';
+
+      if (admin && !m.me) {
+        if (m.status === 'active') {
+          tools = '<div class="member__tools">' +
+            '<button type="button" class="tool" data-role="' + esc(m.id) + '" data-next="' + (m.role === 'officer' ? 'member' : 'officer') + '">' +
+            (m.role === 'officer' ? '문파원으로' : '운영진으로') + '</button>' +
+            '<button type="button" class="tool" data-kick="' + esc(m.id) + '">내보내기</button>' +
+            '<button type="button" class="tool tool--danger" data-ban="' + esc(m.id) + '">차단</button>' +
+            '</div>';
+        } else {
+          tools = '<div class="member__tools">' +
+            '<button type="button" class="tool" data-restore="' + esc(m.id) + '">다시 들이기</button>' +
+            '</div>';
+        }
+      }
+
+      html += '<article class="member' + (m.me ? ' member--me' : '') + (admin ? ' member--admin' : '') + '">' +
+        '<span class="member__avatar" style="background:' + avatarStyle(m.nickname) + '" aria-hidden="true">' + esc(initial(m.nickname)) +
+        '<span class="status status--' + statusClass + '"></span></span>' +
         '<div class="member__info">' +
-        '<div class="member__name"><span>' + esc(m.name) + '</span>' +
+        '<div class="member__name"><span>' + esc(m.nickname) + '</span>' +
         (m.me ? '<span class="member__me-tag">나</span>' : '') +
-        '<span class="role ' + (ROLE_CLASS[m.role] || '') + '">' + esc(m.role) + '</span></div>' +
-        '<div class="member__meta"><span>' + statusLabel + '</span><span class="sep">·</span><span>' + esc(m.last) + '</span></div>' +
+        '<span class="role ' + (m.roleClass || '') + '">' + esc(m.roleLabel || '문파원') + '</span></div>' +
+        '<div class="member__meta"><span>' + esc(statusLabel) + '</span>' +
+        (metaRight ? '<span class="sep">·</span><span>' + esc(metaRight) + '</span>' : '') + '</div>' +
         '</div>' +
         '<div class="member__level">' + (m.level ? 'Lv.' + m.level : 'Lv.–') + '<span>연못 등급</span></div>' +
+        tools +
         '</article>';
     });
     html += '</div>';
 
-    html += '<p class="section__note">접속 상태와 등급은 체험용 예시 데이터예요. 정식 버전에서는 게임 연동 없이 직접 관리할 수 있게 만들 예정입니다.</p>';
+    html += '<p class="section__note">' + (isLive()
+      ? '연못 등급은 문파 안에서 정한 숫자예요. 접속 상태는 마지막으로 인사한 시각을 기준으로 보여 줍니다.'
+      : '접속 상태와 등급은 체험용 예시 데이터예요.') + '</p>';
 
     $('#members-body').innerHTML = html;
 
@@ -838,43 +1799,495 @@
         renderMembers();
       });
     });
+
     var search = $('#member-search');
-    search.addEventListener('input', function () {
-      S.query = search.value;
-      var pos = search.selectionStart;
-      renderMembers();
-      var next = $('#member-search');
-      next.focus();
-      try { next.setSelectionRange(pos, pos); } catch (e) { /* noop */ }
+    if (search) {
+      search.addEventListener('input', function () {
+        S.query = search.value;
+        var pos = search.selectionStart;
+        renderMembers();
+        var next = $('#member-search');
+        if (next) {
+          next.focus();
+          try { next.setSelectionRange(pos, pos); } catch (e) { /* noop */ }
+        }
+      });
+    }
+
+    if (admin) {
+      $$('[data-role]', $('#members-body')).forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          changeRole(btn.getAttribute('data-role'), btn.getAttribute('data-next'));
+        });
+      });
+      $$('[data-kick]', $('#members-body')).forEach(function (btn) {
+        btn.addEventListener('click', function () { confirmMemberAction('kick', btn.getAttribute('data-kick')); });
+      });
+      $$('[data-ban]', $('#members-body')).forEach(function (btn) {
+        btn.addEventListener('click', function () { confirmMemberAction('ban', btn.getAttribute('data-ban')); });
+      });
+      $$('[data-restore]', $('#members-body')).forEach(function (btn) {
+        btn.addEventListener('click', function () { restoreMember(btn.getAttribute('data-restore')); });
+      });
+    }
+  }
+
+  function memberById(id) {
+    return S.members.filter(function (m) { return m.id === id; })[0] || null;
+  }
+
+  function changeRole(id, nextRole) {
+    var m = memberById(id);
+    if (!m) { return; }
+    DB.admin.setRole(id, nextRole).then(function () {
+      toast(m.nickname + ' 님을 ' + (nextRole === 'officer' ? '운영진' : '문파원') + '으로 바꿨어요.');
+      refreshMembers();
+    }).catch(function (err) { toast(errorMessage(err)); });
+  }
+
+  function restoreMember(id) {
+    var m = memberById(id);
+    DB.admin.restore(id).then(function () {
+      toast((m ? m.nickname + ' 님을' : '문파원을') + ' 다시 들였어요.');
+      refreshMembers();
+    }).catch(function (err) { toast(errorMessage(err)); });
+  }
+
+  function confirmMemberAction(kind, id) {
+    var m = memberById(id);
+    var name = m ? m.nickname : '문파원';
+    var isBan = kind === 'ban';
+    openModal(modalTitle(name + ' 님을 ' + (isBan ? '차단할까요?' : '내보낼까요?')) +
+      '<p class="lightbox__meta">' + (isBan
+        ? '차단하면 같은 닉네임으로 다시 가입할 수 없어요. 되돌리려면 다시 들이면 됩니다.'
+        : '내보내면 바로 로그아웃되고 다시 들어올 수 없어요. 같은 닉네임은 다시 쓸 수 없습니다.') + '</p>' +
+      '<label class="field" style="margin-top:12px"><span class="field__label">이유 (선택 · 본인에게는 보이지 않아요)</span>' +
+      '<input class="field__input" type="text" id="member-reason" maxlength="200" placeholder="예) 오랫동안 함께하지 못했어요"></label>' +
+      '<p class="form__error" id="member-error" role="alert" hidden></p>' +
+      '<div class="lightbox__actions">' +
+      '<button type="button" class="btn btn--primary" id="member-ok">' + (isBan ? '차단하기' : '내보내기') + '</button>' +
+      '<button type="button" class="btn btn--ghost" data-close="1">그대로 두기</button>' +
+      '</div>');
+
+    $('#member-ok').addEventListener('click', function () {
+      var btn = this;
+      var reason = $('#member-reason').value.trim();
+      btn.disabled = true;
+      var job = isBan ? DB.admin.ban(id, reason) : DB.admin.kick(id, reason);
+      job.then(function () {
+        closeModal();
+        toast(name + ' 님을 ' + (isBan ? '차단했어요.' : '내보냈어요.'));
+        refreshMembers();
+      }).catch(function (err) {
+        btn.disabled = false;
+        var errEl = $('#member-error');
+        errEl.textContent = errorMessage(err);
+        errEl.hidden = false;
+      });
     });
   }
 
-  /* ---------------- 내정보 ---------------- */
+  /* ============================================================
+     관리자: 공지 · 일정 · 쿠폰
+     ============================================================ */
+  function confirmDeleteNotice(id) {
+    var n = S.notices.filter(function (x) { return x.id === id; })[0];
+    confirmAction('공지를 지울까요?', '“' + (n ? n.title : '공지') + '”이 바로 내려가요. 되돌릴 수 없습니다.', '지우기', function () {
+      return DB.admin.deleteNotice(id).then(function () {
+        S.notices = S.notices.filter(function (x) { return x.id !== id; });
+        S.noticeRows = (S.noticeRows || []).filter(function (x) { return x.id !== id; });
+        renderHome();
+        toast('공지를 지웠어요.');
+      });
+    });
+  }
+
+  function toggleNoticePin(id, pinned) {
+    var row = null;
+    (S.noticeRows || []).forEach(function (x) { if (x.id === id) { row = x; } });
+    if (!row) { return; }
+    row.pinned = !pinned;
+    DB.rpc('admin_pin_notice', { p_token: DB.token(), p_notice_id: id, p_pinned: !pinned }).then(function () {
+      S.notices = (S.noticeRows || []).map(mapNotice);
+      renderHome();
+      toast(!pinned ? '공지를 위로 고정했어요.' : '고정을 풀었어요.');
+    }).catch(function (err) { toast(errorMessage(err)); });
+  }
+
+  function confirmDeleteEvent(id) {
+    var ev = S.events.filter(function (x) { return x.id === id; })[0];
+    confirmAction('일정을 지울까요?', '“' + (ev ? ev.title : '일정') + '”이 목록에서 사라져요.', '지우기', function () {
+      return DB.admin.deleteEvent(id).then(function () {
+        S.events = S.events.filter(function (x) { return x.id !== id; });
+        renderHome();
+        toast('일정을 지웠어요.');
+      });
+    });
+  }
+
+  function confirmDeleteCoupon(id) {
+    var c = S.coupons.filter(function (x) { return x.id === id; })[0];
+    confirmAction('쿠폰을 지울까요?', '“' + (c ? c.title : '쿠폰') + '”이 더 이상 보이지 않아요.', '지우기', function () {
+      return DB.admin.deleteCoupon(id).then(function () {
+        S.coupons = S.coupons.filter(function (x) { return x.id !== id; });
+        renderHome();
+        toast('쿠폰을 지웠어요.');
+      });
+    });
+  }
+
+  function confirmDeleteMessage(id) {
+    confirmAction('이 메시지를 지울까요?', '지운 메시지는 내용이 바로 비워져 문파원 모두에게서 사라져요.', '지우기', function () {
+      return DB.admin.deleteChatMessage(Number(id)).then(function () {
+        S.chat = S.chat.filter(function (m) { return String(m.id) !== String(id); });
+        renderChat();
+        toast('메시지를 지웠어요.');
+      });
+    });
+  }
+
+  function confirmDeleteAlbum(id) {
+    var item = findAlbumItem(id);
+    var isMine = item && item.author_id && item.author_id === myId();
+    var adminDeletingOther = isAdmin() && !isMine;
+    confirmAction('이 사진을 지울까요?', '사진과 설명이 모두 사라지고 되돌릴 수 없어요.', '지우기', function () {
+      var job = adminDeletingOther ? DB.admin.deleteAlbumPost(id) : DB.deleteOwnAlbumPost(id);
+      return job.then(function () {
+        S.album = S.album.filter(function (a) { return a.id !== id; });
+        delete S.albumImages[id];
+        closeModal();
+        renderAlbum();
+        toast('사진을 지웠어요.');
+      });
+    });
+  }
+
+  function confirmAction(title, text, okLabel, onOk) {
+    openModal(modalTitle(title) +
+      '<p class="lightbox__meta">' + esc(text) + '</p>' +
+      '<p class="form__error" id="confirm-error" role="alert" hidden></p>' +
+      '<div class="lightbox__actions">' +
+      '<button type="button" class="btn btn--primary" id="confirm-ok">' + esc(okLabel) + '</button>' +
+      '<button type="button" class="btn btn--ghost" data-close="1">그대로 두기</button>' +
+      '</div>');
+
+    $('#confirm-ok').addEventListener('click', function () {
+      var btn = this;
+      btn.disabled = true;
+      Promise.resolve(onOk()).then(function () {
+        closeModal();
+      }).catch(function (err) {
+        btn.disabled = false;
+        var errEl = $('#confirm-error');
+        if (!errEl) {
+          toast(errorMessage(err));
+          return;
+        }
+        errEl.textContent = errorMessage(err);
+        errEl.hidden = false;
+      });
+    });
+  }
+
+  function openNoticeForm() {
+    openModal(modalTitle('공지 쓰기') +
+      '<form class="form" id="notice-form" novalidate style="margin-top:12px">' +
+      '<label class="field"><span class="field__label">제목</span>' +
+      '<input class="field__input" type="text" id="notice-title" maxlength="60" placeholder="예) 연꽃 등불 축제 단체 참가 신청"></label>' +
+      '<label class="field"><span class="field__label">내용</span>' +
+      '<textarea class="field__input field__textarea" id="notice-body" rows="6" maxlength="4000" placeholder="문파원에게 전할 이야기를 적어 주세요"></textarea></label>' +
+      '<div class="form__row">' +
+      '<label class="field"><span class="field__label">태그</span>' +
+      '<input class="field__input" type="text" id="notice-tag" maxlength="10" value="공지"></label>' +
+      '<label class="check"><input type="checkbox" id="notice-pinned"> 위에 고정</label>' +
+      '</div>' +
+      '<p class="form__error" id="notice-error" role="alert" hidden></p>' +
+      '<button type="submit" class="btn btn--primary">공지 올리기</button>' +
+      '</form>');
+
+    $('#notice-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var title = $('#notice-title').value.trim();
+      var body = $('#notice-body').value.trim();
+      var tag = $('#notice-tag').value.trim() || '공지';
+      var pinned = $('#notice-pinned').checked;
+      var errEl = $('#notice-error');
+      if (!title || !body) {
+        errEl.textContent = '제목과 내용을 모두 적어 주세요.';
+        errEl.hidden = false;
+        return;
+      }
+      var btn = $('button[type="submit"]', this);
+      btn.disabled = true;
+
+      DB.admin.createNotice(title, body, tag, pinned).then(function () {
+        closeModal();
+        toast('공지를 올렸어요.');
+        return reloadClanContent();
+      }).then(function () {
+        renderHome();
+      }).catch(function (err) {
+        btn.disabled = false;
+        errEl.textContent = errorMessage(err);
+        errEl.hidden = false;
+      });
+    });
+  }
+
+  function openEventForm() {
+    var now = new Date();
+    now.setMinutes(0, 0, 0);
+    now.setHours(now.getHours() + 1);
+    var value = now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate()) +
+      'T' + pad(now.getHours()) + ':' + pad(now.getMinutes());
+
+    openModal(modalTitle('일정 잡기') +
+      '<form class="form" id="event-form" novalidate style="margin-top:12px">' +
+      '<label class="field"><span class="field__label">일정 이름</span>' +
+      '<input class="field__input" type="text" id="event-title" maxlength="60" placeholder="예) 주간 보스 원정"></label>' +
+      '<label class="field"><span class="field__label">날짜와 시간</span>' +
+      '<input class="field__input" type="datetime-local" id="event-start" value="' + value + '"></label>' +
+      '<label class="field"><span class="field__label">모이는 곳</span>' +
+      '<input class="field__input" type="text" id="event-place" maxlength="60" placeholder="예) 연못 입구 · 3구역"></label>' +
+      '<div class="form__row">' +
+      '<label class="field"><span class="field__label">태그</span>' +
+      '<input class="field__input" type="text" id="event-tag" maxlength="10" value="모임"></label>' +
+      '<label class="field"><span class="field__label">메모 (선택)</span>' +
+      '<input class="field__input" type="text" id="event-note" maxlength="200" placeholder="예) 21:20까지 모여주세요"></label>' +
+      '</div>' +
+      '<p class="form__error" id="event-error" role="alert" hidden></p>' +
+      '<button type="submit" class="btn btn--primary">일정 올리기</button>' +
+      '</form>');
+
+    $('#event-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var title = $('#event-title').value.trim();
+      var startRaw = $('#event-start').value;
+      var errEl = $('#event-error');
+      if (!title || !startRaw) {
+        errEl.textContent = '일정 이름과 날짜·시간을 정해 주세요.';
+        errEl.hidden = false;
+        return;
+      }
+      var start = new Date(startRaw);
+      if (isNaN(start.getTime())) {
+        errEl.textContent = '날짜와 시간을 다시 확인해 주세요.';
+        errEl.hidden = false;
+        return;
+      }
+      var btn = $('button[type="submit"]', this);
+      btn.disabled = true;
+
+      DB.admin.createEvent({
+        title: title,
+        startsAt: start.toISOString(),
+        place: $('#event-place').value.trim(),
+        tag: $('#event-tag').value.trim() || '모임',
+        note: $('#event-note').value.trim()
+      }).then(function () {
+        closeModal();
+        toast('일정을 올렸어요.');
+        return DB.listEvents().then(function (rows) {
+          S.events = (rows || []).map(function (ev) {
+            return {
+              id: ev.id, title: ev.title, place: ev.place || '', tag: ev.tag || '모임',
+              note: ev.note || '', starts_at: ev.starts_at, ends_at: ev.ends_at
+            };
+          });
+        });
+      }).then(function () {
+        renderHome();
+      }).catch(function (err) {
+        btn.disabled = false;
+        errEl.textContent = errorMessage(err);
+        errEl.hidden = false;
+      });
+    });
+  }
+
+  function openCouponForm() {
+    openModal(modalTitle('쿠폰 만들기') +
+      '<form class="form" id="coupon-form" novalidate style="margin-top:12px">' +
+      '<label class="field"><span class="field__label">쿠폰 코드</span>' +
+      '<input class="field__input" type="text" id="coupon-code" maxlength="24" placeholder="영문·숫자 3~24자 (예: LOTUS2026)" autocapitalize="characters"></label>' +
+      '<label class="field"><span class="field__label">쿠폰 이름</span>' +
+      '<input class="field__input" type="text" id="coupon-title" maxlength="60" placeholder="예) 새 문파원 환영 쿠폰"></label>' +
+      '<label class="field"><span class="field__label">보상 내용</span>' +
+      '<input class="field__input" type="text" id="coupon-reward" maxlength="60" placeholder="예) 도술서 1매"></label>' +
+      '<div class="form__row">' +
+      '<label class="field"><span class="field__label">쓰는 마지막 날 (선택)</span>' +
+      '<input class="field__input" type="date" id="coupon-expires"></label>' +
+      '<label class="field"><span class="field__label">색</span>' +
+      '<select class="field__input" id="coupon-tone">' +
+      '<option value="lotus">연꽃(분홍)</option><option value="jade">옥빛(청록)</option><option value="gold">금빛</option>' +
+      '</select></label>' +
+      '</div>' +
+      '<p class="form__error" id="coupon-error" role="alert" hidden></p>' +
+      '<button type="submit" class="btn btn--primary">쿠폰 올리기</button>' +
+      '</form>');
+
+    $('#coupon-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var code = $('#coupon-code').value.trim().toUpperCase();
+      var title = $('#coupon-title').value.trim();
+      var reward = $('#coupon-reward').value.trim();
+      var errEl = $('#coupon-error');
+      if (!/^[A-Z0-9][A-Z0-9_-]{2,23}$/.test(code)) {
+        errEl.textContent = '쿠폰 코드는 영문·숫자·-·_ 3~24자로 정해 주세요.';
+        errEl.hidden = false;
+        return;
+      }
+      if (!title || !reward) {
+        errEl.textContent = '쿠폰 이름과 보상 내용을 적어 주세요.';
+        errEl.hidden = false;
+        return;
+      }
+      var btn = $('button[type="submit"]', this);
+      btn.disabled = true;
+
+      DB.admin.createCoupon({
+        code: code,
+        title: title,
+        reward: reward,
+        expiresOn: $('#coupon-expires').value || null,
+        tone: $('#coupon-tone').value
+      }).then(function () {
+        closeModal();
+        toast('쿠폰을 올렸어요.');
+        return DB.listCoupons().then(function (rows) {
+          S.coupons = (rows || []).map(function (c) {
+            return { id: c.id, code: c.code, title: c.title, reward: c.reward, expires_on: c.expires_on, tone: c.tone || 'lotus' };
+          });
+        });
+      }).then(function () {
+        renderHome();
+      }).catch(function (err) {
+        btn.disabled = false;
+        errEl.textContent = errorMessage(err);
+        errEl.hidden = false;
+      });
+    });
+  }
+
+  /* ============================================================
+     관리자: 초대 코드
+     ============================================================ */
+  function openInviteModal() {
+    openModal(modalTitle('문파 관리') + '<p class="lightbox__meta">초대 코드를 불러오는 중이에요…</p>');
+
+    DB.admin.getSettings().then(function (settings) {
+      S.adminSettings = settings;
+      var updated = settings.invite_code_updated_at ? dateLabel(settings.invite_code_updated_at) : '';
+      openModal(modalTitle('문파 관리') +
+        '<div class="privacy" style="margin-top:0">' +
+        '<p><b>' + esc(settings.clan_name) + '</b> · 정원 ' + fmtNum(settings.member_capacity) + '명</p>' +
+        '<p>문파원 ' + fmtNum(settings.member_count) + '명 · 내보냄 ' + fmtNum(settings.kicked_count) + '명 · 차단 ' + fmtNum(settings.banned_count) + '명</p>' +
+        '</div>' +
+        '<div class="invite">' +
+        '<span class="invite__label">지금 초대 코드</span>' +
+        '<div class="invite__code"><b id="invite-code-text">' + esc(settings.invite_code) + '</b>' +
+        '<button type="button" class="coupon__copy" id="invite-copy">복사</button></div>' +
+        (updated ? '<p class="invite__meta">' + esc(updated) + '에 바뀌었어요. 대소문자 구분 없이 입력해도 됩니다.</p>' : '<p class="invite__meta">대소문자 구분 없이 입력해도 됩니다.</p>') +
+        '</div>' +
+        '<form class="form" id="invite-form" novalidate style="margin-top:14px">' +
+        '<label class="field"><span class="field__label">새 초대 코드</span>' +
+        '<input class="field__input" type="text" id="invite-new" maxlength="20" placeholder="한글·영문·숫자 4~20자" autocapitalize="characters"></label>' +
+        '<p class="form__error" id="invite-error" role="alert" hidden></p>' +
+        '<button type="submit" class="btn btn--primary">초대 코드 바꾸기</button>' +
+        '</form>' +
+        '<p class="section__note">코드를 바꾸면 이전 코드로는 가입할 수 없어요. 이미 들어온 문파원은 그대로 남습니다.</p>');
+
+      var copyBtn = $('#invite-copy');
+      copyBtn.addEventListener('click', function () {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(settings.invite_code).then(function () {
+            toast('초대 코드를 복사했어요: ' + settings.invite_code);
+          }, function () { fallbackCopy(settings.invite_code, function () { toast('초대 코드: ' + settings.invite_code); }); });
+        } else {
+          fallbackCopy(settings.invite_code, function () { toast('초대 코드: ' + settings.invite_code); });
+        }
+      });
+
+      $('#invite-form').addEventListener('submit', function (e) {
+        e.preventDefault();
+        var next = $('#invite-new').value.trim();
+        var errEl = $('#invite-error');
+        if (next.length < 4 || next.length > 20) {
+          errEl.textContent = '초대 코드는 4~20자로 정해 주세요.';
+          errEl.hidden = false;
+          return;
+        }
+        var btn = $('button[type="submit"]', this);
+        btn.disabled = true;
+        DB.admin.updateInviteCode(next).then(function (res) {
+          toast('초대 코드를 ' + res.invite_code + ' 로 바꿨어요.');
+          var text = $('#invite-code-text');
+          if (text) { text.textContent = res.invite_code; }
+          $('#invite-new').value = '';
+          btn.disabled = false;
+        }).catch(function (err) {
+          btn.disabled = false;
+          errEl.textContent = errorMessage(err);
+          errEl.hidden = false;
+        });
+      });
+    }).catch(function (err) {
+      openModal(modalTitle('문파 관리') +
+        '<p class="lightbox__meta">' + esc(errorMessage(err)) + '</p>' +
+        '<div class="lightbox__actions"><button type="button" class="btn btn--ghost" data-close="1">닫기</button></div>');
+    });
+  }
+
+  /* ============================================================
+     내정보
+     ============================================================ */
   function renderMe() {
-    if (!S.user) { return; }
+    if (!S.me && !S.user) { return; }
     var settings = store.get('settings', { theme: 'pond', notify: true });
-    var name = S.user.nick;
-    var guest = S.user.guest;
-    var since = new Date(S.user.since);
-    var sinceText = since.getFullYear() + '.' + pad(since.getMonth() + 1) + '.' + pad(since.getDate());
+    var name = S.me ? S.me.nickname : (S.user ? S.user.nick : '연못손님');
+    var guest = !isLive();
+    var roleLabel = S.me ? (ROLE_LABEL[S.me.role] || '문파원') : '체험';
+    var roleClass = S.me ? (ROLE_CLASS[S.me.role] || '') : 'role--elite';
+    var since = S.me && S.me.joined_at ? S.me.joined_at : (S.user ? S.user.since : new Date().toISOString());
+    var sinceText = dateLabel(since);
+    var wave = (S.me && S.me.wave) || { today_done: false, streak: 0, total: 0 };
+    var level = S.me && S.me.level ? S.me.level : 0;
+    var admin = isAdmin();
 
     var html = '<header class="screen__head">' +
       '<p class="kicker">내정보</p>' +
       '<h2 class="screen__title">나의 연못</h2>' +
-      '<p class="screen__sub">닉네임과 화면 설정을 이 기기에서 관리해요</p>' +
+      '<p class="screen__sub">' + (guest ? '체험 모드로 둘러보고 있어요' : '닉네임과 문파 생활을 이곳에서 확인해요') + '</p>' +
       '</header>';
 
     html += '<section class="profile">' +
       '<div class="profile__top">' +
       '<div class="profile__avatar" aria-hidden="true">' + esc(initial(name)) + '</div>' +
       '<div><div class="profile__name"><strong>' + esc(name) + '</strong>' +
-      '<span class="role role--elite">' + (guest ? '체험 모드' : '문파원') + '</span></div>' +
-      '<p class="profile__meta"><span>' + (guest ? '둘러보는 중' : '새로 합류한 문파원') + '</span><span class="sep">·</span><span>' + sinceText + '부터</span></p>' +
+      '<span class="role ' + roleClass + '">' + esc(roleLabel) + '</span></div>' +
+      '<p class="profile__meta"><span>' + (guest ? '둘러보는 중' : '연못문파 문파원') + '</span><span class="sep">·</span><span>' + esc(sinceText) + '부터</span></p>' +
       '</div></div>' +
       '<div class="profile__level">' +
-      '<div class="profile__level-head"><span>연못 등급 <b>Lv.' + (guest ? '1' : '12') + '</b></span><span>다음 등급까지 ' + (guest ? '12' : '240') + ' 물방울</span></div>' +
-      '<div class="progress"><div class="progress__bar" style="width:' + (guest ? '8' : '64') + '%"></div></div>' +
+      '<div class="profile__level-head"><span>오늘의 물결 <b>' + (wave.today_done ? '남겼어요' : '아직이에요') + '</b></span>' +
+      '<span>' + (wave.streak ? wave.streak + '일 연속 · ' : '') + '모두 ' + fmtNum(wave.total) + '번</span></div>' +
+      '<div class="progress"><div class="progress__bar" style="width:' + Math.min(100, Math.max(4, (wave.total || 0) * 4)) + '%"></div></div>' +
+      '<p class="profile__hint">연못 등급 Lv.' + (level || '–') + '</p>' +
       '</div></section>';
+
+    if (admin) {
+      html += '<div class="menu-card">' +
+        '<h3 class="menu-card__title">문주 도구</h3>' +
+        '<button type="button" class="row row--action" id="admin-invite-row">' +
+        '<span class="row__icon"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M15.5 8.5a4 4 0 1 0-5.6 5.7l-2 2H5v2H3v2h4l2.4-2.4a4 4 0 0 0 5.5-5.5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>' +
+        '<span class="row__text"><span class="row__label">초대 코드 확인 · 변경</span>' +
+        '<span class="row__desc">새 문파원을 들일 때 알려 줄 코드예요</span></span>' +
+        '<span class="row__chevron" aria-hidden="true"><svg viewBox="0 0 24 24" width="15" height="15" focusable="false"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>' +
+        '</button>' +
+        '<div class="row"><span class="row__icon"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="9" cy="9" r="3" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M4 19c0-3 2.5-4.6 5.5-4.6S15 16 15 19" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M18 8v6M15 11h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></span>' +
+        '<span class="row__text"><span class="row__label">지금 문파원 ' + fmtNum(S.clan ? S.clan.member_count : 0) + '명</span>' +
+        '<span class="row__desc">문파원 탭에서 직위 · 내보내기 · 차단을 할 수 있어요</span></span></div>' +
+        '</div>';
+    }
 
     html += '<div class="menu-card">' +
       '<h3 class="menu-card__title">앱으로 쓰기</h3>' +
@@ -913,8 +2326,12 @@
       '</div>';
 
     html += '<div class="privacy"><strong>개인정보를 모으지 않아요</strong>' +
-      '<p>닉네임·PIN·초대 코드는 로그인 화면에서 확인용으로만 쓰고 서버로 보내지 않습니다. PIN은 저장하지 않아요.</p>' +
-      '<p>대화·출석·좋아요 기록은 이 기기의 저장 공간에만 남고, 이 앱은 외부로 아무것도 전송하지 않아요.</p>' +
+      (isLive()
+        ? '<p>닉네임과 PIN 만 문파 서버에 보내요. 이름 · 전화번호 · 이메일 · 주소는 받지 않습니다.</p>' +
+          '<p>PIN 은 되돌릴 수 없는 암호(해시)로만 저장되고, 로그인 확인에만 쓰여요. 다섯 번 틀리면 잠시 잠깁니다.</p>' +
+          '<p>화면 설정 같은 기기 기록은 이 기기의 저장 공간에만 남아요.</p>'
+        : '<p>체험 모드에서는 닉네임과 기록이 이 기기의 저장 공간에만 남고 서버로 보내지 않아요.</p>' +
+          '<p>PIN 은 확인용으로만 쓰고 어디에도 저장하지 않습니다.</p>') +
       '</div>';
 
     html += '<div class="me-actions">' +
@@ -922,9 +2339,12 @@
       '<button type="button" class="btn btn--quiet" id="reset-btn">기록 지우기</button>' +
       '</div>';
 
-    html += '<p class="version">연못문파 프로토타입 · v0.1</p>';
+    html += '<p class="version">연못문파 · v0.2' + (isLive() ? ' · 실제 문파' : ' · 체험') + '</p>';
 
     $('#me-body').innerHTML = html;
+
+    var inviteRow = $('#admin-invite-row');
+    if (inviteRow) { inviteRow.addEventListener('click', openInviteModal); }
 
     $('#theme-switch').addEventListener('click', function () {
       var on = this.getAttribute('aria-pressed') !== 'true';
@@ -942,7 +2362,7 @@
       this.setAttribute('aria-checked', String(on));
       settings.notify = on;
       store.set('settings', settings);
-      toast(on ? '알림 설정을 기억해 둘게요 (프로토타입)' : '알림 설정을 꺼 두었어요 (프로토타입)');
+      toast(on ? '알림을 켜 둘게요' : '알림을 꺼 두었어요');
     });
 
     $('#rules-row').addEventListener('click', showRules);
@@ -959,8 +2379,10 @@
     });
 
     $('#logout-btn').addEventListener('click', function () {
-      openModal('<h3 class="lightbox__title" id="modal-title" style="margin-top:0">연못을 잠시 떠날까요?</h3>' +
-        '<p class="lightbox__meta">언제든 다시 돌아오실 수 있어요. 저장된 기록은 이 기기에 남아 있습니다.</p>' +
+      openModal(modalTitle('연못을 잠시 떠날까요?') +
+        '<p class="lightbox__meta">' + (isLive()
+          ? '이 기기에서만 로그아웃돼요. 다시 닉네임과 PIN 으로 들어올 수 있습니다.'
+          : '언제든 다시 돌아오실 수 있어요.') + '</p>' +
         '<div class="lightbox__actions">' +
         '<button type="button" class="btn btn--primary" id="confirm-logout">로그아웃</button>' +
         '<button type="button" class="btn btn--ghost" data-close="1">머무르기</button>' +
@@ -969,8 +2391,10 @@
     });
 
     $('#reset-btn').addEventListener('click', function () {
-      openModal('<h3 class="lightbox__title" id="modal-title" style="margin-top:0">이 기기의 기록을 지울까요?</h3>' +
-        '<p class="lightbox__meta">대화, 출석, 좋아요, 닉네임이 모두 지워집니다. 되돌릴 수 없어요.</p>' +
+      openModal(modalTitle('이 기기의 기록을 지울까요?') +
+        '<p class="lightbox__meta">' + (isLive()
+          ? '이 기기에서 로그아웃되고 화면 설정도 지워집니다. 문파에 남긴 글과 사진은 그대로 있어요.'
+          : '대화, 출석, 좋아요, 닉네임이 모두 지워집니다. 되돌릴 수 없어요.') + '</p>' +
         '<div class="lightbox__actions">' +
         '<button type="button" class="btn btn--primary" id="confirm-reset">모두 지우기</button>' +
         '<button type="button" class="btn btn--ghost" data-close="1">그대로 두기</button>' +
@@ -982,20 +2406,24 @@
           });
         } catch (e) { /* noop */ }
         closeModal();
+        if (isLive()) { DB.stopRealtime(); }
         S.chat = [];
         S.likes = {};
         S.attendance = null;
         S.user = null;
+        S.me = null;
+        S.clan = null;
+        S.ready = false;
+        S.mode = 'trial';
         document.documentElement.removeAttribute('data-theme');
-        $('#main-view').hidden = true;
-        $('#auth-view').hidden = false;
+        showAuth();
         toast('이 기기의 기록을 지웠어요.');
       });
     });
   }
 
   function showRules() {
-    openModal('<h3 class="lightbox__title" id="modal-title" style="margin-top:0">문파 생활 안내</h3>' +
+    openModal(modalTitle('문파 생활 안내') +
       '<p class="lightbox__meta">강제가 아니라, 함께 오래 머물기 위한 약속이에요.</p>' +
       '<div class="privacy" style="margin-top:14px">' +
       '<p>1. 잘 모르는 분께는 먼저 인사 한마디를 건네요.</p>' +
@@ -1007,7 +2435,9 @@
       '<div class="lightbox__actions"><button type="button" class="btn btn--ghost" data-close="1">알겠어요</button></div>');
   }
 
-  /* ---------------- PWA 설치 ---------------- */
+  /* ============================================================
+     PWA 설치
+     ============================================================ */
   function bindInstall() {
     window.addEventListener('beforeinstallprompt', function (e) {
       e.preventDefault();
@@ -1017,20 +2447,20 @@
     });
   }
 
-  /* ---------------- 전역 이벤트 ---------------- */
+  /* ============================================================
+     전역 이벤트
+     ============================================================ */
   function bindGlobal() {
     $('#modal').addEventListener('click', function (e) {
       var target = e.target;
-      if (target && target.getAttribute && target.getAttribute('data-close')) {
-        closeModal();
-      }
+      var closer = target && target.closest ? target.closest('[data-close]') : null;
+      if (closer) { closeModal(); }
     });
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape') { closeModal(); }
     });
   }
 
-  /* ---------------- 서비스 워커 ---------------- */
   if ('serviceWorker' in navigator && window.location.protocol.indexOf('http') === 0) {
     window.addEventListener('load', function () {
       navigator.serviceWorker.register('./sw.js').catch(function () { /* offline is optional */ });
