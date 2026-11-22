@@ -83,13 +83,17 @@ as $fn$
 $fn$;
 
 -- 세션 토큰 → 저장용 해시 (원문은 저장하지 않습니다)
+--   sha256 은 pgcrypto 함수라, 설치 위치(extensions 또는 public)에 상관없이 찾도록
+--   실행 시점 search_path 를 지정합니다.
 create or replace function private.token_hash(p_token text)
 returns text
-language sql
+language plpgsql
 immutable
-set search_path = ''
+set search_path = extensions, public, pg_temp
 as $fn$
-  select encode(sha256(convert_to(coalesce(p_token, ''), 'UTF8')), 'hex');
+begin
+  return encode(sha256(convert_to(coalesce(p_token, ''), 'UTF8')), 'hex');
+end;
 $fn$;
 
 -- PIN → bcrypt 해시 (pgcrypto 가 extensions/public 어디에 있든 찾도록 search_path 지정)
