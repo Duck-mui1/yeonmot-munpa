@@ -1519,12 +1519,18 @@ body.is-locked { overflow: hidden; }
 
 /* 앨범 (실제 사진) */
 .shot { cursor: pointer; }
+.shot__art { position: relative; overflow: hidden; }
 .shot__img {
   display: block;
   width: 100%;
-  aspect-ratio: 4 / 3;
-  object-fit: cover;
   background: #061e21;
+}
+/* 카드 안에서는 4:3 틀에 꽉 채우고, 라이트박스에서는 원래 비율대로 보여 줍니다. */
+.shot__art .shot__img {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+  object-fit: cover;
 }
 .shot__loading {
   display: grid;
