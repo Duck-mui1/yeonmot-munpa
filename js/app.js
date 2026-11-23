@@ -57,6 +57,8 @@
     notices: [],
     events: [],
     coupons: [],
+    guides: [],
+    guideOpen: false,
     members: [],
     album: [],
     albumImages: {},
@@ -91,6 +93,45 @@
   }
   function avatarStyle(name) { return AVATARS[hash(String(name || '연')) % AVATARS.length]; }
   function initial(name) { return String(name || '연').trim().charAt(0) || '연'; }
+
+  /* ---------- 프로필 그림 (일러스트 preset: / 내 사진 data:image/) ---------- */
+  var AVATAR_PRESETS = ['lotus', 'koi', 'frog', 'firefly', 'moon', 'leaf', 'turtle', 'lantern'];
+
+  function presetName(value) {
+    if (typeof value !== 'string' || value.indexOf('preset:') !== 0) { return null; }
+    var kind = value.slice(7);
+    return AVATAR_PRESETS.indexOf(kind) === -1 ? null : kind;
+  }
+  function isImageAvatar(value) {
+    return typeof value === 'string' && /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(value);
+  }
+  function avatarInner(name, avatar) {
+    var preset = presetName(avatar);
+    if (preset) { return ART.avatar(preset); }
+    if (isImageAvatar(avatar)) { return '<img class="avatar__img" src="' + esc(avatar) + '" alt="">'; }
+    return esc(initial(name));
+  }
+  /** 아바타 한 칸 — 일러스트/사진이 없으면 닉네임 첫 글자 */
+  function avatarSpan(cls, name, avatar, inner) {
+    var painted = !!presetName(avatar) || isImageAvatar(avatar);
+    return '<span class="' + cls + (painted ? ' avatar--art' : '') + '" aria-hidden="true"' +
+      (painted ? '' : ' style="background:' + avatarStyle(name) + '"') + '>' +
+      avatarInner(name, avatar) + (inner || '') + '</span>';
+  }
+  function myAvatarValue() {
+    if (isLive()) { return S.me ? (S.me.avatar || null) : null; }
+    return (S.user && S.user.avatar) || null;
+  }
+  function memberAvatarById(id) {
+    if (!id) { return null; }
+    var hit = S.members.filter(function (m) { return m.id === id; })[0];
+    return hit ? (hit.avatar || null) : null;
+  }
+  function memberAvatarByName(nickname) {
+    if (!nickname) { return null; }
+    var hit = S.members.filter(function (m) { return m.nickname === nickname; })[0];
+    return hit ? (hit.avatar || null) : null;
+  }
   function fmtNum(n) { return String(n || 0).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
 
   function dayStart(date) {
@@ -209,6 +250,13 @@
   function isAdmin() { return isLive() && S.me && S.me.role === 'admin'; }
   function myId() { return S.me ? S.me.id : null; }
   function myNick() { return S.me ? S.me.nickname : ''; }
+  function myRole() { return S.me ? S.me.role : null; }
+  /** 공략 삭제는 올린 본인 또는 운영진(문주·운영진)만 */
+  function canDeleteGuide(guide) {
+    if (!isLive() || !guide) { return false; }
+    if (myRole() === 'admin' || myRole() === 'officer') { return true; }
+    return !!guide.created_by && guide.created_by === myId();
+  }
 
   /* ============================================================
      체험 모드 데이터
@@ -239,6 +287,7 @@
       nickname: S.user.nick,
       role: 'guest',
       level: 0,
+      avatar: S.user.avatar || null,
       joined_at: S.user.since,
       wave: { today_done: attendance.done, streak: attendance.streak, total: attendance.done ? attendance.streak : Math.max(0, attendance.streak) }
     };
@@ -272,6 +321,17 @@
       return { id: 'cp' + i, code: c.code, title: c.title, reward: c.reward, until: c.until, tone: c.tone };
     });
 
+    S.guides = (D.guides || []).map(function (g) {
+      return {
+        id: g.id,
+        title: g.title,
+        video_id: g.videoId || null,
+        youtube_url: g.videoId ? 'https://www.youtube.com/watch?v=' + g.videoId : null,
+        created_by: null,
+        kind: g.kind || 'moon'
+      };
+    });
+
     S.members = D.members.map(function (m, i) {
       var role = m.role === '문주' ? 'admin' : (m.role === '문파원' ? 'member' : 'officer');
       return {
@@ -303,6 +363,7 @@
       lastLabel: '지금 접속 중',
       statusLabel: '접속 중',
       joined_at: S.user.since,
+      avatar: S.user.avatar || null,
       me: true
     });
 
@@ -395,6 +456,7 @@
       tag: n.tag || '공지',
       pinned: !!n.pinned,
       author: author ? author.nickname : '운영진',
+      author_avatar: author ? (author.avatar || null) : null,
       roleLabel: author ? author.roleLabel : '',
       created_at: n.created_at
     };
@@ -418,6 +480,7 @@
       last_seen_at: m.last_seen_at,
       wave_today: !!m.wave_today,
       joined_at: m.joined_at,
+      avatar: m.avatar || null,
       me: m.id === myId()
     };
   }
@@ -430,8 +493,21 @@
       roleLabel: c.kind === 'system' ? '' : (ROLE_LABEL[c.role] || ''),
       kind: c.kind || 'text',
       body: c.body,
+      avatar: c.avatar || null,
       created_at: c.created_at,
       mine: !!c.member_id && c.member_id === myId()
+    };
+  }
+
+  function mapGuide(g) {
+    return {
+      id: g.id,
+      title: g.title,
+      video_id: g.video_id || null,
+      youtube_url: g.youtube_url || (g.video_id ? 'https://www.youtube.com/watch?v=' + g.video_id : 'https://www.youtube.com/'),
+      created_by: g.created_by || null,
+      kind: g.kind || 'moon',
+      created_at: g.created_at
     };
   }
 
@@ -443,6 +519,7 @@
       author_id: p.author_id,
       author: p.author || '문파원',
       author_role: p.author_role || '',
+      author_avatar: p.author_avatar || null,
       image_mime: p.image_mime,
       image_bytes: p.image_bytes,
       likes: p.likes || 0,
@@ -459,6 +536,7 @@
         nickname: data.me.nickname,
         role: data.me.role,
         level: data.me.level,
+        avatar: data.me.avatar || null,
         joined_at: (S.me && S.me.joined_at) || data.me.joined_at || null,
         wave: { today_done: data.me.today_wave, streak: data.me.streak, total: data.me.total_waves }
       };
@@ -482,6 +560,9 @@
             return { id: c.id, code: c.code, title: c.title, reward: c.reward, expires_on: c.expires_on, tone: c.tone || 'lotus' };
           });
         }, function () { S.coupons = []; }),
+        DB.listGuides().then(function (rows) {
+          S.guides = (rows || []).map(mapGuide);
+        }, function () { S.guides = []; }),
         DB.listAlbum(12).then(function (rows) {
           S.album = (rows || []).map(mapAlbum);
         }, function () { S.album = []; }),
@@ -506,6 +587,7 @@
   /** 공지 · 일정은 공개 테이블에서 읽고, 작성자 닉네임은 문파원 목록으로 맞춥니다. */
   function reloadClanContent() {
     return Promise.all([
+      DB.listGuides().then(function (rows) { S.guides = (rows || []).map(mapGuide); }, function () {}),
       DB.listNotices().then(function (rows) { S.noticeRows = rows || []; }, function () {}),
       DB.listEvents().then(function (rows) {
         S.events = (rows || []).map(function (e) {
@@ -575,6 +657,7 @@
           nickname: profile.nickname,
           role: profile.role,
           level: profile.level,
+          avatar: profile.avatar || null,
           joined_at: profile.joined_at,
           wave: { today_done: profile.wave.today_done, streak: profile.wave.streak, total: profile.wave.total }
         };
@@ -597,7 +680,7 @@
     var session = store.get('session', null);
     if (session && session.nick) {
       S.mode = 'trial';
-      S.user = { nick: session.nick, guest: !!session.guest, since: session.since };
+      S.user = { nick: session.nick, guest: !!session.guest, since: session.since, avatar: store.get('avatar', null) || null };
       showMain(true);
       buildTrialState();
       afterEnter();
@@ -649,6 +732,7 @@
     DB.profile().then(function (profile) {
       S.me = {
         id: profile.id, nickname: profile.nickname, role: profile.role, level: profile.level,
+        avatar: profile.avatar || null,
         joined_at: profile.joined_at,
         wave: { today_done: profile.wave.today_done, streak: profile.wave.streak, total: profile.wave.total }
       };
@@ -794,6 +878,7 @@
           nickname: profile.nickname,
           role: profile.role,
           level: profile.level,
+          avatar: profile.avatar || null,
           joined_at: profile.joined_at,
           wave: { today_done: profile.wave.today_done, streak: profile.wave.streak, total: profile.wave.total }
         };
@@ -856,7 +941,7 @@
 
     $('#trial-btn').addEventListener('click', function () {
       S.mode = 'trial';
-      S.user = { nick: '연못손님', guest: true, since: new Date().toISOString() };
+      S.user = { nick: '연못손님', guest: true, since: new Date().toISOString(), avatar: store.get('avatar', null) || null };
       store.set('session', S.user);
       showMain(true);
       buildTrialState();
@@ -1077,7 +1162,8 @@
         '<span class="badge badge--jade">' + esc(n.tag) + '</span>' +
         esc(n.title) +
         '</span>' +
-        '<span class="notice__meta">' + esc(n.author) + (n.roleLabel ? ' · ' + esc(n.roleLabel) : '') + ' · ' + relDayLabel(n.created_at) + '</span>' +
+        '<span class="notice__meta">' + avatarSpan('avatar--xs', n.author, n.author_avatar) +
+        '<span>' + esc(n.author) + (n.roleLabel ? ' · ' + esc(n.roleLabel) : '') + ' · ' + relDayLabel(n.created_at) + '</span></span>' +
         '<span class="notice__summary">' + esc(String(n.body || '').split('\n')[0]) + '</span>' +
         '</span>' +
         '<span class="notice__chevron" aria-hidden="true">' +
@@ -1149,16 +1235,43 @@
     }
     html += '</section>';
 
-    /* 사냥 팁 */
-    html += '<section class="section" aria-labelledby="home-tip-title">' +
-      '<div class="section__head"><h3 class="section__title" id="home-tip-title">사냥 팁</h3>' +
-      '<span class="section__more">문파원 공유</span></div><div class="tips">';
-    D.tips.forEach(function (t, i) {
-      html += '<div class="tip"><span class="tip__num">' + (i + 1) + '</span>' +
-        '<div><p class="tip__title">' + esc(t.title) + '</p>' +
-        '<p class="tip__text">' + esc(t.text) + '</p></div></div>';
-    });
-    html += '</div></section>';
+    /* 공략 — 유튜브 영상 2×2 */
+    html += '<section class="section" aria-labelledby="home-guide-title">' +
+      '<div class="section__head"><h3 class="section__title" id="home-guide-title">공략</h3>' +
+      '<span class="section__hadd">' + (isLive() ? '<button type="button" class="tool tool--add" data-add="guide">+ 공략 추가</button>' : '') +
+      '<span class="section__more">' + (S.guides.length ? S.guides.length + '개' : '영상으로 보기') + '</span></span></div>';
+
+    if (!S.guides.length) {
+      html += '<div class="empty">아직 올라온 공략 영상이 없어요.' +
+        (isLive() ? ' 위의 <b>+ 공략 추가</b>에 유튜브 주소를 붙여 넣어 보세요.' : ' 문파원이 공략 영상을 올리면 이곳에서 볼 수 있어요.') + '</div>';
+    } else {
+      var shown = S.guideOpen ? S.guides : S.guides.slice(0, 4);
+      html += '<div class="guides" id="guide-grid">';
+      shown.forEach(function (g) {
+        var thumb = g.video_id ? 'https://i.ytimg.com/vi/' + g.video_id + '/hqdefault.jpg' : '';
+        var open = g.youtube_url
+          ? '<a class="guide__link" href="' + esc(g.youtube_url) + '" target="_blank" rel="noopener noreferrer" data-guide="' + esc(g.id) + '" aria-label="' + esc(g.title) + ' — 유튜브에서 열기">'
+          : '<div class="guide__link guide__link--sample" role="button" tabindex="0" data-sample="' + esc(g.id) + '" aria-label="' + esc(g.title) + ' — 예시 카드">';
+        html += '<div class="guide">' + open +
+          '<span class="guide__thumb">' + ART.scene(g.kind || 'moon') +
+          (thumb ? '<img class="guide__img" src="' + esc(thumb) + '" alt="" loading="lazy" decoding="async">' : '') +
+          '<span class="guide__play" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" focusable="false"><path d="M9 6.4 18.6 12 9 17.6z" fill="currentColor"/></svg></span>' +
+          '</span>' +
+          '<span class="guide__title">' + esc(g.title) + '</span>' +
+          (g.youtube_url ? '</a>' : '</div>') +
+          (canDeleteGuide(g) ? '<button type="button" class="guide__del" data-del-guide="' + esc(g.id) + '" aria-label="공략 삭제">×</button>' : '') +
+          '</div>';
+      });
+      html += '</div>';
+      if (S.guides.length > 4) {
+        html += '<button type="button" class="btn btn--ghost btn--small guides__more" id="guide-more">' +
+          (S.guideOpen ? '접어 두기' : '공략 더 보기 (' + (S.guides.length - 4) + ')') + '</button>';
+      }
+      if (!isLive()) {
+        html += '<p class="section__note">체험 모드의 예시 영상이에요. 실제 문파에서는 문주가 유튜브 주소를 붙여 넣어 공략을 올려요.</p>';
+      }
+    }
+    html += '</section>';
 
     html += '<section class="section"><div class="privacy"><strong>이 연못에 대해</strong>' +
       (isLive()
@@ -1193,15 +1306,50 @@
       });
     });
 
-    if (admin) {
-      $$('[data-add]', $('#home-body')).forEach(function (btn) {
-        btn.addEventListener('click', function () {
-          var kind = btn.getAttribute('data-add');
-          if (kind === 'notice') { openNoticeForm(); }
-          else if (kind === 'event') { openEventForm(); }
-          else if (kind === 'coupon') { openCouponForm(); }
-        });
+    /* 공략 썸네일 — 외부 썸네일이 안 뜨면 연못 그림이 그대로 비치게 */
+    $$('.guide__img', $('#home-body')).forEach(function (img) {
+      img.addEventListener('error', function () { img.classList.add('is-broken'); });
+      img.addEventListener('load', function () { img.classList.add('is-loaded'); });
+      if (img.complete && img.naturalWidth) { img.classList.add('is-loaded'); }
+    });
+
+    var guideMore = $('#guide-more');
+    if (guideMore) {
+      guideMore.addEventListener('click', function () {
+        S.guideOpen = !S.guideOpen;
+        renderHome();
       });
+    }
+
+    $$('.guide__link--sample', $('#home-body')).forEach(function (card) {
+      var note = function () {
+        toast('체험 모드의 예시 카드예요. 실제 문파에서는 올라온 유튜브 영상으로 열려요.');
+      };
+      card.addEventListener('click', note);
+      card.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); note(); }
+      });
+    });
+
+    $$('[data-del-guide]', $('#home-body')).forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        confirmDeleteGuide(btn.getAttribute('data-del-guide'));
+      });
+    });
+
+    $$('[data-add]', $('#home-body')).forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var kind = btn.getAttribute('data-add');
+        if (kind === 'notice') { openNoticeForm(); }
+        else if (kind === 'event') { openEventForm(); }
+        else if (kind === 'coupon') { openCouponForm(); }
+        else if (kind === 'guide') { openGuideForm(); }
+      });
+    });
+
+    if (admin) {
       $$('[data-del-notice]', $('#home-body')).forEach(function (btn) {
         btn.addEventListener('click', function () { confirmDeleteNotice(btn.getAttribute('data-del-notice')); });
       });
@@ -1419,8 +1567,9 @@
         return;
       }
       var who = m.mine ? '나' : (m.nickname || '문파원');
+      var chatAvatar = m.mine ? myAvatarValue() : (m.avatar || memberAvatarByName(m.nickname));
       html += '<div class="msg' + (m.mine ? ' msg--mine' : '') + '">' +
-        '<span class="msg__avatar" style="background:' + avatarStyle(m.nickname || '연') + '" aria-hidden="true">' + esc(initial(m.nickname || '연')) + '</span>' +
+        avatarSpan('msg__avatar', m.nickname || '연', chatAvatar) +
         '<div class="msg__col">' +
         '<div class="msg__who"><span>' + esc(who) + '</span>' +
         (m.roleLabel ? '<span class="msg__role">' + esc(m.roleLabel) + '</span>' : '') +
@@ -1481,13 +1630,14 @@
           ? '<span class="shot__loading">사진을 불러오는 중…</span>'
           : ART.scene(item.kind || 'moon'));
       var canDelete = admin || (isLive() && item.author_id && item.author_id === myId());
+      var authorAvatar = memberAvatarById(item.author_id) || item.author_avatar;
       html += '<div class="shot" role="button" tabindex="0" data-shot="' + esc(item.id) + '" aria-label="' + esc(item.title) + ' 크게 보기">' +
         '<span class="shot__art">' + art + '</span>' +
         (relDayLabel(item.created_at) === relDayLabel(new Date()) ? '<span class="shot__new">NEW</span>' : '') +
         (canDelete ? '<button type="button" class="shot__del" data-del-album="' + esc(item.id) + '" aria-label="사진 지우기">×</button>' : '') +
         '<span class="shot__meta">' +
         '<span class="shot__title">' + esc(item.title) + '</span>' +
-        '<span class="shot__sub"><span>' + esc(item.author) + '</span>' +
+        '<span class="shot__sub">' + '<span class="shot__author">' + avatarSpan('avatar--xs', item.author, authorAvatar) + '<span>' + esc(item.author) + '</span></span>' +
         '<span class="shot__like" data-like-count="' + esc(item.id) + '">' +
         heartSvg(item.liked) + ' ' + item.likes + '</span></span>' +
         '</span></div>';
@@ -1772,8 +1922,8 @@
       }
 
       html += '<article class="member' + (m.me ? ' member--me' : '') + (admin ? ' member--admin' : '') + '">' +
-        '<span class="member__avatar" style="background:' + avatarStyle(m.nickname) + '" aria-hidden="true">' + esc(initial(m.nickname)) +
-        '<span class="status status--' + statusClass + '"></span></span>' +
+        avatarSpan('member__avatar', m.nickname, m.avatar,
+          '<span class="status status--' + statusClass + '"></span>') +
         '<div class="member__info">' +
         '<div class="member__name"><span>' + esc(m.nickname) + '</span>' +
         (m.me ? '<span class="member__me-tag">나</span>' : '') +
@@ -2170,6 +2320,101 @@
   }
 
   /* ============================================================
+     공략 — 유튜브 영상
+     ============================================================ */
+  function youtubeId(value) {
+    var text = String(value || '').trim();
+    if (!text) { return null; }
+    if (/^[A-Za-z0-9_-]{11}$/.test(text)) { return text; }
+    var m = text.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/|live\/|v\/))([A-Za-z0-9_-]{11})/);
+    return m ? m[1] : null;
+  }
+
+  function openGuideForm() {
+    openModal(modalTitle('공략 영상 추가') +
+      '<p class="lightbox__meta">유튜브 주소를 붙여 넣으면 썸네일과 함께 홈 <b>공략</b>에 2×2로 보여요.</p>' +
+      '<form class="form" id="guide-form" novalidate style="margin-top:14px">' +
+      '<label class="field"><span class="field__label">유튜브 주소</span>' +
+      '<input class="field__input" type="text" id="guide-url" inputmode="url" autocomplete="off" placeholder="https://youtu.be/… 또는 youtube.com/watch?v=…"></label>' +
+      '<div class="guide-preview" id="guide-preview" hidden></div>' +
+      '<label class="field"><span class="field__label">제목</span>' +
+      '<input class="field__input" type="text" id="guide-title" maxlength="80" placeholder="예) 물그림자 2페이즈 물기둥 피하기"></label>' +
+      '<p class="form__error" id="guide-error" role="alert" hidden></p>' +
+      '<button type="submit" class="btn btn--primary">공략에 올리기</button>' +
+      '</form>');
+
+    var urlInput = $('#guide-url');
+    var preview = $('#guide-preview');
+
+    var paint = function () {
+      var vid = youtubeId(urlInput.value);
+      if (!vid) {
+        preview.hidden = true;
+        preview.innerHTML = '';
+        return;
+      }
+      preview.hidden = false;
+      preview.innerHTML = '<span class="guide-preview__thumb">' +
+        '<img src="' + esc('https://i.ytimg.com/vi/' + vid + '/hqdefault.jpg') + '" alt="" loading="lazy">' +
+        '<span class="guide__play" aria-hidden="true"><svg viewBox="0 0 24 24" width="14" height="14" focusable="false"><path d="M9 6.4 18.6 12 9 17.6z" fill="currentColor"/></svg></span></span>' +
+        '<span class="guide-preview__text">영상 ID <b>' + esc(vid) + '</b><br>이 영상으로 올라가요</span>';
+    };
+
+    urlInput.addEventListener('input', paint);
+    urlInput.addEventListener('paste', function () { window.setTimeout(paint, 0); });
+    paint();
+
+    $('#guide-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var title = $('#guide-title').value.trim();
+      var url = urlInput.value.trim();
+      var vid = youtubeId(url);
+      var errEl = $('#guide-error');
+
+      if (!vid) {
+        errEl.textContent = '유튜브 주소를 확인해 주세요. youtu.be/… 또는 youtube.com/watch?v=… 를 붙여 넣어 주세요.';
+        errEl.hidden = false;
+        return;
+      }
+      if (!title) {
+        errEl.textContent = '제목을 적어 주세요.';
+        errEl.hidden = false;
+        return;
+      }
+      errEl.hidden = true;
+
+      var btn = $('button[type="submit"]', this);
+      btn.disabled = true;
+
+      DB.createGuide(title, url).then(function () {
+        closeModal();
+        toast('공략 영상을 올렸어요');
+        return DB.listGuides().then(function (rows) { S.guides = (rows || []).map(mapGuide); });
+      }).then(function () {
+        renderHome();
+      }).catch(function (err) {
+        btn.disabled = false;
+        errEl.textContent = errorMessage(err);
+        errEl.hidden = false;
+      });
+    });
+  }
+
+  function confirmDeleteGuide(id) {
+    var guide = S.guides.filter(function (g) { return g.id === id; })[0];
+    confirmAction('공략을 지울까요?',
+      (guide ? '“' + guide.title + '” 을(를) 홈 공략에서 내립니다. 영상 자체는 유튜브에 그대로 있어요.' : '홈 공략에서 내립니다.'),
+      '공략 지우기',
+      function () {
+        return DB.deleteGuide(id).then(function () {
+          S.guides = S.guides.filter(function (g) { return g.id !== id; });
+          renderHome();
+          toast('공략을 지웠어요.');
+        });
+      });
+  }
+
+  /* ============================================================
      관리자: 초대 코드
      ============================================================ */
   function openInviteModal() {
@@ -2262,7 +2507,7 @@
 
     html += '<section class="profile">' +
       '<div class="profile__top">' +
-      '<div class="profile__avatar" aria-hidden="true">' + esc(initial(name)) + '</div>' +
+      avatarSpan('profile__avatar', name, myAvatarValue()) +
       '<div><div class="profile__name"><strong>' + esc(name) + '</strong>' +
       '<span class="role ' + roleClass + '">' + esc(roleLabel) + '</span></div>' +
       '<p class="profile__meta"><span>' + (guest ? '둘러보는 중' : '연못 문파원') + '</span><span class="sep">·</span><span>' + esc(sinceText) + '부터</span></p>' +
@@ -2273,6 +2518,38 @@
       '<div class="progress"><div class="progress__bar" style="width:' + Math.min(100, Math.max(4, (wave.total || 0) * 4)) + '%"></div></div>' +
       '<p class="profile__hint">연못 등급 Lv.' + (level || '–') + '</p>' +
       '</div></section>';
+
+    /* 프로필 그림 — 연못 일러스트 8종 · 내 사진 · 기본 글자 */
+    var currentAvatar = myAvatarValue();
+    var presetNow = presetName(currentAvatar);
+    var photoNow = isImageAvatar(currentAvatar);
+
+    html += '<div class="menu-card avatar-card" id="avatar-card">' +
+      '<h3 class="menu-card__title">프로필 그림</h3>' +
+      '<div class="avatar-card__head">' +
+      avatarSpan('avatar-card__preview', name, currentAvatar) +
+      '<div class="avatar-card__text">' +
+      '<p class="avatar-card__now" id="avatar-now">' +
+      (presetNow ? '연못 그림 · ' + esc(ART.avatarLabel[presetNow] || presetNow)
+        : photoNow ? '내 사진' : '기본 글자') + '</p>' +
+      '<p class="avatar-card__hint">' +
+      (guest ? '체험 모드에서는 이 기기에만 저장돼요.' : '고르면 문파원 모두에게 이 그림이 보여요.') +
+      '</p></div></div>' +
+      '<div class="avatar-presets" role="group" aria-label="연못 그림 고르기">' +
+      ART.avatarKinds.map(function (kind) {
+        var on = presetNow === kind;
+        return '<button type="button" class="avatar-pick' + (on ? ' is-active' : '') + '" data-preset="' + kind +
+          '" aria-pressed="' + on + '" aria-label="' + esc(ART.avatarLabel[kind]) + ' 그림">' +
+          ART.avatar(kind) + '<span>' + esc(ART.avatarLabel[kind]) + '</span></button>';
+      }).join('') +
+      '</div>' +
+      '<div class="avatar-actions">' +
+      '<button type="button" class="btn btn--ghost btn--small" id="avatar-upload">내 사진 올리기</button>' +
+      '<button type="button" class="btn btn--quiet btn--small" id="avatar-reset"' + (currentAvatar ? '' : ' disabled') + '>기본 글자로</button>' +
+      '<input type="file" id="avatar-file" accept="image/*" hidden aria-label="프로필 사진 고르기">' +
+      '</div>' +
+      '<p class="section__note" id="avatar-note">사진은 가운데를 정사각형으로 잘라 128×128 · 10~25KB 로 줄여서 올라가요.</p>' +
+      '</div>';
 
     if (admin) {
       html += '<div class="menu-card">' +
@@ -2339,12 +2616,14 @@
       '<button type="button" class="btn btn--quiet" id="reset-btn">기록 지우기</button>' +
       '</div>';
 
-    html += '<p class="version">연못 · v0.2' + (isLive() ? ' · 실제 문파' : ' · 체험') + '</p>';
+    html += '<p class="version">연못 · v0.3' + (isLive() ? ' · 실제 문파' : ' · 체험') + '</p>';
 
     $('#me-body').innerHTML = html;
 
     var inviteRow = $('#admin-invite-row');
     if (inviteRow) { inviteRow.addEventListener('click', openInviteModal); }
+
+    bindAvatarCard();
 
     $('#theme-switch').addEventListener('click', function () {
       var on = this.getAttribute('aria-pressed') !== 'true';
@@ -2420,6 +2699,94 @@
         toast('이 기기의 기록을 지웠어요.');
       });
     });
+  }
+
+  /* ============================================================
+     프로필 그림 바꾸기
+     ============================================================ */
+  function setAvatarLocal(value) {
+    if (S.me) { S.me.avatar = value; }
+    if (S.user) { S.user.avatar = value; }
+    S.members.forEach(function (m) { if (m.me) { m.avatar = value; } });
+  }
+
+  function refreshAvatarViews() {
+    if (S.noticeRows) { S.notices = (S.noticeRows || []).map(mapNotice); }
+    renderHome();
+    renderChat();
+    renderAlbum();
+    renderMembers();
+    renderMe();
+  }
+
+  /** avatar = 'preset:lotus' | data:image/… | null(기본 글자) */
+  function applyAvatar(avatar) {
+    var value = avatar || null;
+    var previous = myAvatarValue();
+
+    setAvatarLocal(value);
+    if (!isLive()) {
+      store.set('avatar', value);
+      refreshAvatarViews();
+      toast(value ? '프로필 그림을 바꿨어요' : '기본 글자로 돌려놓았어요');
+      return Promise.resolve({ ok: true });
+    }
+
+    refreshAvatarViews();
+    return DB.updateMyAvatar(value).then(function (res) {
+      toast(value ? '프로필 그림을 바꿨어요' : '기본 글자로 돌려놓았어요');
+      return res;
+    }).catch(function (err) {
+      setAvatarLocal(previous);
+      refreshAvatarViews();
+      toast(errorMessage(err));
+    });
+  }
+
+  function bindAvatarCard() {
+    var host = $('#me-body');
+    if (!host) { return; }
+
+    $$('[data-preset]', host).forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var kind = btn.getAttribute('data-preset');
+        if (presetName(myAvatarValue()) === kind) { return; }
+        btn.classList.add('is-busy');
+        applyAvatar('preset:' + kind).then(function () { btn.classList.remove('is-busy'); });
+      });
+    });
+
+    var fileInput = $('#avatar-file');
+    var upload = $('#avatar-upload');
+    if (upload && fileInput) {
+      upload.addEventListener('click', function () { fileInput.click(); });
+      fileInput.addEventListener('change', function () {
+        var file = fileInput.files && fileInput.files[0];
+        if (!file) { return; }
+        var note = $('#avatar-note');
+        upload.disabled = true;
+        if (note) { note.textContent = '사진을 정사각형으로 줄이는 중이에요…'; }
+        DB.compressAvatar(file).then(function (photo) {
+          return applyAvatar(photo.dataUrl);
+        }).catch(function (err) {
+          toast(errorMessage(err));
+        }).then(function () {
+          fileInput.value = '';
+          var again = $('#avatar-upload');
+          if (again) { again.disabled = false; }
+          var fresh = $('#avatar-note');
+          if (fresh) { fresh.textContent = '사진은 가운데를 정사각형으로 잘라 128×128 · 10~25KB 로 줄여서 올라가요.'; }
+        });
+      });
+    }
+
+    var reset = $('#avatar-reset');
+    if (reset) {
+      reset.addEventListener('click', function () {
+        if (!myAvatarValue()) { return; }
+        applyAvatar(null);
+      });
+    }
   }
 
   function showRules() {

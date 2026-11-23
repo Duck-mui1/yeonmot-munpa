@@ -183,6 +183,11 @@ create table if not exists private.members (
   status_changed_at  timestamptz,
   failed_login_count integer not null default 0 check (failed_login_count >= 0),
   locked_until       timestamptz,
+  -- 프로필 그림: 'preset:lotus' … 'preset:lantern' 8종 또는 클라이언트에서 128×128 로 줄인
+  --   data:image/(jpeg|webp|png);base64,… (최대 65,000자 ≈ 48KB). null 이면 닉네임 첫 글자.
+  avatar             text
+                       constraint members_avatar_len
+                       check (avatar is null or char_length(avatar) <= 65000),
   joined_at          timestamptz not null default now(),
   last_seen_at       timestamptz,
   created_at         timestamptz not null default now(),
@@ -275,6 +280,25 @@ create table if not exists public.notices (
 create index if not exists notices_pinned_created_idx
   on public.notices (pinned desc, created_at desc)
   where deleted_at is null;
+
+-- 2-6b. 공략 영상 (홈 '공략' 섹션 · 유튜브 썸네일 2×2)
+--   · 개인정보 없음 — 제목·유튜브 주소·영상 ID 만 담습니다(공개 읽기).
+--   · 올리기: 로그인한 문파원 누구나(create_guide) · 삭제: 올린 본인 또는 운영진(delete_guide).
+create table if not exists public.guides (
+  id          uuid primary key default gen_random_uuid(),
+  title       text not null check (char_length(title) between 1 and 80),
+  youtube_url text not null check (char_length(youtube_url) between 8 and 300),
+  video_id    text not null check (video_id ~ '^[A-Za-z0-9_-]{11}$'),
+  created_by  uuid references private.members (id) on delete set null,
+  created_at  timestamptz not null default now(),
+  deleted_at  timestamptz
+);
+
+create index if not exists guides_created_idx
+  on public.guides (created_at desc)
+  where deleted_at is null;
+
+comment on table public.guides is '홈 공략 섹션의 유튜브 영상. 썸네일은 i.ytimg.com/vi/{video_id}/hqdefault.jpg.';
 
 -- 2-7. 모임 일정 (Realtime 대상)
 create table if not exists public.events (
@@ -426,7 +450,8 @@ select
   m.member_role,
   m.member_level,
   m.joined_at,
-  m.last_seen_at
+  m.last_seen_at,
+  m.avatar
 from private.members m
 where m.status = 'active';
 
@@ -444,6 +469,7 @@ grant select on public.public_members to anon, authenticated;
 alter table public.chat_messages enable row level security;
 alter table public.notices      enable row level security;
 alter table public.events       enable row level security;
+alter table public.guides       enable row level security;
 
 alter table private.clan_settings   enable row level security;
 alter table private.members         enable row level security;
@@ -459,9 +485,11 @@ alter table private.admin_audit     enable row level security;
 revoke all on table public.chat_messages from public, anon, authenticated;
 revoke all on table public.notices       from public, anon, authenticated;
 revoke all on table public.events        from public, anon, authenticated;
+revoke all on table public.guides        from public, anon, authenticated;
 grant select on table public.chat_messages to anon, authenticated;
 grant select on table public.notices       to anon, authenticated;
 grant select on table public.events        to anon, authenticated;
+grant select on table public.guides        to anon, authenticated;
 
 drop policy if exists chat_messages_read on public.chat_messages;
 create policy chat_messages_read on public.chat_messages
@@ -481,6 +509,11 @@ create policy notices_read on public.notices
 
 drop policy if exists events_read on public.events;
 create policy events_read on public.events
+  for select to anon, authenticated
+  using (deleted_at is null);
+
+drop policy if exists guides_read on public.guides;
+create policy guides_read on public.guides
   for select to anon, authenticated
   using (deleted_at is null);
 
@@ -708,7 +741,8 @@ begin
       'id', v_member.id,
       'nickname', v_member.nickname,
       'role', v_member.member_role,
-      'level', v_member.member_level
+      'level', v_member.member_level,
+      'avatar', v_member.avatar
     ),
     'is_first_admin', v_role = 'admin'
   );
@@ -806,7 +840,8 @@ begin
       'id', v_member.id,
       'nickname', v_member.nickname,
       'role', v_member.member_role,
-      'level', v_member.member_level
+      'level', v_member.member_level,
+      'avatar', v_member.avatar
     )
   );
 end;
@@ -900,6 +935,7 @@ begin
     'nickname', v_member.nickname,
     'role', v_member.member_role,
     'level', v_member.member_level,
+    'avatar', v_member.avatar,
     'joined_at', v_member.joined_at,
     'last_seen_at', v_member.last_seen_at,
     'wave', jsonb_build_object(
@@ -909,6 +945,66 @@ begin
       'total', v_total
     )
   );
+end;
+$fn$;
+
+-- 프로필 그림 바꾸기
+--   · 'preset:lotus' … 'preset:lantern' (앱이 그리는 연못 그림 8종)
+--   · 'data:image/(jpeg|png|webp);base64,…' (브라우저에서 128×128 로 줄인 내 사진)
+--   · null / '' → 기본(닉네임 첫 글자)
+create or replace function public.update_my_avatar(
+  p_token  text,
+  p_avatar text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $fn$
+declare
+  v_actor  private.session_actor := private.current_member(p_token);
+  v_avatar text := nullif(btrim(coalesce(p_avatar, '')), '');
+  v_b64    text;
+  v_bytes  integer;
+begin
+  if v_avatar is null then
+    update private.members set avatar = null where id = v_actor.member_id;
+    return jsonb_build_object('ok', true, 'avatar', null, 'bytes', null);
+  end if;
+
+  if char_length(v_avatar) > 65000 then
+    raise exception '프로필 그림은 48KB 이하 사진으로 줄여 주세요.' using errcode = '22023';
+  end if;
+
+  if v_avatar ~ '^preset:' then
+    if v_avatar not in ('preset:lotus', 'preset:koi', 'preset:frog', 'preset:firefly',
+                        'preset:moon', 'preset:leaf', 'preset:turtle', 'preset:lantern') then
+      raise exception '고를 수 있는 연못 그림이 아니에요.' using errcode = '22023';
+    end if;
+  elsif v_avatar ~ '^data:image/(jpeg|png|webp);base64,' then
+    v_b64 := substring(v_avatar from 'base64,(.*)$');
+
+    begin
+      v_bytes := octet_length(decode(v_b64, 'base64'));
+    exception
+      when others then
+        raise exception '사진을 읽지 못했어요. 다시 올려 주세요.' using errcode = '22023';
+    end;
+
+    if v_bytes is null or v_bytes = 0 then
+      raise exception '빈 사진은 올릴 수 없어요.' using errcode = '22023';
+    end if;
+
+    if v_bytes > 48000 then
+      raise exception '프로필 사진은 48KB 이하로 줄여 주세요.' using errcode = '22023';
+    end if;
+  else
+    raise exception '프로필 그림은 연못 그림 8종이나 사진만 쓸 수 있어요.' using errcode = '22023';
+  end if;
+
+  update private.members set avatar = v_avatar where id = v_actor.member_id;
+
+  return jsonb_build_object('ok', true, 'avatar', v_avatar, 'bytes', v_bytes);
 end;
 $fn$;
 
@@ -974,6 +1070,7 @@ as $fn$
 declare
   v_actor private.session_actor := private.current_member(p_token);
   v_body  text := btrim(coalesce(p_body, ''));
+  v_member private.members;
   v_msg   public.chat_messages;
   v_recent integer;
 begin
@@ -993,6 +1090,8 @@ begin
     raise exception '메시지를 너무 빠르게 보내고 있어요. 잠시 쉬었다 보내 주세요.' using errcode = '53300';
   end if;
 
+  select * into v_member from private.members m where m.id = v_actor.member_id;
+
   insert into public.chat_messages (member_id, kind, body)
   values (v_actor.member_id, 'text', v_body)
   returning * into v_msg;
@@ -1002,6 +1101,7 @@ begin
     'member_id', v_msg.member_id,
     'nickname', v_actor.nickname,
     'role', v_actor.member_role,
+    'avatar', v_member.avatar,
     'body', v_msg.body,
     'created_at', v_msg.created_at
   );
@@ -1026,7 +1126,7 @@ declare
 begin
   with picked as (
     select c.id, c.member_id, c.kind, c.body, c.created_at,
-           m.nickname, m.member_role
+           m.nickname, m.member_role, m.avatar
       from public.chat_messages c
       left join private.members m on m.id = c.member_id
      where c.deleted_at is null
@@ -1041,6 +1141,7 @@ begin
                'member_id', p.member_id,
                'nickname', p.nickname,
                'role', p.member_role,
+               'avatar', p.avatar,
                'kind', p.kind,
                'body', p.body,
                'created_at', p.created_at
@@ -1112,6 +1213,7 @@ begin
       'nickname', v_actor.nickname,
       'role', v_actor.member_role,
       'level', v_actor.member_level,
+      'avatar', (select m.avatar from private.members m where m.id = v_actor.member_id),
       'today_wave', exists (select 1 from private.attendance a
                              where a.member_id = v_actor.member_id and a.day = v_today),
       'streak', v_streak,
@@ -1156,6 +1258,39 @@ begin
 end;
 $fn$;
 
+-- 공략 영상 목록 (최신 24개)
+create or replace function public.list_guides(p_token text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $fn$
+declare
+  v_actor  private.session_actor := private.current_member(p_token);
+  v_result jsonb;
+begin
+  select coalesce(jsonb_agg(s.item order by s.created_at desc), '[]'::jsonb)
+    into v_result
+    from (
+      select jsonb_build_object(
+               'id', g.id,
+               'title', g.title,
+               'youtube_url', g.youtube_url,
+               'video_id', g.video_id,
+               'created_by', g.created_by,
+               'created_at', g.created_at
+             ) as item,
+             g.created_at
+        from public.guides g
+       where g.deleted_at is null
+       order by g.created_at desc
+       limit 24
+    ) s;
+
+  return v_result;
+end;
+$fn$;
+
 -- 앨범 목록 (이미지 본문 제외 → 가볍게)
 create or replace function public.list_album_posts(
   p_token  text,
@@ -1190,6 +1325,7 @@ begin
                'author_id', q.member_id,
                'author', m.nickname,
                'author_role', m.member_role,
+               'author_avatar', m.avatar,
                'image_mime', q.image_mime,
                'image_bytes', q.image_bytes,
                'likes', (select count(*) from private.album_likes l where l.post_id = q.id),
@@ -1484,6 +1620,7 @@ begin
                'status', m.status,
                'status_reason', m.status_reason,
                'status_changed_at', m.status_changed_at,
+               'avatar', m.avatar,
                'joined_at', m.joined_at,
                'last_seen_at', m.last_seen_at,
                'wave_today', exists (select 1 from private.attendance a
@@ -2021,6 +2158,102 @@ begin
 end;
 $fn$;
 
+-- 공략 영상 작성 — 로그인한 문파원이면 누구나 (문주·운영진·문파원)
+--   youtu.be/ID · youtube.com/watch?v=ID · youtube.com/shorts/ID · youtube.com/embed/ID · ID(11자)
+--   유튜브 주소에서 영상 ID 를 서버에서도 다시 뽑아 11자만 저장합니다.
+create or replace function public.create_guide(
+  p_token       text,
+  p_title       text,
+  p_youtube_url text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $fn$
+declare
+  v_actor   private.session_actor := private.current_member(p_token);
+  v_title   text := btrim(coalesce(p_title, ''));
+  v_url     text := btrim(coalesce(p_youtube_url, ''));
+  v_video   text;
+  v_guide   public.guides;
+begin
+  if char_length(v_title) = 0 or char_length(v_title) > 80 then
+    raise exception '공략 제목은 1~80자로 적어 주세요.' using errcode = '22023';
+  end if;
+
+  if char_length(v_url) = 0 or char_length(v_url) > 300 then
+    raise exception '유튜브 주소를 넣어 주세요.' using errcode = '22023';
+  end if;
+
+  if v_url ~ '^[A-Za-z0-9_-]{11}$' then
+    v_video := v_url;
+    v_url := 'https://www.youtube.com/watch?v=' || v_url;
+  else
+    v_video := substring(v_url from '(?:youtu\.be/|youtube\.com/(?:watch\?(?:.*&)?v=|shorts/|embed/|live/|v/))([A-Za-z0-9_-]{11})');
+  end if;
+
+  if v_video is null then
+    raise exception '유튜브 주소를 알아보지 못했어요. youtu.be/… 또는 youtube.com/watch?v=… 를 붙여 넣어 주세요.' using errcode = '22023';
+  end if;
+
+  insert into public.guides (title, youtube_url, video_id, created_by)
+  values (v_title, v_url, v_video, v_actor.member_id)
+  returning * into v_guide;
+
+  return jsonb_build_object(
+    'id', v_guide.id,
+    'title', v_guide.title,
+    'youtube_url', v_guide.youtube_url,
+    'video_id', v_guide.video_id,
+    'created_by', v_guide.created_by,
+    'created_at', v_guide.created_at
+  );
+end;
+$fn$;
+
+-- 공략 영상 삭제 — 올린 본인 또는 운영진(admin·officer)
+--   기록은 남기고 목록에서만 감춥니다(유튜브 영상 자체는 그대로).
+create or replace function public.delete_guide(
+  p_token    text,
+  p_guide_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $fn$
+declare
+  v_actor private.session_actor := private.current_member(p_token);
+  v_guide public.guides;
+begin
+  select * into v_guide
+    from public.guides g
+   where g.id = p_guide_id
+     and g.deleted_at is null
+   for update;
+
+  if not found then
+    raise exception '공략을 찾을 수 없어요.' using errcode = 'P0002';
+  end if;
+
+  if v_guide.created_by is distinct from v_actor.member_id
+     and v_actor.member_role not in ('admin', 'officer') then
+    raise exception '내가 올린 공략이나 운영진만 지울 수 있어요.' using errcode = '42501';
+  end if;
+
+  update public.guides
+     set deleted_at = now()
+   where id = p_guide_id;
+
+  perform private.log_admin(v_actor.member_id, 'guide.delete', 'guide', p_guide_id::text,
+                            jsonb_build_object('by_role', v_actor.member_role,
+                                               'owner', v_guide.created_by::text));
+
+  return jsonb_build_object('id', p_guide_id, 'deleted', true);
+end;
+$fn$;
+
 -- 부적절한 채팅 삭제 (본문 즉시 소거 → 실시간으로 삭제가 전달됩니다)
 create or replace function public.admin_delete_chat_message(
   p_token      text,
@@ -2242,14 +2475,16 @@ begin
        and p.prokind = 'f'
        and p.proname in (
          'register_member', 'login_member', 'logout_member', 'change_pin', 'my_profile',
+         'update_my_avatar',
          'mark_attendance', 'post_chat_message', 'list_chat_messages', 'clan_overview',
          'list_coupons', 'list_album_posts', 'create_album_post', 'get_album_image',
-         'toggle_album_like', 'delete_own_album_post',
+         'toggle_album_like', 'delete_own_album_post', 'list_guides',
          'admin_update_invite_code', 'admin_get_settings', 'admin_list_members',
          'admin_kick_member', 'admin_ban_member', 'admin_restore_member', 'admin_set_role',
          'admin_create_notice', 'admin_update_notice', 'admin_pin_notice', 'admin_delete_notice',
          'admin_create_event', 'admin_update_event', 'admin_delete_event',
          'admin_create_coupon', 'admin_delete_coupon',
+         'create_guide', 'delete_guide',
          'admin_delete_chat_message', 'admin_delete_album_post', 'admin_list_audit',
          'bootstrap_admin'
        )

@@ -273,6 +273,59 @@
     });
   }
 
+  /* ---------------- 프로필 그림 압축 -------------
+   * 서버는 avatar 65,000자 이하만 받습니다. 128×128 정사각형 JPEG 로
+   * 가운데를 잘라(cover) 10~25KB 정도로 줄입니다.
+   */
+  var AVATAR_MAX_DATA_URL = 32000;   // ≈ 24KB 원본
+  var AVATAR_SIDE = 128;
+
+  function drawSquare(img, side, quality) {
+    var w = img.naturalWidth || img.width;
+    var h = img.naturalHeight || img.height;
+    if (!w || !h) { throw failure('사진 크기를 알 수 없어요.'); }
+    var s = Math.min(w, h);
+    var sx = Math.round((w - s) / 2);
+    var sy = Math.round((h - s) / 2);
+    var canvas = document.createElement('canvas');
+    canvas.width = side;
+    canvas.height = side;
+    var ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#06282a';
+    ctx.fillRect(0, 0, side, side);
+    ctx.drawImage(img, sx, sy, s, s, 0, 0, side, side);
+    return canvas.toDataURL('image/jpeg', quality);
+  }
+
+  /** 프로필 사진 파일 → { dataUrl, mime, bytes } (128×128 정사각형 · 10~25KB) */
+  function compressAvatar(file) {
+    if (!file) { return Promise.reject(failure('사진을 골라 주세요.')); }
+    if (file.type && file.type.indexOf('image/') !== 0) {
+      return Promise.reject(failure('사진 파일만 올릴 수 있어요.'));
+    }
+    return readAsDataUrl(file).then(function (raw) {
+      return loadImage(raw).then(function (img) {
+        var side = AVATAR_SIDE;
+        var quality = 0.8;
+        var dataUrl = drawSquare(img, side, quality);
+
+        while (dataUrl.length > AVATAR_MAX_DATA_URL && quality > 0.46) {
+          quality -= 0.09;
+          dataUrl = drawSquare(img, side, quality);
+        }
+        while (dataUrl.length > AVATAR_MAX_DATA_URL && side > 64) {
+          side = Math.round(side * 0.8);
+          dataUrl = drawSquare(img, side, 0.62);
+        }
+        if (dataUrl.length > AVATAR_MAX_DATA_URL) {
+          throw failure('사진이 너무 커요. 다른 사진으로 해 보세요.');
+        }
+        var bytes = Math.round((dataUrl.length - dataUrl.indexOf(',') - 1) * 0.75);
+        return { dataUrl: dataUrl, mime: 'image/jpeg', bytes: bytes };
+      });
+    });
+  }
+
   window.YM_DB = {
     url: BASE,
     key: KEY,
@@ -285,6 +338,7 @@
     clearSession: function () { writeSession(null); },
     withToken: withToken,
     compressPhoto: compressPhoto,
+    compressAvatar: compressAvatar,
     startRealtime: startRealtime,
     stopRealtime: stopRealtime,
 
@@ -317,6 +371,12 @@
     },
     profile: function () {
       return withToken(function (t) { return rpc('my_profile', { p_token: t }); });
+    },
+    /** 프로필 그림 바꾸기 — 'preset:lotus' · data:image/… · null(기본 글자) */
+    updateMyAvatar: function (avatar) {
+      return withToken(function (t) {
+        return rpc('update_my_avatar', { p_token: t, p_avatar: avatar || null });
+      });
     },
 
     /* --- 문파 --- */
@@ -364,6 +424,21 @@
     /* --- 쿠폰 --- */
     listCoupons: function () {
       return withToken(function (t) { return rpc('list_coupons', { p_token: t }); });
+    },
+
+    /* --- 공략 (유튜브 영상) ---
+     *  올리기: 로그인한 문파원 누구나 · 삭제: 올린 본인 또는 운영진(서버가 확인)
+     */
+    listGuides: function () {
+      return withToken(function (t) { return rpc('list_guides', { p_token: t }); });
+    },
+    createGuide: function (title, youtubeUrl) {
+      return withToken(function (t) {
+        return rpc('create_guide', { p_token: t, p_title: title, p_youtube_url: youtubeUrl });
+      });
+    },
+    deleteGuide: function (guideId) {
+      return withToken(function (t) { return rpc('delete_guide', { p_token: t, p_guide_id: guideId }); });
     },
 
     /* --- 문파원 --- */

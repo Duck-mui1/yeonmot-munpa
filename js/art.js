@@ -291,6 +291,178 @@
     );
   }
 
+  /* ---------- 프로필 그림 (연못 테마 8종) ----------
+   * 128×128 정사각형. 모두 이 앱을 위해 그린 오리지널 SVG 입니다.
+   * 저장 값은 'preset:lotus' 처럼 kind 이름만 보내고, 그림은 앱이 그립니다.
+   */
+  var AVATAR_KINDS = ['lotus', 'koi', 'frog', 'firefly', 'moon', 'leaf', 'turtle', 'lantern'];
+  var AVATAR_LABEL = {
+    lotus: '연꽃', koi: '잉어', frog: '개구리', firefly: '반딧불',
+    moon: '달빛', leaf: '연잎', turtle: '거북', lantern: '등불'
+  };
+  var AVATAR_BG = {
+    lotus: ['#0a2f2c', '#11453c', '#1c5f4c'],
+    koi: ['#08272c', '#0c3d42', '#125354'],
+    frog: ['#0a2b20', '#10462d', '#1a5f3c'],
+    firefly: ['#051817', '#092a26', '#0e3b31'],
+    moon: ['#061b28', '#0a2f3f', '#114b58'],
+    leaf: ['#07261d', '#0b3728', '#115331'],
+    turtle: ['#06222a', '#0b383d', '#134d47'],
+    lantern: ['#091d20', '#103235', '#1c4743']
+  };
+
+  function avatarBody(kind, g) {
+    if (kind === 'lotus') {
+      return (
+        '<ellipse cx="64" cy="104" rx="44" ry="12" fill="#0b4a3c"/>' +
+        '<path d="M20 104 64 96l44 8-44 8z" fill="#083a30"/>' +
+        '<g fill="url(#' + g + 'p)">' +
+        '<ellipse cx="64" cy="62" rx="9" ry="26"/>' +
+        '<ellipse cx="46" cy="70" rx="8.5" ry="22" transform="rotate(-30 46 70)"/>' +
+        '<ellipse cx="82" cy="70" rx="8.5" ry="22" transform="rotate(30 82 70)"/>' +
+        '<ellipse cx="32" cy="82" rx="7.5" ry="18" transform="rotate(-54 32 82)"/>' +
+        '<ellipse cx="96" cy="82" rx="7.5" ry="18" transform="rotate(54 96 82)"/>' +
+        '</g>' +
+        '<circle cx="64" cy="74" r="8" fill="url(#' + g + 'g)"/>' +
+        '<circle cx="64" cy="74" r="3.4" fill="#fff6df"/>' +
+        '<g stroke="#8fe0c8" fill="none" opacity=".22"><ellipse cx="64" cy="114" rx="34" ry="5"/><ellipse cx="86" cy="118" rx="22" ry="3.6"/></g>'
+      );
+    }
+    if (kind === 'koi') {
+      return (
+        '<g stroke="#a9e3d1" fill="none" opacity=".18"><circle cx="64" cy="64" r="30"/><circle cx="64" cy="64" r="46"/></g>' +
+        '<g transform="translate(60 52) rotate(-14)">' +
+        '<path d="M-34 0c8-17 30-24 48-18 12 4 18 12 18 18s-6 14-18 18c-18 6-40-1-48-18z" fill="url(#' + g + 'k)"/>' +
+        '<path d="M18-4c10-8 20-10 26-8-8 6-10 12-9 18-6 0-13-4-17-10z" fill="#f8cba8"/>' +
+        '<circle cx="-20" cy="-4" r="3.4" fill="#33201a"/>' +
+        '<path d="M-4 8c10 2 18 6 22 12" stroke="#ffe6cf" stroke-width="2.4" fill="none" opacity=".5"/>' +
+        '</g>' +
+        '<g transform="translate(76 94) rotate(168)" opacity=".95">' +
+        '<path d="M-24 0c6-12 21-17 34-13 9 3 13 9 13 13s-4 10-13 13c-13 4-28-1-34-13z" fill="#f2e0c4"/>' +
+        '<path d="M13-3c7-6 14-7 18-6-5 5-7 9-6 13-5 0-9-3-12-7z" fill="#e8bca4"/>' +
+        '<circle cx="-15" cy="-3" r="2.6" fill="#33201a"/>' +
+        '</g>' +
+        '<g fill="#eafff7" opacity=".5"><circle cx="34" cy="34" r="3"/><circle cx="28" cy="44" r="1.8"/><circle cx="92" cy="40" r="2.4"/></g>'
+      );
+    }
+    if (kind === 'frog') {
+      return (
+        '<ellipse cx="64" cy="110" rx="46" ry="10" fill="#0b4a30"/>' +
+        '<path d="M18 110c0-10 20-16 46-16s46 6 46 16z" fill="#0e5738"/>' +
+        '<ellipse cx="64" cy="82" rx="31" ry="24" fill="#4f9e60"/>' +
+        '<ellipse cx="64" cy="90" rx="20" ry="14" fill="#86c98a" opacity=".55"/>' +
+        '<circle cx="46" cy="58" r="12" fill="#4f9e60"/><circle cx="82" cy="58" r="12" fill="#4f9e60"/>' +
+        '<circle cx="46" cy="57" r="7.6" fill="#f6fbf2"/><circle cx="82" cy="57" r="7.6" fill="#f6fbf2"/>' +
+        '<circle cx="46" cy="58" r="3.8" fill="#12301f"/><circle cx="82" cy="58" r="3.8" fill="#12301f"/>' +
+        '<circle cx="47.4" cy="56.2" r="1.2" fill="#fff"/><circle cx="83.4" cy="56.2" r="1.2" fill="#fff"/>' +
+        '<path d="M50 86c8 7 20 7 28 0" stroke="#1d4b31" stroke-width="2.6" fill="none" stroke-linecap="round"/>' +
+        '<circle cx="59" cy="76" r="1.5" fill="#1d4b31"/><circle cx="69" cy="76" r="1.5" fill="#1d4b31"/>' +
+        '<g fill="#d9f5e3" opacity=".45"><circle cx="24" cy="96" r="2"/><circle cx="104" cy="92" r="1.6"/></g>'
+      );
+    }
+    if (kind === 'firefly') {
+      var dots = [[28, 36], [44, 22], [92, 30], [104, 54], [36, 74], [96, 86], [22, 100], [72, 108], [58, 14], [110, 112]];
+      var out = '<g stroke="#0f3a30" fill="none" opacity=".9"><path d="M20 128c4-34 0-56-6-74"/><path d="M108 128c-2-30 4-50 10-64"/></g>';
+      for (var i = 0; i < dots.length; i++) {
+        var o = (0.45 + (i % 4) * 0.14).toFixed(2);
+        out += '<circle cx="' + dots[i][0] + '" cy="' + dots[i][1] + '" r="7" fill="#ffe9a8" opacity="' + (o * 0.2).toFixed(2) + '"/>' +
+          '<circle cx="' + dots[i][0] + '" cy="' + dots[i][1] + '" r="1.9" fill="#fff6d2" opacity="' + o + '"/>';
+      }
+      out +=
+        '<g transform="translate(64 72)">' +
+        '<circle cx="0" cy="10" r="22" fill="#ffe9a8" opacity=".22"/>' +
+        '<ellipse cx="-9" cy="-4" rx="11" ry="6" transform="rotate(-26 -9 -4)" fill="#cfeade" opacity=".45"/>' +
+        '<ellipse cx="9" cy="-4" rx="11" ry="6" transform="rotate(26 9 -4)" fill="#cfeade" opacity=".45"/>' +
+        '<ellipse cx="0" cy="2" rx="5.4" ry="11" fill="#2b3a32"/>' +
+        '<circle cx="0" cy="-8" r="4" fill="#1e2b26"/>' +
+        '<ellipse cx="0" cy="9" rx="4.6" ry="6" fill="#ffe9a8"/>' +
+        '<circle cx="0" cy="9" r="2.4" fill="#fffbe6"/>' +
+        '</g>';
+      return out;
+    }
+    if (kind === 'moon') {
+      return (
+        '<circle cx="84" cy="44" r="40" fill="url(#' + g + 'h)"/>' +
+        '<circle cx="84" cy="44" r="24" fill="#fdf3d8" opacity=".92"/>' +
+        '<circle cx="76" cy="38" r="4" fill="#f0e2c6" opacity=".6"/>' +
+        '<circle cx="91" cy="50" r="2.6" fill="#f0e2c6" opacity=".5"/>' +
+        '<ellipse cx="84" cy="96" rx="15" ry="26" fill="#fdf3d8" opacity=".12"/>' +
+        '<path d="M0 100c22-10 34 2 52-4 18-6 28 4 44 2 12-2 22-6 32-2v32H0z" fill="#06222b" opacity=".85"/>' +
+        '<g stroke="#bfe6da" fill="none" opacity=".2"><ellipse cx="70" cy="104" rx="46" ry="5"/><ellipse cx="40" cy="114" rx="28" ry="4"/></g>' +
+        '<g stroke="#123c3c" stroke-width="2.4" fill="none" opacity=".9"><path d="M26 128c-2-24 2-40 10-54"/><path d="M42 128c2-18 8-30 16-38"/></g>' +
+        '<g fill="#ffdfa6" opacity=".85"><circle cx="30" cy="26" r="1.9"/><circle cx="48" cy="16" r="1.5"/><circle cx="112" cy="92" r="1.7"/></g>'
+      );
+    }
+    if (kind === 'leaf') {
+      return (
+        '<ellipse cx="64" cy="112" rx="44" ry="10" fill="#0a4633" opacity=".85"/>' +
+        '<circle cx="64" cy="66" r="40" fill="url(#' + g + 'l)"/>' +
+        '<path d="M64 66 96 96 64 102z" fill="#07281f"/>' +
+        '<g stroke="#8fe0c8" fill="none" opacity=".3"><path d="M64 28v38M64 66 38 48M64 66 92 52M64 66 44 84M64 66 88 80"/><circle cx="64" cy="66" r="19"/></g>' +
+        '<g fill="#d9f5e3" opacity=".7"><circle cx="86" cy="42" r="3.4"/><circle cx="88.6" cy="38.4" r="1.2" fill="#fff"/><circle cx="42" cy="54" r="2.4"/></g>' +
+        '<g stroke="#bfe6da" fill="none" opacity=".2"><ellipse cx="64" cy="118" rx="30" ry="4"/><ellipse cx="94" cy="120" rx="18" ry="3"/></g>'
+      );
+    }
+    if (kind === 'turtle') {
+      return (
+        '<ellipse cx="64" cy="110" rx="42" ry="9" fill="#0a423c"/>' +
+        '<g fill="#2f7f6b">' +
+        '<ellipse cx="34" cy="92" rx="11" ry="7" transform="rotate(-22 34 92)"/>' +
+        '<ellipse cx="94" cy="92" rx="11" ry="7" transform="rotate(22 94 92)"/>' +
+        '<ellipse cx="40" cy="106" rx="9" ry="6" transform="rotate(-10 40 106)"/>' +
+        '<ellipse cx="88" cy="106" rx="9" ry="6" transform="rotate(10 88 106)"/>' +
+        '</g>' +
+        '<ellipse cx="98" cy="74" rx="13" ry="11" fill="#3d9480"/>' +
+        '<circle cx="104" cy="71" r="2.2" fill="#0d2b26"/>' +
+        '<path d="M28 92c0-30 16-50 36-50s36 20 36 50z" fill="#3f9179"/>' +
+        '<path d="M32 90c2-24 16-40 32-40s30 16 32 40z" fill="#1e5a4b"/>' +
+        '<g stroke="#79c9ac" fill="none" opacity=".5"><path d="M64 52v38M44 62l16 14M84 62 68 76M36 82h56M52 52l-6 38M76 52l6 38"/></g>' +
+        '<g stroke="#bfe6da" fill="none" opacity=".18"><ellipse cx="56" cy="112" rx="30" ry="4"/></g>'
+      );
+    }
+    /* lantern */
+    return (
+      '<circle cx="64" cy="66" r="44" fill="#ffd9a0" opacity=".18"/>' +
+      '<path d="M64 0v18" stroke="#e8c79b" stroke-width="2" opacity=".6"/>' +
+      '<g transform="translate(64 62)">' +
+      '<rect x="-10" y="-30" width="20" height="7" rx="2" fill="#c9955f"/>' +
+      '<rect x="-26" y="-24" width="52" height="52" rx="20" fill="#ffb9a1"/>' +
+      '<rect x="-26" y="-24" width="52" height="24" rx="12" fill="#ffe3cd" opacity=".65"/>' +
+      '<g stroke="#e0917d" fill="none" opacity=".55"><path d="M-20-24v52M-10-24v52M0-24v52M10-24v52M20-24v52"/></g>' +
+      '<circle cx="0" cy="0" r="8" fill="#fff3da"/>' +
+      '<circle cx="0" cy="0" r="3.4" fill="#fffdf2"/>' +
+      '<rect x="-9" y="28" width="18" height="6" rx="2" fill="#c9955f"/>' +
+      '<path d="M0 34v10" stroke="#e8c79b" stroke-width="2.4"/>' +
+      '</g>' +
+      '<ellipse cx="64" cy="112" rx="30" ry="7" fill="#ffd9a0" opacity=".22"/>' +
+      '<g stroke="#bfe6da" fill="none" opacity=".18"><ellipse cx="58" cy="118" rx="34" ry="4"/></g>' +
+      '<g fill="#ffd9c0" opacity=".6"><circle cx="30" cy="82" r="2"/><circle cx="100" cy="88" r="2.2"/><circle cx="106" cy="46" r="1.6"/></g>'
+    );
+  }
+
+  function avatar(kind, size) {
+    var k = AVATAR_KINDS.indexOf(kind) === -1 ? 'lotus' : kind;
+    var g = uid('av');
+    var bg = AVATAR_BG[k];
+    var s = size ? ' width="' + size + '" height="' + size + '"' : '';
+
+    return '<svg class="avatar-art" viewBox="0 0 128 128"' + s + ' preserveAspectRatio="xMidYMid slice" role="img" aria-label="' + AVATAR_LABEL[k] + ' 프로필 그림" focusable="false">' +
+      '<defs>' +
+      '<linearGradient id="' + g + 'b" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="' + bg[0] + '"/><stop offset=".55" stop-color="' + bg[1] + '"/><stop offset="1" stop-color="' + bg[2] + '"/></linearGradient>' +
+      '<radialGradient id="' + g + 'h" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#fff6dc" stop-opacity=".9"/><stop offset=".4" stop-color="#ffe8b6" stop-opacity=".3"/><stop offset="1" stop-color="#ffe8b6" stop-opacity="0"/></radialGradient>' +
+      '<linearGradient id="' + g + 'p" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffe3ec"/><stop offset="1" stop-color="#e87f9e"/></linearGradient>' +
+      '<linearGradient id="' + g + 'g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f6d9a1"/><stop offset="1" stop-color="#c79a4e"/></linearGradient>' +
+      '<linearGradient id="' + g + 'k" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffd9b8"/><stop offset="1" stop-color="#e2705f"/></linearGradient>' +
+      '<linearGradient id="' + g + 'l" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2f8f6a"/><stop offset="1" stop-color="#0f5340"/></linearGradient>' +
+      '<linearGradient id="' + g + 'v" x1="0" y1="0" x2="0" y2="1"><stop offset=".6" stop-color="#03171a" stop-opacity="0"/><stop offset="1" stop-color="#03171a" stop-opacity=".55"/></linearGradient>' +
+      '</defs>' +
+      '<rect width="128" height="128" fill="url(#' + g + 'b)"/>' +
+      '<ellipse cx="64" cy="34" rx="52" ry="26" fill="url(#' + g + 'h)" opacity=".35"/>' +
+      avatarBody(k, g) +
+      '<rect width="128" height="128" fill="url(#' + g + 'v)"/>' +
+      '</svg>';
+  }
+
   /* ---------- 배경 물결 장식 ---------- */
   function ripple() {
     return (
@@ -308,6 +480,9 @@
     mark: mark,
     hero: hero,
     scene: scene,
-    ripple: ripple
+    ripple: ripple,
+    avatar: avatar,
+    avatarKinds: AVATAR_KINDS.slice(),
+    avatarLabel: AVATAR_LABEL
   };
 })();
