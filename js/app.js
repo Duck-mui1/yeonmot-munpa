@@ -275,6 +275,10 @@
   function canDeleteAbsence() {
     return isLive() && (myRole() === 'admin' || myRole() === 'officer');
   }
+  /** 다른 문파원 대신 자리비움을 올릴 수 있는가 — 운영진(문주·부문주)만 */
+  function canProxyAbsence() {
+    return isLive() && (myRole() === 'admin' || myRole() === 'officer');
+  }
   /** 공략 삭제는 올린 본인 또는 운영진(문주·운영진)만 */
   function canDeleteGuide(guide) {
     if (!isLive() || !guide) { return false; }
@@ -553,8 +557,11 @@
     return {
       id: a.id,
       member_id: a.member_id || null,
-      nickname: a.nickname || '문파원',
+      nickname: a.nickname || a.target_name || '문파원',
       avatar: a.avatar || null,
+      target_name: a.target_name || null,
+      is_proxy: !!a.is_proxy,
+      proxy_by: a.proxy_by || null,
       start_date: String(a.start_date || '').slice(0, 10),
       end_date: String(a.end_date || '').slice(0, 10),
       reason: a.reason || '',
@@ -1348,9 +1355,11 @@
           avatarSpan('avatar--xs', a.nickname, a.avatar) +
           '<div class="absence__main">' +
           '<div class="absence__top"><span class="absence__name">' + esc(a.nickname) + '</span>' +
-          '<span class="badge ' + (state === '자리비움 중' ? 'badge--lotus' : 'badge--jade') + '">' + state + '</span></div>' +
+          '<span class="badge ' + (state === '자리비움 중' ? 'badge--lotus' : 'badge--jade') + '">' + state + '</span>' +
+          (a.is_proxy ? '<span class="badge badge--proxy">대리</span>' : '') + '</div>' +
           '<div class="absence__period">' + esc(shortDate(a.start_date)) + ' ~ ' + esc(shortDate(a.end_date)) + '</div>' +
           '<p class="absence__reason">' + esc(a.reason) + '</p>' +
+          (a.is_proxy && a.proxy_by ? '<p class="absence__proxy">' + esc(a.proxy_by) + ' 님이 대신 올렸어요</p>' : '') +
           '</div>' +
           (canDeleteAbsence() ? '<button type="button" class="absence__del" data-del-absence="' + esc(a.id) + '" aria-label="' + esc(a.nickname) + ' 자리비움 삭제">×</button>' : '') +
           '</article>';
@@ -2500,10 +2509,38 @@
     });
   }
 
+  /** 자리비움 알리기 — 본인은 누구나, 다른 문파원 대신은 운영진(문주·부문주)만 */
+  function absenceTargetOptions() {
+    return S.members.filter(function (m) {
+      return m && m.id && m.id !== myId() && m.status === 'active';
+    });
+  }
+
   function openAbsenceForm() {
     var today = dayKey(new Date());
+    var proxyOk = canProxyAbsence();
+    var targetHtml = '';
+
+    if (proxyOk) {
+      targetHtml =
+        '<label class="field"><span class="field__label">대상 문파원</span>' +
+        '<select class="field__input field__select" id="absence-target">' +
+        '<option value="">나 (' + esc(myNick()) + ')</option>' +
+        absenceTargetOptions().map(function (m) {
+          return '<option value="' + esc(m.id) + '">' + esc(m.nickname) + '</option>';
+        }).join('') +
+        '<option value="__manual">직접 입력 (아직 사이트 미가입)</option>' +
+        '</select>' +
+        '<span class="field__hint">다른 문파원 대신 올리면 카드에 그 문파원 이름으로 보여요.</span></label>' +
+        '<label class="field" id="absence-name-field" hidden><span class="field__label">대상 이름</span>' +
+        '<input class="field__input" type="text" id="absence-target-name" maxlength="20" ' +
+        'placeholder="예) 새벽이" autocomplete="off">' +
+        '<span class="field__hint">아직 가입하지 않은 문파원은 이름을 직접 적어 주세요(2~20자).</span></label>';
+    }
+
     openModal(modalTitle('자리비움 알리기') +
       '<form class="form" id="absence-form" novalidate style="margin-top:12px">' +
+      targetHtml +
       '<div class="form__row">' +
       '<label class="field"><span class="field__label">시작일</span>' +
       '<input class="field__input" type="date" id="absence-start" min="' + today + '" value="' + today + '"></label>' +
@@ -2515,6 +2552,17 @@
       '<p class="form__error" id="absence-error" role="alert" hidden></p>' +
       '<button type="submit" class="btn btn--primary">자리비움 등록</button>' +
       '</form>');
+
+    var targetSel = $('#absence-target');
+    var nameField = $('#absence-name-field');
+    if (targetSel && nameField) {
+      targetSel.addEventListener('change', function () {
+        var manual = targetSel.value === '__manual';
+        nameField.hidden = !manual;
+        if (manual) { $('#absence-target-name').focus(); }
+        else { $('#absence-target-name').value = ''; }
+      });
+    }
 
     $('#absence-start').addEventListener('change', function () {
       var start = $('#absence-start').value || today;
@@ -2529,6 +2577,9 @@
       var end = $('#absence-end').value;
       var reason = $('#absence-reason').value.trim();
       var errEl = $('#absence-error');
+      var payload = { startDate: start, endDate: end, reason: reason };
+      var targetName = '';
+
       if (!start || !end) {
         errEl.textContent = '시작일과 종료일을 정해 주세요.';
         errEl.hidden = false;
@@ -2549,18 +2600,44 @@
         errEl.hidden = false;
         return;
       }
+
+      if (targetSel) {
+        if (targetSel.value === '__manual') {
+          targetName = ($('#absence-target-name').value || '').trim();
+          if (targetName.length < 2 || targetName.length > 20) {
+            errEl.textContent = '대상 이름은 2~20자로 적어 주세요.';
+            errEl.hidden = false;
+            $('#absence-target-name').focus();
+            return;
+          }
+          payload.targetName = targetName;
+        } else if (targetSel.value) {
+          payload.targetMemberId = targetSel.value;
+        }
+      }
+
       var btn = $('button[type="submit"]', this);
       btn.disabled = true;
 
-      DB.createAbsence({ startDate: start, endDate: end, reason: reason }).then(function () {
+      DB.createAbsence(payload).then(function () {
         closeModal();
-        toast('자리비움을 알렸어요.');
+        if (payload.targetName) { toast('“' + payload.targetName + '” 님의 자리비움을 대신 알렸어요.'); }
+        else if (payload.targetMemberId) {
+          var hit = S.members.filter(function (m) { return m.id === payload.targetMemberId; })[0];
+          toast('“' + (hit ? hit.nickname : '문파원') + '” 님의 자리비움을 대신 알렸어요.');
+        } else { toast('자리비움을 알렸어요.'); }
         return reloadAbsences();
       }).then(function () {
         renderHome();
       }).catch(function (err) {
         btn.disabled = false;
-        errEl.textContent = errorMessage(err);
+        var msg = errorMessage(err);
+        // 아직 v4 마이그레이션 전인 서버라면(대리 등록 인자를 모름) 알아보기 쉽게 알려 줍니다
+        if ((payload.targetName || payload.targetMemberId) &&
+            (String(err && err.code) === 'PGRST202' || msg.indexOf('Could not find') !== -1)) {
+          msg = '지금은 내 자리비움만 등록할 수 있어요. (서버 업데이트가 필요해요) 운영진에게 문의해 주세요.';
+        }
+        errEl.textContent = msg;
         errEl.hidden = false;
       });
     });

@@ -442,20 +442,27 @@
     },
 
     /* --- 문파원 자리비움 ---
-     *  등록: 로그인한 문파원 누구나 · 삭제: 운영진(문주·운영진)만(서버가 확인)
+     *  등록: 본인은 로그인한 문파원 누구나 · 다른 문파원 대신은 운영진(문주·부문주)만(서버가 확인)
+     *  삭제: 운영진(문주·운영진)만(서버가 확인)
      *  시작일은 한국 시간 오늘 이후, 종료일은 시작일과 같거나 뒤.
+     *  · payload.targetMemberId — 가입한 문파원을 골라 대신 올릴 때
+     *  · payload.targetName      — 아직 가입하지 않은 문파원의 이름을 직접 적을 때
+     *  둘 다 없으면 예전과 같은 본인 등록입니다(서버 v4 부터 두 인자를 받습니다).
      */
     listAbsences: function () {
       return withToken(function (t) { return rpc('list_absences', { p_token: t }); });
     },
     createAbsence: function (payload) {
       return withToken(function (t) {
-        return rpc('create_absence', {
+        var body = {
           p_token: t,
           p_start_date: payload.startDate,
           p_end_date: payload.endDate,
           p_reason: payload.reason
-        });
+        };
+        if (payload.targetMemberId) { body.p_target_member_id = payload.targetMemberId; }
+        if (payload.targetName) { body.p_target_name = payload.targetName; }
+        return rpc('create_absence', body);
       });
     },
     deleteAbsence: function (absenceId) {

@@ -377,18 +377,30 @@ create table if not exists private.album_likes (
 );
 
 -- 2-9b. 문파원 자리비움 (홈 맨 아래 '문파원 자리비움' 게시판)
---   · 개인정보 없음 — 닉네임(문파원 표에서 가져옴)·기간·이유만 담습니다.
---   · 등록: 로그인한 active 문파원 누구나(create_absence) · 삭제: 운영진(admin · officer)만.
+--   · 개인정보 없음 — 닉네임(대상 문파원 표에서 가져오거나, 미가입자는 직접 입력한 이름)·기간·이유만 담습니다.
+--   · 등록: 로그인한 active 문파원 누구나(create_absence, 본인) — 다른 문파원 대신 올리기는 운영진(admin · officer)만.
+--   · 삭제: 운영진(admin · officer)만.
 create table if not exists public.member_absences (
-  id         uuid primary key default gen_random_uuid(),
-  member_id  uuid not null references private.members (id) on delete cascade,
-  start_date date not null,
-  end_date   date not null,
-  reason     text not null check (char_length(reason) between 1 and 60),
-  created_at timestamptz not null default now(),
-  deleted_at timestamptz,
+  id          uuid primary key default gen_random_uuid(),
+  member_id   uuid not null references private.members (id) on delete cascade,
+  start_date  date not null,
+  end_date    date not null,
+  reason      text not null check (char_length(reason) between 1 and 60),
+  -- 대리 등록: 올린 운영진(created_by)이 대상(member_id) 대신 올렸거나,
+  --   아직 사이트에 가입하지 않은 문파원의 이름(target_name)을 직접 적어 올린 경우.
+  created_by  uuid references private.members (id) on delete set null,
+  target_name text
+                constraint absences_target_name_len
+                check (target_name is null or char_length(btrim(target_name)) between 2 and 20),
+  created_at  timestamptz not null default now(),
+  deleted_at  timestamptz,
   constraint absences_date_order check (end_date >= start_date)
 );
+
+comment on column public.member_absences.created_by is
+  '자리비움을 올린 문파원. 대상(member_id)과 다르면 대신 올린 것(운영진). 예전 기록은 비어 있습니다.';
+comment on column public.member_absences.target_name is
+  '아직 사이트에 가입하지 않은 문파원의 이름을 직접 적은 경우(2~20자). 값이 있으면 member_id 는 올린 운영진.';
 
 create index if not exists absences_dates_idx
   on public.member_absences (start_date)
@@ -2383,6 +2395,8 @@ $fn$;
 
 
 -- 자리비움 목록 — 지난 기간(end_date < 오늘)은 빼고, 진행 중·예정만 시작일 순으로
+--   · 보여 줄 이름·아바타는 '대상' 기준입니다 — 직접 입력한 이름(target_name)이 있으면 그것,
+--     없으면 대상 문파원의 닉네임·아바타. 대리 등록이면 is_proxy·proxy_by(올린 운영진)를 함께 돌려줍니다.
 create or replace function public.list_absences(p_token text)
 returns jsonb
 language plpgsql
@@ -2400,8 +2414,14 @@ begin
       select jsonb_build_object(
                'id', a.id,
                'member_id', a.member_id,
-               'nickname', m.nickname,
-               'avatar', m.avatar,
+               'nickname', coalesce(a.target_name, m.nickname),
+               'avatar', case when a.target_name is null then m.avatar else null end,
+               'target_name', a.target_name,
+               'is_proxy', (a.target_name is not null
+                            or (a.created_by is not null and a.created_by <> a.member_id)),
+               'proxy_by', case when a.target_name is not null
+                                  or (a.created_by is not null and a.created_by <> a.member_id)
+                                 then c.nickname else null end,
                'start_date', a.start_date,
                'end_date', a.end_date,
                'reason', a.reason,
@@ -2410,6 +2430,7 @@ begin
              a.start_date, a.created_at
         from public.member_absences a
         join private.members m on m.id = a.member_id
+        left join private.members c on c.id = a.created_by
        where a.deleted_at is null
          and a.end_date >= v_today
        order by a.start_date asc, a.created_at desc
@@ -2420,14 +2441,18 @@ begin
 end;
 $fn$;
 
--- 자리비움 등록 — 로그인한 active 문파원 누구나
---   · 시작일은 한국 시간 오늘 이후(과거 불가) · 종료일은 시작일과 같거나 뒤
---   · 이유는 앞뒤 공백을 지우고 1~60자
+-- 자리비움 등록 — 본인은 로그인한 active 문파원 누구나, 다른 문파원 대신은 운영진(admin · officer)만
+--   · 시작일은 한국 시간 오늘 이후(과거 불가) · 종료일은 시작일과 같거나 뒤 · 이유는 앞뒤 공백을 지우고 1~60자
+--   · p_target_member_id: 가입 문파원을 대상으로 골랐을 때(본인이면 그냥 본인 등록)
+--   · p_target_name: 아직 사이트에 없는 문파원의 이름을 직접 적었을 때(2~20자, 아바타 없음)
+--   · 둘 다 비우면 예전과 같은 본인 등록입니다(4인자 호출 그대로 동작).
 create or replace function public.create_absence(
-  p_token      text,
-  p_start_date date,
-  p_end_date   date,
-  p_reason     text
+  p_token            text,
+  p_start_date       date,
+  p_end_date         date,
+  p_reason           text,
+  p_target_member_id uuid default null,
+  p_target_name      text default null
 )
 returns jsonb
 language plpgsql
@@ -2435,10 +2460,14 @@ security definer
 set search_path = ''
 as $fn$
 declare
-  v_actor  private.session_actor := private.current_member(p_token);
-  v_today  date := private.today_kst();
-  v_reason text := btrim(coalesce(p_reason, ''));
-  v_row    public.member_absences;
+  v_actor     private.session_actor := private.current_member(p_token);
+  v_today     date := private.today_kst();
+  v_reason    text := btrim(coalesce(p_reason, ''));
+  v_name      text := nullif(btrim(coalesce(p_target_name, '')), '');
+  v_target_id uuid := p_target_member_id;
+  v_target    private.members;
+  v_proxy     boolean := false;
+  v_row       public.member_absences;
 begin
   if p_start_date is null or p_end_date is null then
     raise exception '시작일과 종료일을 정해 주세요.' using errcode = '22023';
@@ -2453,14 +2482,54 @@ begin
     raise exception '이유는 1~60자로 적어 주세요.' using errcode = '22023';
   end if;
 
-  insert into public.member_absences (member_id, start_date, end_date, reason)
-  values (v_actor.member_id, p_start_date, p_end_date, v_reason)
+  -- 대상 정하기: 본인 / 가입한 다른 문파원 / 아직 가입하지 않은 문파원의 이름(직접 입력)
+  if v_name is not null then
+    if v_target_id is not null and v_target_id <> v_actor.member_id then
+      raise exception '대상은 문파원 목록에서 고르거나 이름을 직접 적는 것 중 하나만 해 주세요.' using errcode = '22023';
+    end if;
+    if char_length(v_name) < 2 or char_length(v_name) > 20 then
+      raise exception '대신 올릴 문파원의 이름은 2~20자로 적어 주세요.' using errcode = '22023';
+    end if;
+    v_proxy := true;
+    v_target_id := v_actor.member_id;   -- 미가입자: 대상 행이 없으므로 올린 운영진에게 매답니다
+  elsif v_target_id is not null and v_target_id <> v_actor.member_id then
+    v_proxy := true;
+  else
+    v_target_id := v_actor.member_id;
+  end if;
+
+  -- 남의 자리비움은 운영진만
+  if v_proxy and v_actor.member_role not in ('admin', 'officer') then
+    raise exception '다른 문파원의 자리비움은 운영진(문주·부문주)만 대신 올릴 수 있어요.' using errcode = '42501';
+  end if;
+
+  -- 응답에 쓸 대상 정보(닉네임·아바타) — 가입 문파원 대상은 실제로 있는 active 문파원이어야 합니다
+  if v_name is null then
+    select * into v_target from private.members m where m.id = v_target_id;
+    if not found or (v_proxy and v_target.status <> 'active') then
+      raise exception '대상 문파원을 찾을 수 없어요.' using errcode = 'P0002';
+    end if;
+  end if;
+
+  insert into public.member_absences (member_id, start_date, end_date, reason, created_by, target_name)
+  values (v_target_id, p_start_date, p_end_date, v_reason, v_actor.member_id, v_name)
   returning * into v_row;
+
+  if v_proxy then
+    perform private.log_admin(v_actor.member_id, 'absence.proxy_create', 'absence', v_row.id::text,
+                              jsonb_build_object('by_role', v_actor.member_role,
+                                                 'target_member', case when v_name is null then v_target_id::text else null end,
+                                                 'target_name', v_name));
+  end if;
 
   return jsonb_build_object(
     'id', v_row.id,
     'member_id', v_row.member_id,
-    'nickname', v_actor.nickname,
+    'nickname', coalesce(v_row.target_name, v_target.nickname),
+    'avatar', case when v_row.target_name is not null then null else v_target.avatar end,
+    'target_name', v_row.target_name,
+    'is_proxy', v_proxy,
+    'proxy_by', case when v_proxy then v_actor.nickname else null end,
     'start_date', v_row.start_date,
     'end_date', v_row.end_date,
     'reason', v_row.reason,
@@ -2696,7 +2765,7 @@ where not exists (select 1 from public.chat_messages c);
 -- drop function if exists public.bootstrap_admin(text, text, text, text);
 -- drop function if exists public.admin_list_audit(text, integer);
 -- drop function if exists public.delete_absence(text, uuid);
--- drop function if exists public.create_absence(text, date, date, text);
+-- drop function if exists public.create_absence(text, date, date, text, uuid, text);
 -- drop function if exists public.list_absences(text);
 -- drop function if exists public.admin_delete_album_post(text, uuid);
 -- drop function if exists public.admin_delete_chat_message(text, bigint);
