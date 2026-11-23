@@ -59,6 +59,7 @@
     coupons: [],
     guides: [],
     guideOpen: false,
+    absences: [],
     members: [],
     album: [],
     albumImages: {},
@@ -159,6 +160,16 @@
     if (diff === 1) { return '내일'; }
     return 'D-' + diff;
   }
+  function shortDate(value) {
+    var m = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+    return m ? (Number(m[2]) + '.' + m[3]) : String(value || '');
+  }
+  /** 자리비움 배지 — 오늘이 기간 안이면 '자리비움 중', 아직이면 '예정' */
+  function absenceState(absence) {
+    var today = dayKey(new Date());
+    var start = String(absence.start_date || '').slice(0, 10);
+    return start > today ? '예정' : '자리비움 중';
+  }
   function relDayLabel(value) {
     var d = new Date(value);
     if (isNaN(d.getTime())) { return ''; }
@@ -251,6 +262,10 @@
   function myId() { return S.me ? S.me.id : null; }
   function myNick() { return S.me ? S.me.nickname : ''; }
   function myRole() { return S.me ? S.me.role : null; }
+  /** 자리비움 삭제는 운영진(문주·운영진)만 */
+  function canDeleteAbsence() {
+    return isLive() && (myRole() === 'admin' || myRole() === 'officer');
+  }
   /** 공략 삭제는 올린 본인 또는 운영진(문주·운영진)만 */
   function canDeleteGuide(guide) {
     if (!isLive() || !guide) { return false; }
@@ -330,6 +345,20 @@
         created_by: null,
         kind: g.kind || 'moon'
       };
+    });
+
+    S.absences = (D.absences || []).map(function (a, i) {
+      return {
+        id: 'ab' + i,
+        member_id: null,
+        nickname: a.name,
+        avatar: null,
+        start_date: dayKey(addDays(a.fromDays || 0)),
+        end_date: dayKey(addDays(a.toDays || 0)),
+        reason: a.reason
+      };
+    }).sort(function (a, b) {
+      return a.start_date < b.start_date ? -1 : (a.start_date > b.start_date ? 1 : 0);
     });
 
     S.members = D.members.map(function (m, i) {
@@ -511,6 +540,19 @@
     };
   }
 
+  function mapAbsence(a) {
+    return {
+      id: a.id,
+      member_id: a.member_id || null,
+      nickname: a.nickname || '문파원',
+      avatar: a.avatar || null,
+      start_date: String(a.start_date || '').slice(0, 10),
+      end_date: String(a.end_date || '').slice(0, 10),
+      reason: a.reason || '',
+      created_at: a.created_at
+    };
+  }
+
   function mapAlbum(p) {
     return {
       id: p.id,
@@ -563,6 +605,9 @@
         DB.listGuides().then(function (rows) {
           S.guides = (rows || []).map(mapGuide);
         }, function () { S.guides = []; }),
+        DB.listAbsences().then(function (rows) {
+          S.absences = (rows || []).map(mapAbsence);
+        }, function () { S.absences = []; }),
         DB.listAlbum(12).then(function (rows) {
           S.album = (rows || []).map(mapAlbum);
         }, function () { S.album = []; }),
@@ -1026,6 +1071,7 @@
       S.notices = [];
       S.events = [];
       S.coupons = [];
+      S.absences = [];
       S.members = [];
       S.album = [];
       S.albumImages = {};
@@ -1273,11 +1319,42 @@
     }
     html += '</section>';
 
+    /* 문파원 자리비움 — 잠시 연못을 비우는 문파원 알림 */
+    html += '<section class="section" aria-labelledby="home-absence-title">' +
+      '<div class="section__head"><h3 class="section__title" id="home-absence-title">문파원 자리비움</h3>' +
+      '<span class="section__hadd">' + (isLive() ? '<button type="button" class="tool tool--add" data-add="absence">+ 자리비움 등록</button>' : '') +
+      '<span class="section__more">' + (S.absences.length ? S.absences.length + '건' : '지금은 모두 함께') + '</span></span></div>';
+
+    if (!S.absences.length) {
+      html += '<div class="empty">지금은 자리비움 중인 문파원이 없어요.' +
+        (isLive() ? ' 위의 <b>+ 자리비움 등록</b>으로 잠시 비우는 기간을 알려 주세요.' : '') + '</div>';
+    } else {
+      html += '<div class="absences">';
+      S.absences.forEach(function (a) {
+        var state = absenceState(a);
+        html += '<article class="absence">' +
+          avatarSpan('avatar--xs', a.nickname, a.avatar) +
+          '<div class="absence__main">' +
+          '<div class="absence__top"><span class="absence__name">' + esc(a.nickname) + '</span>' +
+          '<span class="badge ' + (state === '자리비움 중' ? 'badge--lotus' : 'badge--jade') + '">' + state + '</span></div>' +
+          '<div class="absence__period">' + esc(shortDate(a.start_date)) + ' ~ ' + esc(shortDate(a.end_date)) + '</div>' +
+          '<p class="absence__reason">' + esc(a.reason) + '</p>' +
+          '</div>' +
+          (canDeleteAbsence() ? '<button type="button" class="absence__del" data-del-absence="' + esc(a.id) + '" aria-label="' + esc(a.nickname) + ' 자리비움 삭제">×</button>' : '') +
+          '</article>';
+      });
+      html += '</div>';
+      if (!isLive()) {
+        html += '<p class="section__note">체험 모드의 예시예요. 실제 문파에서는 로그인한 문파원 누구나 자리비움을 올리고, 삭제는 운영진만 할 수 있어요.</p>';
+      }
+    }
+    html += '</section>';
+
     html += '<section class="section"><div class="privacy"><strong>이 연못에 대해</strong>' +
       (isLive()
-        ? '<p>연못 문파원이 함께 쓰는 공간이에요. 공지 · 일정 · 쿠폰은 문주가, 채팅과 앨범은 문파원 모두가 채웁니다.</p>' +
+        ? '<p>연못 문파원이 함께 쓰는 공간이에요. 공지 · 일정 · 쿠폰은 문주가, 채팅 · 앨범 · 공략 · 자리비움은 문파원 모두가 채웁니다.</p>' +
           '<p>이름 · 전화번호 · 이메일은 받지 않아요. 닉네임과 PIN 만 쓰고, PIN 은 되돌릴 수 없는 암호로만 저장돼요.</p>'
-        : '<p>연못을 위한 작은 커뮤니티 앱의 체험 모드예요. 공지 · 일정 · 쿠폰 · 앨범 · 대화는 예시로 채워져 있습니다.</p>' +
+        : '<p>연못을 위한 작은 커뮤니티 앱의 체험 모드예요. 공지 · 일정 · 쿠폰 · 공략 · 자리비움 · 앨범 · 대화는 예시로 채워져 있습니다.</p>' +
           '<p>입력한 닉네임과 기록은 이 기기에만 저장돼요.</p>') +
       '</div></section>';
 
@@ -1346,7 +1423,12 @@
         else if (kind === 'event') { openEventForm(); }
         else if (kind === 'coupon') { openCouponForm(); }
         else if (kind === 'guide') { openGuideForm(); }
+        else if (kind === 'absence') { openAbsenceForm(); }
       });
+    });
+
+    $$('[data-del-absence]', $('#home-body')).forEach(function (btn) {
+      btn.addEventListener('click', function () { confirmDeleteAbsence(btn.getAttribute('data-del-absence')); });
     });
 
     if (admin) {
@@ -2259,7 +2341,7 @@
     openModal(modalTitle('쿠폰 만들기') +
       '<form class="form" id="coupon-form" novalidate style="margin-top:12px">' +
       '<label class="field"><span class="field__label">쿠폰 코드</span>' +
-      '<input class="field__input" type="text" id="coupon-code" maxlength="24" placeholder="영문·숫자 3~24자 (예: LOTUS2026)" autocapitalize="characters"></label>' +
+      '<input class="field__input" type="text" id="coupon-code" maxlength="24" placeholder="한글·영문·숫자 3~24자 (예: 연꽃2026)" autocapitalize="characters"></label>' +
       '<label class="field"><span class="field__label">쿠폰 이름</span>' +
       '<input class="field__input" type="text" id="coupon-title" maxlength="60" placeholder="예) 새 문파원 환영 쿠폰"></label>' +
       '<label class="field"><span class="field__label">보상 내용</span>' +
@@ -2282,8 +2364,8 @@
       var title = $('#coupon-title').value.trim();
       var reward = $('#coupon-reward').value.trim();
       var errEl = $('#coupon-error');
-      if (!/^[A-Z0-9][A-Z0-9_-]{2,23}$/.test(code)) {
-        errEl.textContent = '쿠폰 코드는 영문·숫자·-·_ 3~24자로 정해 주세요.';
+      if (!/^[가-힣A-Za-z0-9][가-힣A-Za-z0-9_-]{2,23}$/.test(code)) {
+        errEl.textContent = '쿠폰 코드는 한글·영문·숫자·-·_ 3~24자로 정해 주세요.';
         errEl.hidden = false;
         return;
       }
@@ -2410,6 +2492,97 @@
           S.guides = S.guides.filter(function (g) { return g.id !== id; });
           renderHome();
           toast('공략을 지웠어요.');
+        });
+      });
+  }
+
+  /* ============================================================
+     문파원 자리비움 — 로그인한 문파원 누구나 등록 · 삭제는 운영진만
+     ============================================================ */
+  function reloadAbsences() {
+    return DB.listAbsences().then(function (rows) {
+      S.absences = (rows || []).map(mapAbsence);
+    });
+  }
+
+  function openAbsenceForm() {
+    var today = dayKey(new Date());
+    openModal(modalTitle('자리비움 알리기') +
+      '<form class="form" id="absence-form" novalidate style="margin-top:12px">' +
+      '<div class="form__row">' +
+      '<label class="field"><span class="field__label">시작일</span>' +
+      '<input class="field__input" type="date" id="absence-start" min="' + today + '" value="' + today + '"></label>' +
+      '<label class="field"><span class="field__label">종료일</span>' +
+      '<input class="field__input" type="date" id="absence-end" min="' + today + '" value="' + today + '"></label>' +
+      '</div>' +
+      '<label class="field"><span class="field__label">이유</span>' +
+      '<input class="field__input" type="text" id="absence-reason" maxlength="60" placeholder="예) 해외출장, 시험기간 등"></label>' +
+      '<p class="form__error" id="absence-error" role="alert" hidden></p>' +
+      '<button type="submit" class="btn btn--primary">자리비움 등록</button>' +
+      '</form>');
+
+    $('#absence-start').addEventListener('change', function () {
+      var start = $('#absence-start').value || today;
+      var end = $('#absence-end');
+      end.min = start;
+      if (!end.value || end.value < start) { end.value = start; }
+    });
+
+    $('#absence-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var start = $('#absence-start').value;
+      var end = $('#absence-end').value;
+      var reason = $('#absence-reason').value.trim();
+      var errEl = $('#absence-error');
+      if (!start || !end) {
+        errEl.textContent = '시작일과 종료일을 정해 주세요.';
+        errEl.hidden = false;
+        return;
+      }
+      if (start < today) {
+        errEl.textContent = '시작일은 오늘보다 빠를 수 없어요.';
+        errEl.hidden = false;
+        return;
+      }
+      if (end < start) {
+        errEl.textContent = '종료일은 시작일과 같거나 뒤여야 해요.';
+        errEl.hidden = false;
+        return;
+      }
+      if (!reason || reason.length > 60) {
+        errEl.textContent = '이유를 1~60자로 적어 주세요.';
+        errEl.hidden = false;
+        return;
+      }
+      var btn = $('button[type="submit"]', this);
+      btn.disabled = true;
+
+      DB.createAbsence({ startDate: start, endDate: end, reason: reason }).then(function () {
+        closeModal();
+        toast('자리비움을 알렸어요.');
+        return reloadAbsences();
+      }).then(function () {
+        renderHome();
+      }).catch(function (err) {
+        btn.disabled = false;
+        errEl.textContent = errorMessage(err);
+        errEl.hidden = false;
+      });
+    });
+  }
+
+  function confirmDeleteAbsence(id) {
+    var item = S.absences.filter(function (a) { return a.id === id; })[0];
+    confirmAction('자리비움을 지울까요?',
+      (item
+        ? '“' + item.nickname + '” 님의 자리비움(' + shortDate(item.start_date) + ' ~ ' + shortDate(item.end_date) + ')을 홈에서 내립니다.'
+        : '홈에서 내립니다.'),
+      '지우기',
+      function () {
+        return DB.deleteAbsence(id).then(function () {
+          S.absences = S.absences.filter(function (a) { return a.id !== id; });
+          renderHome();
+          toast('자리비움을 지웠어요.');
         });
       });
   }

@@ -678,6 +678,43 @@ svg { max-width: 100%; }
 }
 .badge--lotus { color: var(--lotus-soft); background: rgba(242, 162, 185, .1); border-color: rgba(242, 162, 185, .26); }
 .badge--jade { color: var(--jade-soft); background: rgba(127, 209, 189, .1); border-color: rgba(127, 209, 189, .24); }
+/* 문파원 자리비움 */
+.absences { display: flex; flex-direction: column; gap: 8px; }
+.absence {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid var(--line-cool);
+  background:
+    radial-gradient(120% 140% at 100% 0%, rgba(127, 209, 189, .07), transparent 60%),
+    var(--card);
+}
+.absence > .avatar--xs { margin-top: 2px; }
+.absence__main { min-width: 0; flex: 1; }
+.absence__top { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.absence__name { font-size: 11.5px; font-weight: 600; color: var(--ink-dim); }
+.absence__period {
+  margin-top: 3px;
+  font-family: var(--serif);
+  font-size: 13.5px;
+  letter-spacing: .02em;
+  color: #f6fcf9;
+}
+.absence__reason { margin: 2px 0 0; font-size: 10.5px; line-height: 1.5; color: var(--muted); }
+.absence__del {
+  flex: none;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+  padding: 2px 3px;
+  border-radius: 8px;
+}
+.absence__del:hover { color: var(--lotus-soft); background: rgba(242, 162, 185, .12); }
+
 .notice__meta {
   margin-top: 4px;
   font-size: 10.5px;

@@ -130,6 +130,14 @@
       { id: 'g4', title: '연꽃 등불 축제 준비물 정리', kind: 'lantern' }
     ],
 
+    /* 문파원 자리비움 — 체험 모드 예시 2건
+     *  fromDays/toDays 는 오늘 기준(음수 = 이미 시작됨). 실제 화면에서는 날짜를 그대로 보여 줍니다.
+     */
+    absences: [
+      { name: '물결따라', fromDays: -1, toDays: 2, reason: '해외출장' },
+      { name: '연잎위의고양이', fromDays: 5, toDays: 8, reason: '시험기간' }
+    ],
+
     members: [
       { name: '청연', role: '문주', level: 62, status: 'on', last: '지금 접속 중' },
       { name: '물결따라', role: '부문주', level: 58, status: 'on', last: '지금 접속 중' },

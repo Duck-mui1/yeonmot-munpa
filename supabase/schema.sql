@@ -323,7 +323,7 @@ create index if not exists events_starts_idx
 -- 2-8. 쿠폰
 create table if not exists private.coupons (
   id         uuid primary key default gen_random_uuid(),
-  code       text not null check (code ~ '^[A-Z0-9][A-Z0-9_-]{2,23}$'),
+  code       text not null check (code ~ '^[가-힣A-Za-z0-9][가-힣A-Za-z0-9_-]{2,23}$'),
   title      text not null check (char_length(title) between 1 and 60),
   reward     text not null check (char_length(reward) between 1 and 60),
   expires_on date,
@@ -375,6 +375,27 @@ create table if not exists private.album_likes (
   created_at timestamptz not null default now(),
   primary key (post_id, member_id)
 );
+
+-- 2-9b. 문파원 자리비움 (홈 맨 아래 '문파원 자리비움' 게시판)
+--   · 개인정보 없음 — 닉네임(문파원 표에서 가져옴)·기간·이유만 담습니다.
+--   · 등록: 로그인한 active 문파원 누구나(create_absence) · 삭제: 운영진(admin · officer)만.
+create table if not exists public.member_absences (
+  id         uuid primary key default gen_random_uuid(),
+  member_id  uuid not null references private.members (id) on delete cascade,
+  start_date date not null,
+  end_date   date not null,
+  reason     text not null check (char_length(reason) between 1 and 60),
+  created_at timestamptz not null default now(),
+  deleted_at timestamptz,
+  constraint absences_date_order check (end_date >= start_date)
+);
+
+create index if not exists absences_dates_idx
+  on public.member_absences (start_date)
+  where deleted_at is null;
+
+comment on table public.member_absences is
+  '문파원 자리비움 기간(시작일·종료일)과 이유. 읽기/쓰기는 RPC(list_absences · create_absence · delete_absence)만.';
 
 -- 2-10. 관리자 행동 기록
 create table if not exists private.admin_audit (
@@ -470,6 +491,7 @@ alter table public.chat_messages enable row level security;
 alter table public.notices      enable row level security;
 alter table public.events       enable row level security;
 alter table public.guides       enable row level security;
+alter table public.member_absences enable row level security;
 
 alter table private.clan_settings   enable row level security;
 alter table private.members         enable row level security;
@@ -486,6 +508,7 @@ revoke all on table public.chat_messages from public, anon, authenticated;
 revoke all on table public.notices       from public, anon, authenticated;
 revoke all on table public.events        from public, anon, authenticated;
 revoke all on table public.guides        from public, anon, authenticated;
+revoke all on table public.member_absences from public, anon, authenticated;
 grant select on table public.chat_messages to anon, authenticated;
 grant select on table public.notices       to anon, authenticated;
 grant select on table public.events        to anon, authenticated;
@@ -2094,8 +2117,8 @@ declare
   v_tone  text := lower(btrim(coalesce(p_tone, 'lotus')));
   v_coupon private.coupons;
 begin
-  if v_code !~ '^[A-Z0-9][A-Z0-9_-]{2,23}$' then
-    raise exception '쿠폰 코드는 영문·숫자·-·_ 3~24자로 정해 주세요.' using errcode = '22023';
+  if v_code !~ '^[가-힣A-Za-z0-9][가-힣A-Za-z0-9_-]{2,23}$' then
+    raise exception '쿠폰 코드는 한글·영문·숫자·-·_ 3~24자로 정해 주세요.' using errcode = '22023';
   end if;
   if char_length(v_title) = 0 or char_length(v_title) > 60 then
     raise exception '쿠폰 이름은 1~60자로 적어 주세요.' using errcode = '22023';
@@ -2359,6 +2382,134 @@ end;
 $fn$;
 
 
+-- 자리비움 목록 — 지난 기간(end_date < 오늘)은 빼고, 진행 중·예정만 시작일 순으로
+create or replace function public.list_absences(p_token text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $fn$
+declare
+  v_actor  private.session_actor := private.current_member(p_token);
+  v_today  date := private.today_kst();
+  v_result jsonb;
+begin
+  select coalesce(jsonb_agg(s.item order by s.start_date asc, s.created_at desc), '[]'::jsonb)
+    into v_result
+    from (
+      select jsonb_build_object(
+               'id', a.id,
+               'member_id', a.member_id,
+               'nickname', m.nickname,
+               'avatar', m.avatar,
+               'start_date', a.start_date,
+               'end_date', a.end_date,
+               'reason', a.reason,
+               'created_at', a.created_at
+             ) as item,
+             a.start_date, a.created_at
+        from public.member_absences a
+        join private.members m on m.id = a.member_id
+       where a.deleted_at is null
+         and a.end_date >= v_today
+       order by a.start_date asc, a.created_at desc
+       limit 60
+    ) s;
+
+  return v_result;
+end;
+$fn$;
+
+-- 자리비움 등록 — 로그인한 active 문파원 누구나
+--   · 시작일은 한국 시간 오늘 이후(과거 불가) · 종료일은 시작일과 같거나 뒤
+--   · 이유는 앞뒤 공백을 지우고 1~60자
+create or replace function public.create_absence(
+  p_token      text,
+  p_start_date date,
+  p_end_date   date,
+  p_reason     text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $fn$
+declare
+  v_actor  private.session_actor := private.current_member(p_token);
+  v_today  date := private.today_kst();
+  v_reason text := btrim(coalesce(p_reason, ''));
+  v_row    public.member_absences;
+begin
+  if p_start_date is null or p_end_date is null then
+    raise exception '시작일과 종료일을 정해 주세요.' using errcode = '22023';
+  end if;
+  if p_start_date < v_today then
+    raise exception '시작일은 오늘(한국 시간)보다 빠를 수 없어요.' using errcode = '22023';
+  end if;
+  if p_end_date < p_start_date then
+    raise exception '종료일은 시작일과 같거나 뒤여야 해요.' using errcode = '22023';
+  end if;
+  if char_length(v_reason) = 0 or char_length(v_reason) > 60 then
+    raise exception '이유는 1~60자로 적어 주세요.' using errcode = '22023';
+  end if;
+
+  insert into public.member_absences (member_id, start_date, end_date, reason)
+  values (v_actor.member_id, p_start_date, p_end_date, v_reason)
+  returning * into v_row;
+
+  return jsonb_build_object(
+    'id', v_row.id,
+    'member_id', v_row.member_id,
+    'nickname', v_actor.nickname,
+    'start_date', v_row.start_date,
+    'end_date', v_row.end_date,
+    'reason', v_row.reason,
+    'created_at', v_row.created_at
+  );
+end;
+$fn$;
+
+-- 자리비움 삭제 — 운영진(문주 · 운영진)만 (올린 본인이라도 일반 문파원은 삭제 불가)
+create or replace function public.delete_absence(
+  p_token      text,
+  p_absence_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $fn$
+declare
+  v_actor private.session_actor := private.current_member(p_token);
+  v_row   public.member_absences;
+begin
+  if v_actor.member_role not in ('admin', 'officer') then
+    raise exception '자리비움은 운영진만 지울 수 있어요.' using errcode = '42501';
+  end if;
+
+  select * into v_row
+    from public.member_absences a
+   where a.id = p_absence_id
+     and a.deleted_at is null
+   for update;
+
+  if not found then
+    raise exception '자리비움을 찾을 수 없어요.' using errcode = 'P0002';
+  end if;
+
+  update public.member_absences
+     set deleted_at = now()
+   where id = p_absence_id;
+
+  perform private.log_admin(v_actor.member_id, 'absence.delete', 'absence', p_absence_id::text,
+                            jsonb_build_object('by_role', v_actor.member_role,
+                                               'owner', v_row.member_id::text));
+
+  return jsonb_build_object('id', p_absence_id, 'deleted', true);
+end;
+$fn$;
+
+
 -- ===========================================================================
 -- 11. 초기 문주(관리자) 확보
 --    · 첫 가입자 규칙: 문주가 한 명도 없을 때 register_member 로 들어온 첫 사람이
@@ -2478,6 +2629,7 @@ begin
          'update_my_avatar',
          'mark_attendance', 'post_chat_message', 'list_chat_messages', 'clan_overview',
          'list_coupons', 'list_album_posts', 'create_album_post', 'get_album_image',
+         'list_absences', 'create_absence', 'delete_absence',
          'toggle_album_like', 'delete_own_album_post', 'list_guides',
          'admin_update_invite_code', 'admin_get_settings', 'admin_list_members',
          'admin_kick_member', 'admin_ban_member', 'admin_restore_member', 'admin_set_role',
@@ -2543,6 +2695,9 @@ where not exists (select 1 from public.chat_messages c);
 -- drop view if exists public.public_members;
 -- drop function if exists public.bootstrap_admin(text, text, text, text);
 -- drop function if exists public.admin_list_audit(text, integer);
+-- drop function if exists public.delete_absence(text, uuid);
+-- drop function if exists public.create_absence(text, date, date, text);
+-- drop function if exists public.list_absences(text);
 -- drop function if exists public.admin_delete_album_post(text, uuid);
 -- drop function if exists public.admin_delete_chat_message(text, bigint);
 -- drop function if exists public.admin_delete_coupon(text, uuid);
@@ -2588,7 +2743,7 @@ where not exists (select 1 from public.chat_messages c);
 -- drop function if exists private.token_hash(text);
 -- drop function if exists private.today_kst();
 -- drop table if exists private.admin_audit, private.album_likes, private.album_images,
---   private.album_posts, private.coupons, public.events, public.notices,
+--   private.album_posts, private.coupons, public.member_absences, public.events, public.notices,
 --   public.chat_messages, private.attendance, private.member_sessions,
 --   private.members, private.clan_settings cascade;
 -- drop type if exists private.session_actor;

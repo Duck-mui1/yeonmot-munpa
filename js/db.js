@@ -441,6 +441,27 @@
       return withToken(function (t) { return rpc('delete_guide', { p_token: t, p_guide_id: guideId }); });
     },
 
+    /* --- 문파원 자리비움 ---
+     *  등록: 로그인한 문파원 누구나 · 삭제: 운영진(문주·운영진)만(서버가 확인)
+     *  시작일은 한국 시간 오늘 이후, 종료일은 시작일과 같거나 뒤.
+     */
+    listAbsences: function () {
+      return withToken(function (t) { return rpc('list_absences', { p_token: t }); });
+    },
+    createAbsence: function (payload) {
+      return withToken(function (t) {
+        return rpc('create_absence', {
+          p_token: t,
+          p_start_date: payload.startDate,
+          p_end_date: payload.endDate,
+          p_reason: payload.reason
+        });
+      });
+    },
+    deleteAbsence: function (absenceId) {
+      return withToken(function (t) { return rpc('delete_absence', { p_token: t, p_absence_id: absenceId }); });
+    },
+
     /* --- 문파원 --- */
     listMembers: function () {
       return select('public_members', 'select=id,nickname,member_role,member_level,joined_at,last_seen_at&order=joined_at.asc');
