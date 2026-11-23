@@ -823,10 +823,10 @@
       /* 하얀 턱 */
       g.fillStyle = '#f7efe4';
       g.beginPath();
-      g.ellipse(0, r * 0.62, r * 1.0, r * 0.54, 0, 0, Math.PI * 2);
+      g.ellipse(0, r * 0.72, r * 0.92, r * 0.44, 0, 0, Math.PI * 2);
       g.fill();
       g.beginPath();
-      g.ellipse(0, r * 0.02, r * 0.62, r * 0.3, 0, 0, Math.PI * 2);
+      g.ellipse(0, r * 0.3, r * 0.46, r * 0.26, 0, 0, Math.PI * 2);
       g.fill();
       /* 은은한 비늘 */
       g.strokeStyle = 'rgba(120, 96, 78, .22)';
