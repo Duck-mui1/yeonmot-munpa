@@ -1,5 +1,5 @@
 /* 연못 서비스 워커 — 오프라인에서도 연못이 열리도록 */
-var CACHE_NAME = 'yeonmot-munpa-v18';
+var CACHE_NAME = 'yeonmot-munpa-v19';
 var CORE_ASSETS = [
   './',
   './index.html',
@@ -14,7 +14,18 @@ var CORE_ASSETS = [
   './icons/favicon.svg',
   './icons/icon-192.png',
   './icons/icon-512.png',
-  './icons/apple-touch-icon.png'
+  './icons/apple-touch-icon.png',
+  './assets/gyeongdan/tier-1.png',
+  './assets/gyeongdan/tier-2.png',
+  './assets/gyeongdan/tier-3.png',
+  './assets/gyeongdan/tier-4.png',
+  './assets/gyeongdan/tier-5.png',
+  './assets/gyeongdan/tier-6.png',
+  './assets/gyeongdan/tier-7.png',
+  './assets/gyeongdan/tier-8.png',
+  './assets/gyeongdan/tier-9.png',
+  './assets/gyeongdan/tier-10.png',
+  './assets/gyeongdan/tier-11.png'
 ];
 
 self.addEventListener('install', function (event) {

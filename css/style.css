@@ -2525,6 +2525,27 @@ body.is-locked { overflow: hidden; }
   text-align: center;
 }
 
+/* 그림 출처 안내 — 작고 은은하게 */
+.gyeongdan__credit {
+  flex: none;
+  margin: 2px 6px 0;
+  font-size: 11px;
+  line-height: 1.45;
+  letter-spacing: -.01em;
+  color: rgba(226, 205, 170, .42);
+  text-align: center;
+  word-break: keep-all;
+}
+.gd-sheet__credit {
+  margin: 10px 2px 2px;
+  font-size: 11px;
+  line-height: 1.5;
+  letter-spacing: -.01em;
+  color: rgba(226, 205, 170, .42);
+  text-align: center;
+  word-break: keep-all;
+}
+
 /* ---- 게임 오버 ---- */
 .gyeongdan__over {
   position: absolute;

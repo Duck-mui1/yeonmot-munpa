@@ -3,7 +3,9 @@
  *  · 수박게임 방식의 Canvas 2D 원형 물리 드롭 & 머지 게임입니다.
  *  · 외부 라이브러리 없이 직접 만든 물리: 중력 · 서브스텝 충돌(위치 보정 + 반발) ·
  *    벽/바닥 바운스 · 굴러떨어짐 · 위쪽 데드라인 2초 유예.
- *  · 경단 11단계(박쥐단 … 백운단)의 그림은 모두 이 파일의 Canvas 코드로 새로 그립니다(오리지널).
+ *  · 경단 11단계(박쥐단 … 백운단)의 그림은 「경단 도감」에서 오려낸 assets/gyeongdan/tier-1~11.png 를
+ *    몸통 반지름에 맞춰 그립니다. 그림을 못 받으면 아래 Canvas 코드의 벡터 그림이 대신 나옵니다.
+ *    (경단 이미지의 저작권은 「도깨비의 세계」에 있으며, 권리자 요청 시 즉시 삭제됩니다.)
  *  · 도구 3종(절구공이 · 교환부 · 승급붓)은 한 판에 각 2회.
  *  · 진행 중인 판은 localStorage 에 남겨 두어 창을 닫아도 이어서 할 수 있습니다.
  *
@@ -29,20 +31,63 @@
 
   /* 11단계 — 반지름은 한눈에 단계가 보이도록 14 → 82 로 커집니다.
      색은 「경단 도감」의 영수 색감을 따릅니다. */
+  /* 반지름은 「도깨비의 세계」 화면의 크기 비율(상자 너비 360 기준 지름 32 → 136)을 따릅니다. */
   var TIERS = [
     null,
-    { no: 1,  name: '박쥐단',      r: 14, color: '#b08d76', dark: '#8e6b56', light: '#d6bda8', kind: 'bat' },
-    { no: 2,  name: '사마귀단',    r: 18, color: '#5f8fc9', dark: '#416fa3', light: '#a8c8ee', kind: 'mantis' },
-    { no: 3,  name: '쥐단',        r: 22, color: '#a6bf4e', dark: '#7d9438', light: '#d9e9a0', kind: 'mouse' },
+    { no: 1,  name: '박쥐단',      r: 16, color: '#b08d76', dark: '#8e6b56', light: '#d6bda8', kind: 'bat' },
+    { no: 2,  name: '사마귀단',    r: 19, color: '#5f8fc9', dark: '#416fa3', light: '#a8c8ee', kind: 'mantis' },
+    { no: 3,  name: '쥐단',        r: 23, color: '#a6bf4e', dark: '#7d9438', light: '#d9e9a0', kind: 'mouse' },
     { no: 4,  name: '뱀단',        r: 27, color: '#b39e8f', dark: '#8c7768', light: '#e6d8c9', kind: 'snake' },
     { no: 5,  name: '호랑이단',    r: 32, color: '#e8952f', dark: '#c2731c', light: '#ffd08a', kind: 'tiger' },
     { no: 6,  name: '돼지단',      r: 38, color: '#b08a9a', dark: '#8a6a7a', light: '#dcbccb', kind: 'pig' },
-    { no: 7,  name: '곰단',        r: 45, color: '#a9714a', dark: '#83503a', light: '#d9ab84', kind: 'bear' },
-    { no: 8,  name: '자서귀단',    r: 52, color: '#fbfbf7', dark: '#dfe3e8', light: '#ffffff', kind: 'dokkaebi' },
-    { no: 9,  name: '황요호단',    r: 60, color: '#e8862f', dark: '#b96318', light: '#ffcf94', kind: 'fox' },
-    { no: 10, name: '산군대호단',  r: 70, color: '#cf8a5f', dark: '#a35f3c', light: '#f0c69c', kind: 'tigerking' },
-    { no: 11, name: '백운단',      r: 82, color: '#fdfcf7', dark: '#e2e6ec', light: '#ffffff', kind: 'cloud' }
+    { no: 7,  name: '곰단',        r: 44, color: '#a9714a', dark: '#83503a', light: '#d9ab84', kind: 'bear' },
+    { no: 8,  name: '자서귀단',    r: 50, color: '#fbfbf7', dark: '#dfe3e8', light: '#ffffff', kind: 'dokkaebi' },
+    { no: 9,  name: '황요호단',    r: 56, color: '#e8862f', dark: '#b96318', light: '#ffcf94', kind: 'fox' },
+    { no: 10, name: '산군대호단',  r: 62, color: '#cf8a5f', dark: '#a35f3c', light: '#f0c69c', kind: 'tigerking' },
+    { no: 11, name: '백운단',      r: 68, color: '#fdfcf7', dark: '#e2e6ec', light: '#ffffff', kind: 'cloud' }
   ];
+
+  /* 경단 그림 — 도감 원본 그림에서 오려낸 투명 PNG.
+     BALL[tier] = 그림 안에서 몸통(공)이 차지하는 지름 비율 → 물리 반지름과 똑같이 맞춥니다. */
+  var SPRITE_PATH = 'assets/gyeongdan/tier-';
+  var SPRITE_CREDIT = '경단 이미지의 저작권은 「도깨비의 세계」에 있으며, 권리자 요청 시 즉시 삭제될 수 있습니다.';
+  var SPRITE_BALL = { 1: 0.880, 2: 0.921, 3: 0.898, 4: 0.884, 5: 0.923, 6: 0.871,
+    7: 0.927, 8: 0.892, 9: 0.919, 10: 0.910, 11: 0.905 };
+  /* 그림 속 몸통 중심이 그림 가운데에서 얼마나 벗어났는지 — 회전축을 몸통 가운데로 */
+  var SPRITE_OFF = {
+    1: [-0.011, 0.000], 2: [-0.002, -0.002], 3: [-0.018, -0.004], 4: [0.004, 0.028],
+    5: [-0.006, 0.006], 6: [0.002, 0.022], 7: [0.002, 0.004], 8: [-0.010, 0.010],
+    9: [0.007, 0.035], 10: [0.004, -0.008], 11: [-0.013, 0.020]
+  };
+  var sprites = [];          // sprites[tier] = Image
+  var spriteReady = {};      // 로드가 끝난 단계
+  var spritesAsked = false;
+
+  /** 1~11단계 PNG를 미리 받아 둡니다. 다 받으면 지금 그려진 판·도감을 다시 그립니다. */
+  function loadSprites() {
+    if (spritesAsked) { return; }
+    spritesAsked = true;
+    for (var t = 1; t <= LAST_TIER; t++) {
+      (function (tier) {
+        var img = new Image();
+        img.decoding = 'async';
+        img.onload = function () {
+          spriteReady[tier] = (img.naturalWidth > 0);
+          if (S && S.running) { draw(); }
+          if (el.sheet && el.sheet.getAttribute('data-kind') === 'chart' && !el.sheet.hidden) {
+            paintChartIcons();
+          }
+        };
+        img.onerror = function () { spriteReady[tier] = false; };
+        img.src = SPRITE_PATH + tier + '.png';
+        sprites[tier] = img;
+      }(t));
+    }
+  }
+
+  function spriteOf(tier) {
+    return spriteReady[tier] ? sprites[tier] : null;
+  }
 
   /* 위에서 떨어지는 경단은 1~5단계뿐입니다(작은 것일수록 자주). */
   var SPAWN_POOL = [1, 1, 1, 1, 2, 2, 2, 3, 3, 4, 4, 5];
@@ -487,9 +532,7 @@
   }
 
   /* ===================================================================
-     7. 경단 그림 — 2D 카툰 · 한지 수묵풍 (경단 도감 색감)
-        · 굵은 진갈색 먹 외곽선 + 매트한 아래쪽 셀 그림자 + 영수 얼굴
-        · 선 두께를 반지름에 비례시켜 진화표(32px) · HUD(52px)에서도 또렷합니다.
+     7. 경단 그림 — 도감 원본 PNG(assets/gyeongdan) · 없으면 Canvas 벡터 그림
      =================================================================== */
 
   var INK = '#3a2518';       // 진갈색 먹 외곽선
@@ -547,6 +590,20 @@
   function drawGyeongdan(g, tier, cx, cy, r, alpha) {
     var T = TIERS[tier];
     if (!T) { return; }
+
+    /* 도감 원본 그림(PNG)이 있으면 그것을 그립니다. 없으면 아래 벡터 그림이 그대로 나옵니다. */
+    var img = spriteOf(tier);
+    if (img) {
+      var size = (r * 2) / (SPRITE_BALL[tier] || 0.9);
+      var off = SPRITE_OFF[tier] || [0, 0];
+      g.save();
+      if (alpha !== undefined && alpha !== 1) { g.globalAlpha = alpha; }
+      g.translate(cx, cy);
+      g.drawImage(img, -size / 2 - off[0] * size, -size / 2 - off[1] * size, size, size);
+      g.restore();
+      return;
+    }
+
     g.save();
     if (alpha !== undefined && alpha !== 1) { g.globalAlpha = alpha; }
     g.translate(cx, cy);
@@ -2045,6 +2102,7 @@
         '</li>';
     }
     html += '</ol>';
+    html += '<p class="gd-sheet__credit">' + SPRITE_CREDIT + '</p>';
     return html;
   }
 
@@ -2069,6 +2127,12 @@
         return;
       }
       var tier = Number(c.getAttribute('data-tier'));
+      var img = spriteOf(tier);
+      if (img) {
+        /* 도감 원본 그림 — 줄마다 같은 크기로 놓습니다(원본 도감처럼) */
+        g.drawImage(img, 0, 0, size, size);
+        return;
+      }
       drawGyeongdan(g, tier, size / 2, size / 2, size * (ICON_RATIO[tier] || 0.28), 1);
     });
   }
@@ -2257,6 +2321,7 @@
     grabDom();
     if (!el.root || !el.canvas) { return; }
     opts = options || {};
+    loadSprites();
     if (!opened) {
       buildTools();
       bindPointer();
