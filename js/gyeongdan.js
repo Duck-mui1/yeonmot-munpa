@@ -3,8 +3,9 @@
  *  · 수박게임 방식의 Canvas 2D 원형 물리 드롭 & 머지 게임입니다.
  *  · 외부 라이브러리 없이 직접 만든 물리: 중력 · 서브스텝 충돌(위치 보정 + 반발) ·
  *    벽/바닥 바운스 · 굴러떨어짐 · 위쪽 데드라인 2초 유예.
- *  · 경단 11단계(박쥐단 … 백운단)의 그림은 「경단 도감」에서 오려낸 assets/gyeongdan/tier-1~11.png 를
- *    몸통 반지름에 맞춰 그립니다. 그림을 못 받으면 아래 Canvas 코드의 벡터 그림이 대신 나옵니다.
+ *  · 경단 11단계(박쥐단 … 백운단)의 그림은 「도깨비의 세계」 인게임 화면에서 오려낸
+ *    assets/gyeongdan/tier-1~11.png 를 몸통 반지름에 맞춰 그립니다(1~9단계는 고화질 화면에서 새로 뽑음).
+ *    그림을 못 받으면 아래 Canvas 코드의 벡터 그림이 대신 나옵니다.
  *    (경단 이미지의 저작권은 「도깨비의 세계」에 있으며, 권리자 요청 시 즉시 삭제됩니다.)
  *  · 도구 3종(절구공이 · 교환부 · 승급붓)은 한 판에 각 2회.
  *  · 진행 중인 판은 localStorage 에 남겨 두어 창을 닫아도 이어서 할 수 있습니다.
@@ -55,13 +56,13 @@
      BALL[tier] = 그림 안에서 몸통(공)이 차지하는 지름 비율 → 물리 반지름과 똑같이 맞춥니다. */
   var SPRITE_PATH = 'assets/gyeongdan/tier-';
   var SPRITE_CREDIT = '경단 이미지의 저작권은 「도깨비의 세계」에 있으며, 권리자 요청 시 즉시 삭제될 수 있습니다.';
-  var SPRITE_BALL = { 1: 0.880, 2: 0.921, 3: 0.898, 4: 0.884, 5: 0.923, 6: 0.871,
-    7: 0.927, 8: 0.892, 9: 0.919, 10: 0.910, 11: 0.905 };
-  /* 그림 속 몸통 중심이 그림 가운데에서 얼마나 벗어났는지 — 회전축을 몸통 가운데로 */
+  var SPRITE_BALL = { 1: 0.900, 2: 0.900, 3: 0.900, 4: 0.900, 5: 0.900, 6: 0.872,
+    7: 0.900, 8: 0.874, 9: 0.825, 10: 0.910, 11: 0.905 };
+  /* 그림 속 몸통 중심이 그림 가운데에서 얼마나 벗어났는지 — 회전축을 몸통 가운데로
+     (1~9단계는 인게임 화면에서 몸통을 캔버스 한가운데에 맞춰 잘랐습니다) */
   var SPRITE_OFF = {
-    1: [-0.011, 0.000], 2: [-0.002, -0.002], 3: [-0.018, -0.004], 4: [0.004, 0.028],
-    5: [-0.006, 0.006], 6: [0.002, 0.022], 7: [0.002, 0.004], 8: [-0.010, 0.010],
-    9: [0.007, 0.035], 10: [0.004, -0.008], 11: [-0.013, 0.020]
+    1: [0, 0], 2: [0, 0], 3: [0, 0], 4: [0, 0], 5: [0, 0], 6: [0, 0],
+    7: [0, 0], 8: [0, 0], 9: [0, 0], 10: [0.004, -0.008], 11: [-0.013, 0.020]
   };
   var sprites = [];          // sprites[tier] = Image
   var spriteReady = {};      // 로드가 끝난 단계
@@ -288,31 +289,30 @@
      5. 물리
      =================================================================== */
 
+  /* --- 경단의 손맛을 정하는 값들 ---------------------------------------
+     · REST : 경단끼리 반발 — 아주 낮게 둬서 탱탱볼처럼 튀지 않습니다.
+     · FRIC : 접선 마찰계수(쿨롱). 낮게 둬서 곡면에 얹힌 경단이 옆으로 흘러
+              굴러 내려가게 합니다. 대신 접선 속도는 경단의 각속도로 바뀌어
+              실제로 데굴데굴 돌아갑니다.
+     · FRIC_FLOOR : 바닥 마찰 — 미끄러지는 대신 굴러가게 붙잡습니다.
+     · ROLL_DRAG : 굴러가는 동안의 구름 저항(한 스텝당). 아주 약하게. */
+  var REST = 0.13;
+  var FRIC = 0.20;
+  var FRIC_FLOOR = 0.62;
+  var FRIC_WALL = 0.34;
+  var MIN_BOUNCE = 130;      // 이보다 느리게 닿으면 튀지 않고 딱 붙습니다
+  var ROLL_DRAG = 0.9988;
+
   function integrate(dt) {
     var bodies = S.bodies;
     for (var i = 0; i < bodies.length; i++) {
       var b = bodies[i];
       if (b.held) { continue; }   // 테스트용 고정(화면에는 나오지 않습니다)
       b.vy += GRAVITY * dt;
-      b.vx *= 0.997;
       b.x += b.vx * dt;
       b.y += b.vy * dt;
       b.angle += b.av * dt;
-      b.av *= 0.988;
       if (b.age < 60) { b.age += dt; }
-
-      if (b.x - b.r < WALL) { b.x = WALL + b.r; if (b.vx < 0) { b.vx = -b.vx * 0.34; } }
-      if (b.x + b.r > W - WALL) { b.x = W - WALL - b.r; if (b.vx > 0) { b.vx = -b.vx * 0.34; } }
-      if (b.y + b.r > FLOOR) {
-        b.y = FLOOR - b.r;
-        /* 떡처럼 묵직하게 — 바닥 반발은 낮추고 마찰은 세게 */
-        if (b.vy > 0) { b.vy = b.vy > 260 ? -b.vy * 0.13 : 0; }
-        b.vx *= 0.94;
-        if (Math.abs(b.vx) < 9) { b.vx *= 0.7; }
-        /* 바닥에서 굴러가는 각속도 — 미끄러지지 않고 구르는 느낌 */
-        b.av = b.av * 0.5 + (b.vx / b.r) * 0.5;
-      }
-      if (b.y - b.r < -40) { b.y = b.r - 40; if (b.vy < 0) { b.vy = 0; } }
     }
   }
 
@@ -378,7 +378,7 @@
     bumpBest();
   }
 
-  function resolvePair(a, b) {
+  function resolvePair(a, b, impulse) {
     if (a.held || b.held) { return; }
     var dx = b.x - a.x, dy = b.y - a.y;
     var rr = a.r + b.r;
@@ -389,52 +389,120 @@
     var nx = dx / d, ny = dy / d;
     var overlap = rr - d;
     var ma = a.r * a.r, mb = b.r * b.r, mt = ma + mb;
+    var ima = 1 / ma, imb = 1 / mb;
 
+    /* 위치 보정 — 겹친 만큼 무게 비율대로 나누어 밀어냅니다 */
     a.x -= nx * overlap * (mb / mt);
     a.y -= ny * overlap * (mb / mt);
     b.x += nx * overlap * (ma / mt);
     b.y += ny * overlap * (ma / mt);
 
-    var rvx = b.vx - a.vx, rvy = b.vy - a.vy;
-    var vn = rvx * nx + rvy * ny;
+    if (!impulse) { return; }
+
+    var vn = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
     if (vn > 0) { return; }
-    /* 반발 계수 — 통통 튀지 않게 낮게 */
-    var e = 0.14;
-    var j = -(1 + e) * vn / (1 / ma + 1 / mb);
-    a.vx -= j * nx / ma; a.vy -= j * ny / ma;
-    b.vx += j * nx / mb; b.vy += j * ny / mb;
 
-    /* 접선 마찰 — 경단끼리 물처럼 흘러내리지 않고 버티게 (쿨롱 마찰 한계) */
-    var MU = 0.52;
+    /* 법선 반발 — 천천히 닿으면 튀지 않고 딱 달라붙습니다 */
+    var e = (-vn > MIN_BOUNCE) ? REST : 0;
+    var jn = -(1 + e) * vn / (ima + imb);
+    a.vx -= jn * nx * ima; a.vy -= jn * ny * ima;
+    b.vx += jn * nx * imb; b.vy += jn * ny * imb;
+
+    /* 접선 — 접점의 상대 속도에는 각속도도 함께 들어갑니다.
+       미끄러지는 속도가 마찰로 회전으로 바뀌어 진짜 공처럼 데굴데굴 굴러갑니다. */
     var tx = -ny, ty = nx;
-    var vt = (b.vx - a.vx) * tx + (b.vy - a.vy) * ty;
-    var jt = -vt / (1 / ma + 1 / mb);
-    var limit = MU * j;
-    if (jt > limit) { jt = limit; }
-    if (jt < -limit) { jt = -limit; }
-    a.vx -= jt * tx / ma; a.vy -= jt * ty / ma;
-    b.vx += jt * tx / mb; b.vy += jt * ty / mb;
-
-    /* 아주 느린 접선 속도는 정지 마찰로 붙잡기 */
-    var vt2 = (b.vx - a.vx) * tx + (b.vy - a.vy) * ty;
-    if (Math.abs(vt2) < 14) {
-      a.vx += vt2 * tx * 0.5; a.vy += vt2 * ty * 0.5;
-      b.vx -= vt2 * tx * 0.5; b.vy -= vt2 * ty * 0.5;
-    }
-
-    /* 굴러가는 회전 — 접선 속도를 각속도로 나눠 줍니다 */
-    a.av = a.av * 0.6 + (a.vx / a.r) * 0.4 - vt2 / (a.r * 6);
-    b.av = b.av * 0.6 + (b.vx / b.r) * 0.4 - vt2 / (b.r * 6);
-    if (Math.abs(a.av) > 9) { a.av = a.av > 0 ? 9 : -9; }
-    if (Math.abs(b.av) > 9) { b.av = b.av > 0 ? 9 : -9; }
+    var vaT = a.vx * tx + a.vy * ty + a.av * a.r;
+    var vbT = b.vx * tx + b.vy * ty - b.av * b.r;
+    var invEff = 3 * (ima + imb);          // I = ½mr² — 회전 몫까지 합치면 3배
+    var jt = -(vbT - vaT) / invEff;
+    var lim = FRIC * jn;
+    if (jt > lim) { jt = lim; } else if (jt < -lim) { jt = -lim; }
+    a.vx -= jt * tx * ima; a.vy -= jt * ty * ima;
+    b.vx += jt * tx * imb; b.vy += jt * ty * imb;
+    a.av -= 2 * jt * ima / a.r;
+    b.av -= 2 * jt * imb / b.r;
+    clampSpin(a);
+    clampSpin(b);
   }
 
-  function resolveAll() {
+  function clampSpin(b) {
+    if (b.av > 40) { b.av = 40; } else if (b.av < -40) { b.av = -40; }
+  }
+
+  /** 벽·바닥과의 접촉 — 바닥에서는 미끄러짐이 굴림으로 바뀝니다. */
+  function resolveBounds(impulse) {
+    var bodies = S.bodies;
+    for (var i = 0; i < bodies.length; i++) {
+      var b = bodies[i];
+      if (b.held) { continue; }
+      var im = 1 / (b.r * b.r);
+
+      /* 왼쪽 벽 — 법선(+x) · 접선(+y) */
+      if (b.x - b.r < WALL) {
+        b.x = WALL + b.r;
+        if (impulse && b.vx < 0) { wallImpulse(b, -b.vx, im, 1, 0); }
+      }
+      /* 오른쪽 벽 — 법선(-x) · 접선(-y) */
+      if (b.x + b.r > W - WALL) {
+        b.x = W - WALL - b.r;
+        if (impulse && b.vx > 0) { wallImpulse(b, b.vx, im, -1, 0); }
+      }
+      /* 바닥 — 법선(위) · 접선(+x) */
+      if (b.y + b.r > FLOOR) {
+        b.y = FLOOR - b.r;
+        if (impulse) {
+          if (b.vy > 0) {
+            var e = (b.vy > MIN_BOUNCE) ? REST : 0;
+            var jn = -(1 + e) * (-b.vy) / im;
+            b.vy += jn * -1 * im;
+            /* 미끄러지는 속도 → 굴러가는 회전 */
+            var vt = b.vx - b.av * b.r;
+            var jt = -vt / (3 * im);
+            var lim = FRIC_FLOOR * jn;
+            jt = jt > lim ? lim : (jt < -lim ? -lim : jt);
+            b.vx += jt * im;
+            b.av -= 2 * jt * im / b.r;
+          } else if (b.vy < 0) {
+            b.vy = 0;
+          }
+          /* 굴러가는 동안의 구름 저항 — 아주 약하게, 서서히 멈춥니다 */
+          b.vx *= ROLL_DRAG;
+          b.av *= ROLL_DRAG;
+          clampSpin(b);
+        }
+      }
+      /* 천장(판 위쪽 여유) — 드물게 튀어 오를 때만 */
+      if (b.y - b.r < -40) {
+        b.y = b.r - 40;
+        if (impulse && b.vy < 0) { b.vy = 0; }
+      }
+    }
+  }
+
+  /** 정지한 벽에 부딪혔을 때의 마찰·반발. sign = 법선 방향(안쪽) */
+  function wallImpulse(b, approach, im, nx, ny) {
+    var e = (approach > MIN_BOUNCE) ? REST : 0;
+    var jn = (1 + e) * approach / im;
+    b.vx += jn * nx * im;
+    b.vy += jn * ny * im;
+    /* 접선 속도(회전 포함) → 마찰 */
+    var tx = -ny, ty = nx;
+    var vxT = b.vx * tx + b.vy * ty - b.av * b.r;
+    var jt = -vxT / (3 * im);
+    var lim = FRIC_WALL * jn;
+    jt = jt > lim ? lim : (jt < -lim ? -lim : jt);
+    b.vx += jt * tx * im;
+    b.vy += jt * ty * im;
+    b.av -= 2 * jt * im / b.r;
+    clampSpin(b);
+  }
+
+  function resolveAll(impulse) {
     var bodies = S.bodies;
     for (var i = 0; i < bodies.length; i++) {
       var a = bodies[i];
       for (var j = i + 1; j < bodies.length; j++) {
-        resolvePair(a, bodies[j]);
+        resolvePair(a, bodies[j], impulse);
       }
     }
   }
@@ -458,22 +526,18 @@
   function step(dt) {
     integrate(dt);
     mergePass();
-    for (var it = 0; it < 4; it++) { resolveAll(); }
-    /* 해소 뒤에도 벽·바닥을 벗어나지 않게 한 번 더 */
+    /* 속도(반발·마찰)는 한 번, 겹침 보정은 여러 번 — 굴러가는 손맛이 살아 있습니다. */
+    resolveAll(true);
+    resolveBounds(true);
+    for (var it = 0; it < 3; it++) {
+      resolveAll(false);
+      resolveBounds(false);
+    }
     for (var i = 0; i < S.bodies.length; i++) {
       var b = S.bodies[i];
-      if (b.x - b.r < WALL - 0.5) { b.x = WALL + b.r; b.vx = Math.abs(b.vx) * 0.2; }
-      if (b.x + b.r > W - WALL + 0.5) { b.x = W - WALL - b.r; b.vx = -Math.abs(b.vx) * 0.2; }
-      if (b.y + b.r > FLOOR + 0.5) { b.y = FLOOR - b.r; if (b.vy > 0) { b.vy *= -0.1; } }
-      /* 아주 느린 속도는 깔끔하게 멈춰 미세한 떨림을 없앱니다 (떡의 무게감) */
-      if (Math.abs(b.vx) < 2.5) { b.vx = 0; }
-      if (Math.abs(b.vy) < 2.5) { b.vy = 0; }
-      /* 거의 멈췄을 때는 제자리로 살짝 돌아와 얼굴이 바로 서게 */
-      if (Math.abs(b.vx) < 12 && Math.abs(b.av) < 0.8) {
-        var upright = Math.round(b.angle / (Math.PI * 2)) * Math.PI * 2;
-        b.angle += (upright - b.angle) * 0.06;
-        b.av *= 0.9;
-        if (Math.abs(upright - b.angle) < 0.01) { b.angle = upright; }
+      /* 완전히 멈춘 경단만 속도를 0으로 — 각도(angle)는 굴러간 그대로 둡니다! */
+      if (Math.abs(b.vx) < 0.8 && Math.abs(b.vy) < 3 && Math.abs(b.av) < 0.25) {
+        b.vx = 0; b.av = 0;
       }
     }
     stepParticles(dt);
