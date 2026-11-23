@@ -96,27 +96,9 @@
     ],
 
     coupons: [
-      {
-        code: 'YEONMOT11',
-        title: '새 문파원 환영 쿠폰',
-        reward: '도술서 1매',
-        until: '12.31',
-        tone: 'lotus'
-      },
-      {
-        code: 'PONDMOON',
-        title: '달빛 연못 쿠폰',
-        reward: '물의 정수 5개',
-        until: '12.15',
-        tone: 'jade'
-      },
-      {
-        code: 'LOTUSFIRE',
-        title: '주말 원정 쿠폰',
-        reward: '회복 물약 10개',
-        until: '12.07',
-        tone: 'gold'
-      }
+      { code: 'YEONMOT11', until: '12.31' },
+      { code: 'PONDMOON', until: '12.15' },
+      { code: 'LOTUSFIRE', until: '12.07' }
     ],
 
     /* 공략 — 유튜브 영상 (체험 모드 예시 4개)

@@ -95,6 +95,15 @@
   function avatarStyle(name) { return AVATARS[hash(String(name || '연')) % AVATARS.length]; }
   function initial(name) { return String(name || '연').trim().charAt(0) || '연'; }
 
+  /* ---------- 쿠폰 ----------
+     화면에서는 코드와 마지막 날만 받습니다. DB(admin_create_coupon)는 내용·보상을 1~60자로
+     요구하므로 빈 자리는 COUPON_BLANK('-') 로 채워 보내고, 카드에서는 '-' 를 빈 값으로 봅니다. */
+  var COUPON_BLANK = '-';
+  function couponText(value) {
+    var text = String(value === null || value === undefined ? '' : value).trim();
+    return (text === '' || text === COUPON_BLANK) ? '' : text;
+  }
+
   /* ---------- 프로필 그림 (일러스트 preset: / 내 사진 data:image/) ---------- */
   var AVATAR_PRESETS = ['lotus', 'koi', 'frog', 'firefly', 'moon', 'leaf', 'turtle', 'lantern'];
 
@@ -1266,10 +1275,13 @@
       S.coupons.forEach(function (c) {
         var until = c.expires_on ? String(c.expires_on).replace(/-/g, '.').replace(/^(\d{4})\./, '') + '까지'
           : (c.until ? c.until + '까지' : '기한 없음');
+        var title = couponText(c.title);
+        var reward = couponText(c.reward);
         html += '<article class="coupon">' +
-          '<div class="coupon__head"><span class="coupon__title">' + esc(c.title) + '</span>' +
+          '<div class="coupon__head">' +
+          (title ? '<span class="coupon__title">' + esc(title) + '</span>' : '') +
           '<span class="badge badge--lotus">' + esc(until) + '</span></div>' +
-          '<p class="coupon__reward">' + esc(c.reward) + '</p>' +
+          (reward ? '<p class="coupon__reward">' + esc(reward) + '</p>' : '') +
           '<div class="coupon__code"><span>' + esc(c.code) + '</span>' +
           '<button type="button" class="coupon__copy" data-copy="' + esc(c.code) + '">복사</button></div>' +
           '<p class="coupon__until">게임 내 쿠폰 등록창에 입력해 보세요</p>' +
@@ -2159,7 +2171,7 @@
 
   function confirmDeleteCoupon(id) {
     var c = S.coupons.filter(function (x) { return x.id === id; })[0];
-    confirmAction('쿠폰을 지울까요?', '“' + (c ? c.title : '쿠폰') + '”이 더 이상 보이지 않아요.', '지우기', function () {
+    confirmAction('쿠폰을 지울까요?', '“' + (c ? c.code : '쿠폰') + '”이 더 이상 보이지 않아요.', '지우기', function () {
       return DB.admin.deleteCoupon(id).then(function () {
         S.coupons = S.coupons.filter(function (x) { return x.id !== id; });
         renderHome();
@@ -2342,18 +2354,8 @@
       '<form class="form" id="coupon-form" novalidate style="margin-top:12px">' +
       '<label class="field"><span class="field__label">쿠폰 코드</span>' +
       '<input class="field__input" type="text" id="coupon-code" maxlength="24" placeholder="한글·영문·숫자 3~24자 (예: 연꽃2026)" autocapitalize="characters"></label>' +
-      '<label class="field"><span class="field__label">쿠폰 이름</span>' +
-      '<input class="field__input" type="text" id="coupon-title" maxlength="60" placeholder="예) 새 문파원 환영 쿠폰"></label>' +
-      '<label class="field"><span class="field__label">보상 내용</span>' +
-      '<input class="field__input" type="text" id="coupon-reward" maxlength="60" placeholder="예) 도술서 1매"></label>' +
-      '<div class="form__row">' +
-      '<label class="field"><span class="field__label">쓰는 마지막 날 (선택)</span>' +
+      '<label class="field"><span class="field__label">유효기간 (선택 · 비우면 기한 없음)</span>' +
       '<input class="field__input" type="date" id="coupon-expires"></label>' +
-      '<label class="field"><span class="field__label">색</span>' +
-      '<select class="field__input" id="coupon-tone">' +
-      '<option value="lotus">연꽃(분홍)</option><option value="jade">옥빛(청록)</option><option value="gold">금빛</option>' +
-      '</select></label>' +
-      '</div>' +
       '<p class="form__error" id="coupon-error" role="alert" hidden></p>' +
       '<button type="submit" class="btn btn--primary">쿠폰 올리기</button>' +
       '</form>');
@@ -2361,16 +2363,9 @@
     $('#coupon-form').addEventListener('submit', function (e) {
       e.preventDefault();
       var code = $('#coupon-code').value.trim().toUpperCase();
-      var title = $('#coupon-title').value.trim();
-      var reward = $('#coupon-reward').value.trim();
       var errEl = $('#coupon-error');
       if (!/^[가-힣A-Za-z0-9][가-힣A-Za-z0-9_-]{2,23}$/.test(code)) {
         errEl.textContent = '쿠폰 코드는 한글·영문·숫자·-·_ 3~24자로 정해 주세요.';
-        errEl.hidden = false;
-        return;
-      }
-      if (!title || !reward) {
-        errEl.textContent = '쿠폰 이름과 보상 내용을 적어 주세요.';
         errEl.hidden = false;
         return;
       }
@@ -2379,10 +2374,10 @@
 
       DB.admin.createCoupon({
         code: code,
-        title: title,
-        reward: reward,
+        title: COUPON_BLANK,
+        reward: COUPON_BLANK,
         expiresOn: $('#coupon-expires').value || null,
-        tone: $('#coupon-tone').value
+        tone: 'lotus'
       }).then(function () {
         closeModal();
         toast('쿠폰을 올렸어요.');
