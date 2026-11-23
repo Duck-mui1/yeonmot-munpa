@@ -499,14 +499,14 @@
       return select('public_members', 'select=id,nickname,member_role,member_level,joined_at,last_seen_at&order=joined_at.asc');
     },
 
-    /* --- 공지 · 일정 (공개 읽기) --- */
+    /* --- 공지 · 문파컨텐츠 (공개 읽기) --- */
     listNotices: function () {
       return select('notices',
         'select=id,title,body,tag,pinned,author_id,created_at&deleted_at=is.null&order=pinned.desc,created_at.desc&limit=30');
     },
     listEvents: function () {
       return select('events',
-        'select=id,title,place,tag,note,starts_at,ends_at,created_by&deleted_at=is.null&order=starts_at.asc&limit=30');
+        'select=id,title,place,tag,note,starts_at,ends_at,repeat_weekly,repeat_weekdays,created_by&deleted_at=is.null&order=starts_at.asc&limit=30');
     },
 
     /* --- 관리자(문주) --- */
@@ -566,7 +566,9 @@
             p_place: payload.place || '',
             p_tag: payload.tag || '모임',
             p_note: payload.note || '',
-            p_ends_at: payload.endsAt || null
+            p_ends_at: payload.endsAt || null,
+            p_repeat_weekly: !!payload.repeatWeekly,
+            p_repeat_weekdays: payload.repeatWeekly ? (payload.repeatWeekdays || []) : []
           });
         });
       },
@@ -583,7 +585,9 @@
             p_place: payload.place === undefined ? null : payload.place,
             p_tag: payload.tag || null,
             p_note: payload.note === undefined ? null : payload.note,
-            p_ends_at: payload.endsAt || null
+            p_ends_at: payload.endsAt || null,
+            p_repeat_weekly: !!payload.repeatWeekly,
+            p_repeat_weekdays: payload.repeatWeekly ? (payload.repeatWeekdays || []) : []
           });
         });
       },

@@ -13,7 +13,7 @@
 | `css/style.css` | 연못 · 연꽃 · 물결 · 반딧불 색과 질감을 담은 스타일 |
 | `js/db.js` | **Supabase 연결 계층** — 프로젝트 주소·공개 키, RPC 호출, 실시간 구독, 사진 축소 |
 | `js/app.js` | 화면 렌더링, 로그인 흐름, 채팅 · 앨범 · 출석 · 문주 도구 |
-| `js/data.js` | 체험 모드용 예시 데이터(공지 · 일정 · 쿠폰 · 문파원 · 앨범 · 대화) |
+| `js/data.js` | 체험 모드용 예시 데이터(공지 · 문파컨텐츠 · 쿠폰 · 문파원 · 앨범 · 대화) |
 | `js/art.js` | 홈 배너와 체험 앨범 장면을 그리는 자체 제작 SVG 일러스트 |
 | `js/vendor/supabase.js` | 실시간 구독용 `supabase-js` 2.58.0 (UMD, MIT). 저장소에 함께 두어 오프라인에서도 열립니다 |
 | `supabase/schema.sql` | Supabase에 한 번 실행하는 설치본 (테이블 · RPC · 권한 · Realtime) |
@@ -22,6 +22,8 @@
 | `supabase/migration-v4.sql` | 이미 설치해 쓰는 DB용 **v4 마이그레이션** — 운영진의 **대신 자리비움 등록**(대상 문파원 선택 · 미가입자 이름 직접 입력) (여러 번 실행해도 안전) |
 | `supabase/migration-duck.sql` | 이미 설치해 쓰는 DB용 **프로필 그림 '오리' 마이그레이션** — 프리셋 화이트리스트에 `preset:duck` 추가 (여러 번 실행해도 안전) |
 | `supabase/migration-album-text.sql` | 이미 설치해 쓰는 DB용 **문파앨범 '글(선택)' 마이그레이션** — 글 없이 사진만 올리기(빈 제목 허용) + 글 300자 (여러 번 실행해도 안전) |
+| `supabase/migration-edit-posts.sql` | 이미 설치해 쓰는 DB용 **모든 글 수정 마이그레이션** — 공지·일정·쿠폰·공략·앨범 글 고치기 (자리비움 제외, 여러 번 실행해도 안전) |
+| `supabase/migration-clan-contents.sql` | 이미 설치해 쓰는 DB용 **'일정 → 문파컨텐츠 · 매주 반복' 마이그레이션** — `repeat_weekly`·`repeat_weekdays` 칸과 두 RPC 파라미터 (여러 번 실행해도 안전) |
 | `manifest.json` | PWA 설치 정보(이름, 아이콘, 테마 색) |
 | `sw.js` | 오프라인에서도 열리도록 파일을 기억하는 서비스 워커 |
 | `icons/` | 앱 아이콘(PNG)과 파비콘(SVG) |
@@ -60,6 +62,8 @@ var SUPABASE_KEY = 'sb_publishable_…';   // 공개용(publishable) 키 — 브
      (`update_my_avatar` 프리셋 화이트리스트에 `preset:duck` 만 더합니다)
    - **문파앨범 '글(선택)'** 은 `supabase/migration-album-text.sql` 하나로 준비됩니다.
      (제목을 비워 둘 수 있게 하고 — 사진만 올리기, 글은 300자까지)
+   - **문파컨텐츠(예전 이름: 일정)와 매주 반복**은 `supabase/migration-clan-contents.sql` 하나로 준비됩니다.
+     (홈 섹션 이름 변경 + `repeat_weekly` · `repeat_weekdays` 칸, `admin_create_event` · `admin_update_event` 에 두 파라미터 추가)
 5. **문파원 초대** — 바뀐 초대 코드를 알려 주면, 문파원은 **가입하기**에서 닉네임 · PIN · 초대 코드로 들어옵니다.
    - 로그인은 **닉네임 + PIN** 만 씁니다(초대 코드는 가입할 때만).
    - PIN 5회 오입력 시 잠시 잠깁니다(최대 5분).
@@ -71,7 +75,7 @@ var SUPABASE_KEY = 'sb_publishable_…';   // 공개용(publishable) 키 — 브
 | 위치 | 기능 |
 | --- | --- |
 | 홈 · 공지 | `+ 공지 추가`, 공지별 `고정/고정 해제` · `삭제` |
-| 홈 · 모임 일정 | `+ 일정 추가`, 일정별 `일정 삭제` |
+| 홈 · 문파컨텐츠 | `+ 문파컨텐츠 추가`, 컨텐츠별 `문파컨텐츠 삭제`, `한 번만 / 매주 반복` |
 | 홈 · 쿠폰 | `+ 쿠폰 추가`, 쿠폰별 `쿠폰 삭제` |
 | 홈 · 문파원 자리비움 | 자리비움별 `×` 삭제 (운영진만 · 올린 본인이어도 일반 문파원은 불가) · 모달에서 **대상 문파원 고르기**(다른 문파원 대신 · 미가입자 이름 직접 입력) |
 | 문파원 | 문파원별 `운영진으로 / 문파원으로` · `내보내기` · `차단`, 내보낸 사람은 `다시 들이기` |
@@ -149,7 +153,7 @@ var SUPABASE_KEY = 'sb_publishable_…';   // 공개용(publishable) 키 — 브
 
 ## 실시간
 
-- 채팅 · 공지 · 일정은 Supabase Realtime(`postgres_changes`) 구독으로 바로 반영됩니다.
+- 채팅 · 공지 · 문파컨텐츠는 Supabase Realtime(`postgres_changes`) 구독으로 바로 반영됩니다.
 - 상단에 `문파원 N명 · 실시간` 배지가 뜨고, 연결이 끊기면 `다시 연결 중` 으로 바뀝니다.
 - 구독이 막힌 환경(회사망 등)에서도 화면은 그대로 동작하고, 탭을 옮길 때 최신 내용을 다시 불러옵니다.
 

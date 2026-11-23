@@ -6,7 +6,7 @@
 --    1) 초대 코드 + 닉네임 + 4자리 PIN 으로 가입/로그인 (앱 자체 계정, 이메일 없음)
 --    2) 역할: admin(문주) / officer(운영진) / member(문파원)
 --       · 화면의 문주 → admin, 부문주·장로·정예 → officer, 문파원 → member 로 옮겨 쓰면 됩니다.
---    3) 관리자: 강퇴·차단·직위 변경·초대 코드 변경·공지·일정·쿠폰·채팅/앨범 삭제
+--    3) 관리자: 강퇴·차단·직위 변경·초대 코드 변경·공지·문파컨텐츠·쿠폰·채팅/앨범 삭제
 --    4) 문파원: 출석(물결), 채팅, 앨범 업로드(용량 제한) + 좋아요
 --    5) Realtime: chat_messages / notices / events
 --
@@ -16,7 +16,7 @@
 --    · 읽기/쓰기 모두 RPC(SECURITY DEFINER) 로 처리합니다.
 --      - 쓰기: anon 에게 INSERT/UPDATE/DELETE 권한을 주지 않습니다 → 테이블 직접 쓰기 불가.
 --      - 읽기: 로그인 계정이 필요한 데이터(문파원·출석·앨범·쿠폰·설정)는 RPC 만.
---      - 채팅·공지·일정은 Realtime 구독 때문에 anon SELECT 만 열어 둡니다(개인정보 없는 공개 내용).
+--      - 채팅·공지·문파컨텐츠는 Realtime 구독 때문에 anon SELECT 만 열어 둡니다(개인정보 없는 공개 내용).
 --      - 삭제된 채팅은 본문을 빈 문자열로 지우고 남깁니다(실시간으로 삭제가 전달되도록).
 --    · 로그인은 PIN 오입력 5회부터 잠금(최대 5분)으로 무차별 대입을 늦춥니다.
 --    · 세션은 32바이트 랜덤 토큰이며 DB 에는 SHA-256 해시만 저장합니다.
@@ -300,7 +300,9 @@ create index if not exists guides_created_idx
 
 comment on table public.guides is '홈 공략 섹션의 유튜브 영상. 썸네일은 i.ytimg.com/vi/{video_id}/hqdefault.jpg.';
 
--- 2-7. 모임 일정 (Realtime 대상)
+-- 2-7. 문파컨텐츠 (예전 이름: 모임 일정 · Realtime 대상)
+--   · repeat_weekly = true 이면 repeat_weekdays(0=일 … 6=토)의 요일마다 같은 시간에 열립니다.
+--   · starts_at 은 '다음 예정 시각'을 담습니다(매주 반복도 정렬이 자연스럽도록 매번 다시 계산).
 create table if not exists public.events (
   id         uuid primary key default gen_random_uuid(),
   title      text not null check (char_length(title) between 1 and 60),
@@ -309,16 +311,25 @@ create table if not exists public.events (
   note       text not null default '' check (char_length(note) <= 200),
   starts_at  timestamptz not null,
   ends_at    timestamptz,
+  repeat_weekly   boolean not null default false,
+  repeat_weekdays smallint[] not null default '{}',
   created_by uuid references private.members (id) on delete set null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   deleted_at timestamptz,
-  constraint events_time_order check (ends_at is null or ends_at >= starts_at)
+  constraint events_time_order check (ends_at is null or ends_at >= starts_at),
+  constraint events_repeat_weekdays_range
+    check (repeat_weekdays <@ array[0, 1, 2, 3, 4, 5, 6]::smallint[]),
+  constraint events_repeat_weekdays_shape
+    check (not repeat_weekly or cardinality(repeat_weekdays) between 1 and 7)
 );
 
 create index if not exists events_starts_idx
   on public.events (starts_at)
   where deleted_at is null;
+
+comment on column public.events.repeat_weekly is '매주 반복 여부. true 면 repeat_weekdays 의 요일마다 같은 시간에 열립니다.';
+comment on column public.events.repeat_weekdays is '반복 요일 (0=일 … 6=토). repeat_weekly = false 면 빈 배열입니다.';
 
 -- 2-8. 쿠폰
 create table if not exists private.coupons (
@@ -2044,15 +2055,74 @@ begin
 end;
 $fn$;
 
--- 일정 작성
+-- 반복 요일 정리 — 0~6(0=일 … 6=토) 밖의 값은 22023 으로 거절하고, 중복은 지워 차례대로 돌려줍니다.
+create or replace function private.normalize_weekdays(p_days smallint[])
+returns smallint[]
+language plpgsql
+immutable
+set search_path = ''
+as $fn$
+declare
+  v_days smallint[];
+begin
+  if p_days is null then
+    return '{}'::smallint[];
+  end if;
+  select coalesce(array_agg(d order by d), '{}'::smallint[])
+    into v_days
+    from (select distinct unnest(p_days) as d) s;
+  if exists (select 1 from unnest(v_days) d where d < 0 or d > 6) then
+    raise exception '요일 값이 올바르지 않아요. (0=일 … 6=토)' using errcode = '22023';
+  end if;
+  return v_days;
+end;
+$fn$;
+
+-- 매주 반복의 '다음 예정 시각' — 요일 집합과 시작 시각(HH:MM)으로 가장 가까운 다음 날을 찾습니다.
+--   · 요일·시각 해석은 한국 시간(Asia/Seoul) 기준입니다. (앱이 한국에서 쓰는 문파 앱)
+--   · p_from 을 주면 그 시각부터 셉니다(기본 now()).
+create or replace function private.next_weekly_at(
+  p_anchor timestamptz,
+  p_days   smallint[],
+  p_from   timestamptz default null
+)
+returns timestamptz
+language plpgsql
+set search_path = ''
+as $fn$
+declare
+  v_tz   text := 'Asia/Seoul';
+  v_time time := (p_anchor at time zone 'Asia/Seoul')::time;
+  v_from timestamptz := date_trunc('minute', coalesce(p_from, now()));
+  v_day  date := (date_trunc('minute', coalesce(p_from, now())) at time zone 'Asia/Seoul')::date;
+  v_i    int;
+  v_at   timestamptz;
+begin
+  for v_i in 0..7 loop
+    if extract(dow from (v_day + v_i))::smallint = any(p_days) then
+      v_at := ((v_day + v_i) + v_time) at time zone 'Asia/Seoul';
+      if v_at >= v_from then
+        return v_at;
+      end if;
+    end if;
+  end loop;
+  -- 요일이 1개 이상이면 위에서 반드시 돌려줍니다. 방어용으로 7일 뒤 같은 시각.
+  return ((v_day + 7) + v_time) at time zone 'Asia/Seoul';
+end;
+$fn$;
+
+-- 문파컨텐츠 작성 (예전 이름: 일정 작성)
+--   · 매주 반복이면 p_starts_at 의 시각(HH:MM)만 쓰고 날짜는 '다음 예정일'로 다시 계산합니다.
 create or replace function public.admin_create_event(
-  p_token     text,
-  p_title     text,
-  p_starts_at timestamptz,
-  p_place     text default '',
-  p_tag       text default '모임',
-  p_note      text default '',
-  p_ends_at   timestamptz default null
+  p_token           text,
+  p_title           text,
+  p_starts_at       timestamptz,
+  p_place           text default '',
+  p_tag             text default '모임',
+  p_note            text default '',
+  p_ends_at         timestamptz default null,
+  p_repeat_weekly   boolean default false,
+  p_repeat_weekdays smallint[] default '{}'
 )
 returns jsonb
 language plpgsql
@@ -2065,13 +2135,16 @@ declare
   v_place text := btrim(coalesce(p_place, ''));
   v_tag   text := btrim(coalesce(p_tag, '모임'));
   v_note  text := btrim(coalesce(p_note, ''));
+  v_days  smallint[];
+  v_start timestamptz;
+  v_ends  timestamptz := p_ends_at;
   v_event public.events;
 begin
   if char_length(v_title) = 0 or char_length(v_title) > 60 then
-    raise exception '일정 이름은 1~60자로 적어 주세요.' using errcode = '22023';
+    raise exception '문파컨텐츠 이름은 1~60자로 적어 주세요.' using errcode = '22023';
   end if;
   if p_starts_at is null then
-    raise exception '일정 날짜와 시간을 정해 주세요.' using errcode = '22023';
+    raise exception '문파컨텐츠 날짜와 시간을 정해 주세요.' using errcode = '22023';
   end if;
   if char_length(v_place) > 60 or char_length(v_tag) > 10 or char_length(v_note) > 200 then
     raise exception '장소·태그·메모 길이를 확인해 주세요.' using errcode = '22023';
@@ -2080,8 +2153,24 @@ begin
     raise exception '끝나는 시간이 시작보다 빨라요.' using errcode = '22023';
   end if;
 
-  insert into public.events (title, place, tag, note, starts_at, ends_at, created_by)
-  values (v_title, v_place, v_tag, v_note, p_starts_at, p_ends_at, v_actor.member_id)
+  v_days := private.normalize_weekdays(p_repeat_weekdays);
+  if coalesce(p_repeat_weekly, false) then
+    if cardinality(v_days) = 0 then
+      raise exception '매주 반복은 요일을 하나 이상 골라 주세요.' using errcode = '22023';
+    end if;
+    v_start := private.next_weekly_at(p_starts_at, v_days);
+    if v_ends is not null then
+      v_ends := v_start + (p_ends_at - p_starts_at);
+    end if;
+  else
+    v_days  := '{}'::smallint[];
+    v_start := p_starts_at;
+  end if;
+
+  insert into public.events (title, place, tag, note, starts_at, ends_at,
+                             repeat_weekly, repeat_weekdays, created_by)
+  values (v_title, v_place, v_tag, v_note, v_start, v_ends,
+          coalesce(p_repeat_weekly, false), v_days, v_actor.member_id)
   returning * into v_event;
 
   perform private.log_admin(v_actor.member_id, 'event.create', 'event', v_event.id::text, '{}'::jsonb);
@@ -2090,21 +2179,25 @@ begin
     'id', v_event.id,
     'title', v_event.title,
     'starts_at', v_event.starts_at,
-    'place', v_event.place
+    'place', v_event.place,
+    'repeat_weekly', v_event.repeat_weekly,
+    'repeat_weekdays', to_jsonb(v_event.repeat_weekdays)
   );
 end;
 $fn$;
 
--- 일정 수정
+-- 문파컨텐츠 수정 (예전 이름: 일정 수정) — '한 번만 ↔ 매주 반복' 전환도 여기서 합니다.
 create or replace function public.admin_update_event(
-  p_token     text,
-  p_event_id  uuid,
-  p_title     text,
-  p_starts_at timestamptz,
-  p_place     text default null,
-  p_tag       text default null,
-  p_note      text default null,
-  p_ends_at   timestamptz default null
+  p_token           text,
+  p_event_id        uuid,
+  p_title           text,
+  p_starts_at       timestamptz,
+  p_place           text default null,
+  p_tag             text default null,
+  p_note            text default null,
+  p_ends_at         timestamptz default null,
+  p_repeat_weekly   boolean default false,
+  p_repeat_weekdays smallint[] default '{}'
 )
 returns jsonb
 language plpgsql
@@ -2114,34 +2207,61 @@ as $fn$
 declare
   v_actor private.session_actor := private.require_admin(p_token);
   v_title text := btrim(coalesce(p_title, ''));
+  v_days  smallint[];
+  v_start timestamptz;
+  v_ends  timestamptz;
+  v_old   public.events;
 begin
   if char_length(v_title) = 0 or char_length(v_title) > 60 then
-    raise exception '일정 이름은 1~60자로 적어 주세요.' using errcode = '22023';
+    raise exception '문파컨텐츠 이름은 1~60자로 적어 주세요.' using errcode = '22023';
   end if;
   if p_starts_at is null then
-    raise exception '일정 날짜와 시간을 정해 주세요.' using errcode = '22023';
+    raise exception '문파컨텐츠 날짜와 시간을 정해 주세요.' using errcode = '22023';
   end if;
   if p_ends_at is not null and p_ends_at < p_starts_at then
     raise exception '끝나는 시간이 시작보다 빨라요.' using errcode = '22023';
   end if;
 
+  select * into v_old
+    from public.events
+   where id = p_event_id
+     and deleted_at is null;
+  if not found then
+    raise exception '문파컨텐츠를 찾을 수 없어요.' using errcode = 'P0002';
+  end if;
+
+  v_ends := coalesce(p_ends_at, v_old.ends_at);
+  v_days := private.normalize_weekdays(p_repeat_weekdays);
+  if coalesce(p_repeat_weekly, false) then
+    if cardinality(v_days) = 0 then
+      raise exception '매주 반복은 요일을 하나 이상 골라 주세요.' using errcode = '22023';
+    end if;
+    v_start := private.next_weekly_at(p_starts_at, v_days);
+    if v_ends is not null then
+      v_ends := v_start + (v_ends - v_old.starts_at);
+    end if;
+  else
+    v_days  := '{}'::smallint[];
+    v_start := p_starts_at;
+  end if;
+
   update public.events
      set title = v_title,
-         starts_at = p_starts_at,
+         starts_at = v_start,
          place = coalesce(btrim(p_place), place),
          tag = coalesce(nullif(btrim(p_tag), ''), tag),
          note = coalesce(btrim(p_note), note),
-         ends_at = coalesce(p_ends_at, ends_at)
+         ends_at = v_ends,
+         repeat_weekly = coalesce(p_repeat_weekly, false),
+         repeat_weekdays = v_days
    where id = p_event_id
      and deleted_at is null;
 
-  if not found then
-    raise exception '일정을 찾을 수 없어요.' using errcode = 'P0002';
-  end if;
-
   perform private.log_admin(v_actor.member_id, 'event.update', 'event', p_event_id::text, '{}'::jsonb);
 
-  return jsonb_build_object('id', p_event_id, 'ok', true);
+  return jsonb_build_object('id', p_event_id, 'ok', true,
+                            'repeat_weekly', coalesce(p_repeat_weekly, false),
+                            'repeat_weekdays', to_jsonb(v_days));
 end;
 $fn$;
 
@@ -2967,8 +3087,8 @@ where not exists (select 1 from public.chat_messages c);
 -- drop function if exists public.update_coupon(text, uuid, text, date);
 -- drop function if exists public.admin_create_coupon(text, text, text, text, date, text);
 -- drop function if exists public.admin_delete_event(text, uuid);
--- drop function if exists public.admin_update_event(text, uuid, text, timestamptz, text, text, text, timestamptz);
--- drop function if exists public.admin_create_event(text, text, timestamptz, text, text, text, timestamptz);
+-- drop function if exists public.admin_update_event(text, uuid, text, timestamptz, text, text, text, timestamptz, boolean, smallint[]);
+-- drop function if exists public.admin_create_event(text, text, timestamptz, text, text, text, timestamptz, boolean, smallint[]);
 -- drop function if exists public.admin_delete_notice(text, uuid);
 -- drop function if exists public.admin_pin_notice(text, uuid, boolean);
 -- drop function if exists public.admin_update_notice(text, uuid, text, text, text, boolean);

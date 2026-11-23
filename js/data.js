@@ -36,7 +36,7 @@
       {
         id: 'n2',
         pinned: true,
-        tag: '일정',
+        tag: '공지',
         title: '주간 보스 원정 시간이 30분 늦춰집니다',
         author: '물결따라',
         role: '부문주',
@@ -66,8 +66,9 @@
 
     events: [
       {
-        type: 'weekly',
-        weekday: 6,
+        /* 매주 반복 예시 — 수 · 토 21:30 */
+        repeat_weekly: true,
+        repeat_weekdays: [3, 6],
         hour: 21,
         minute: 30,
         title: '주간 보스 원정',

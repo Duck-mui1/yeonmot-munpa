@@ -75,6 +75,7 @@
     firstSendNoted: false,
     realtime: 'off',
     busy: false,
+    eventPending: false,
     adminSettings: null
   };
 
@@ -156,13 +157,56 @@
     d.setDate(d.getDate() + days);
     return d;
   }
-  function nextWeekday(dow, hour, minute) {
+  /** 반복 요일 정리 — 0(일)~6(토) 밖의 값은 버리고, 중복을 지워 차례대로 (DB 규칙과 같습니다) */
+  function repeatDays(value) {
+    var list = Object.prototype.toString.call(value) === '[object Array]' ? value : [];
+    var days = [];
+    list.forEach(function (raw) {
+      var d = Number(raw);
+      if (d >= 0 && d <= 6 && days.indexOf(d) === -1) { days.push(d); }
+    });
+    return days.sort(function (a, b) { return a - b; });
+  }
+  /** '수·토' 처럼 요일 이름을 이어 붙입니다 */
+  function weekdaysLabel(days) {
+    return repeatDays(days).map(function (d) { return WEEKDAYS[d]; }).join('·');
+  }
+  /**
+   * 매주 반복의 '다음 예정 시각' — 오늘이 그 요일이면 오늘로 보고,
+   * 아니면 오늘부터 가장 가까운 그 요일로 넘어갑니다. (서버의 next_weekly_at 과 같은 셈)
+   */
+  function nextWeeklyFrom(days, hour, minute) {
+    var list = repeatDays(days);
     var now = new Date();
-    var target = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hour, minute, 0, 0);
-    var diff = (dow - target.getDay() + 7) % 7;
-    if (diff === 0 && target.getTime() <= now.getTime()) { diff = 7; }
-    target.setDate(target.getDate() + diff);
-    return target;
+    var hh = hour === undefined ? 20 : hour;
+    var mm = minute === undefined ? 0 : minute;
+    var base = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hh, mm, 0, 0);
+    if (list.indexOf(now.getDay()) !== -1 || !list.length) { return base; }
+    for (var i = 1; i <= 7; i++) {
+      var t = new Date(now.getFullYear(), now.getMonth(), now.getDate() + i, hh, mm, 0, 0);
+      if (list.indexOf(t.getDay()) !== -1) { return t; }
+    }
+    return base;
+  }
+  /** 카드에 보여 줄 시각 — 매주 반복은 요일·시간으로 다음 예정 시각을 다시 계산합니다 */
+  function eventMoment(ev) {
+    var base = new Date(ev && ev.starts_at);
+    if (!ev || !ev.repeat_weekly) { return base; }
+    var days = repeatDays(ev.repeat_weekdays);
+    if (!days.length) { return base; }
+    var hh = isNaN(base.getTime()) ? 20 : base.getHours();
+    var mm = isNaN(base.getTime()) ? 0 : base.getMinutes();
+    return nextWeeklyFrom(days, hh, mm);
+  }
+  /** 오늘 열리는 문파컨텐츠인가 — 1회성은 오늘 날짜, 매주 반복은 오늘 요일이 들어 있으면 오늘 */
+  function isTodayEvent(ev) {
+    if (!ev) { return false; }
+    if (ev.repeat_weekly) {
+      return repeatDays(ev.repeat_weekdays).indexOf(new Date().getDay()) !== -1;
+    }
+    var at = new Date(ev.starts_at);
+    if (isNaN(at.getTime())) { return false; }
+    return dayKey(at) === dayKey(new Date());
   }
   function ddayOf(date) {
     var diff = Math.round((dayStart(date) - dayStart(new Date())) / 86400000);
@@ -309,7 +353,7 @@
   }
 
   /* ---------- 글 수정 권한 ----------
-     공지 · 일정 · 쿠폰: 문주(만들기·지우기와 같은 권한)
+     공지 · 문파컨텐츠 · 쿠폰: 문주(만들기·지우기와 같은 권한)
      공략: 올린 본인 또는 운영진(삭제와 같은 권한)
      앨범: 올린 본인 또는 운영진 — 글만 고칩니다(사진은 그대로)
      자리비움: 수정 없음 — 기간·이유를 바꾸려면 지우고 다시 등록합니다. */
@@ -331,7 +375,9 @@
     if (code === 'PGRST202'
         || msg.indexOf('Could not find the function') !== -1
         || msg.indexOf('이 기능이 아직') !== -1) {
-      var hint = '서버에 글 수정 기능이 아직 준비되지 않았어요. SQL Editor 에서 supabase/migration-edit-posts.sql 을 한 번 실행해 주세요.';
+      var which = S.eventPending ? 'supabase/migration-clan-contents.sql' : 'supabase/migration-edit-posts.sql';
+      S.eventPending = false;
+      var hint = '서버에 이 기능이 아직 준비되지 않았어요. SQL Editor 에서 ' + which + ' 을(를) 한 번 실행해 주세요.';
       toast(hint);
       return hint;
     }
@@ -342,9 +388,12 @@
      체험 모드 데이터
      ============================================================ */
   function trialEventDate(ev) {
-    if (ev.type === 'weekly') { return nextWeekday(ev.weekday, ev.hour, ev.minute); }
+    if (ev.repeat_weekly || ev.type === 'weekly') {
+      var days = repeatDays(ev.repeat_weekdays || [ev.weekday]);
+      return nextWeeklyFrom(days.length ? days : [6], ev.hour, ev.minute);
+    }
     var d = addDays(ev.days || 0);
-    d.setHours(ev.hour, ev.minute, 0, 0);
+    d.setHours(ev.hour === undefined ? 20 : ev.hour, ev.minute || 0, 0, 0);
     return d;
   }
 
@@ -385,7 +434,7 @@
       };
     });
 
-    S.events = D.events.map(function (ev, i) {
+    S.events = mapEvents(D.events.map(function (ev, i) {
       return {
         id: 'e' + i,
         title: ev.title,
@@ -393,9 +442,11 @@
         tag: ev.tag,
         note: ev.note,
         starts_at: trialEventDate(ev).toISOString(),
-        ends_at: null
+        ends_at: null,
+        repeat_weekly: !!ev.repeat_weekly,
+        repeat_weekdays: ev.repeat_weekly ? repeatDays(ev.repeat_weekdays) : []
       };
-    }).sort(function (a, b) { return new Date(a.starts_at) - new Date(b.starts_at); });
+    }));
 
     S.coupons = D.coupons.map(function (c, i) {
       return { id: 'cp' + i, code: c.code, title: c.title, reward: c.reward, until: c.until, tone: c.tone };
@@ -658,12 +709,7 @@
           S.noticeRows = rows || [];
         }, function () { S.noticeRows = []; }),
         DB.listEvents().then(function (rows) {
-          S.events = (rows || []).map(function (e) {
-            return {
-              id: e.id, title: e.title, place: e.place || '', tag: e.tag || '모임',
-              note: e.note || '', starts_at: e.starts_at, ends_at: e.ends_at
-            };
-          });
+          S.events = mapEvents(rows);
         }, function () { S.events = []; }),
         DB.listCoupons().then(function (rows) {
           S.coupons = (rows || []).map(function (c) {
@@ -697,19 +743,12 @@
     });
   }
 
-  /** 공지 · 일정은 공개 테이블에서 읽고, 작성자 닉네임은 문파원 목록으로 맞춥니다. */
+  /** 공지 · 문파컨텐츠는 공개 테이블에서 읽고, 작성자 닉네임은 문파원 목록으로 맞춥니다. */
   function reloadClanContent() {
     return Promise.all([
       DB.listGuides().then(function (rows) { S.guides = (rows || []).map(mapGuide); }, function () {}),
       DB.listNotices().then(function (rows) { S.noticeRows = rows || []; }, function () {}),
-      DB.listEvents().then(function (rows) {
-        S.events = (rows || []).map(function (e) {
-          return {
-            id: e.id, title: e.title, place: e.place || '', tag: e.tag || '모임',
-            note: e.note || '', starts_at: e.starts_at, ends_at: e.ends_at
-          };
-        });
-      }, function () {})
+      DB.listEvents().then(function (rows) { S.events = mapEvents(rows); }, function () {})
     ]).then(function () {
       S.notices = (S.noticeRows || []).map(mapNotice);
     });
@@ -1034,7 +1073,7 @@
           openModal(modalTitle('문주가 되셨어요 🪷') +
             '<p class="lightbox__meta">아직 문주가 없던 연못이라, 첫 가입자이신 ' + esc(nick) + ' 님이 자동으로 문주가 되었어요.</p>' +
             '<div class="privacy" style="margin-top:14px">' +
-            '<p>· 홈에서 공지 · 일정 · 쿠폰을 만들고 지울 수 있어요.</p>' +
+            '<p>· 홈에서 공지 · 문파컨텐츠 · 쿠폰을 만들고 지울 수 있어요.</p>' +
             '<p>· 문파원 탭에서 직위 변경 · 내보내기 · 차단을 할 수 있어요.</p>' +
             '<p>· 내정보의 <b>문파 관리</b>에서 초대 코드를 확인하고 바꿀 수 있어요.</p>' +
             '<p>· 처음 초대 코드는 <b>YEONMOT</b> 이에요. 문파원을 들이기 전에 새 코드로 바꿔 두세요.</p>' +
@@ -1237,6 +1276,36 @@
     return html;
   }
 
+  /**
+   * 오늘의 문파컨텐츠 — 오늘 열리는 것(1회성은 오늘 날짜, 매주 반복은 오늘 요일)만 홈 위쪽에.
+   * 하나도 없으면 아무것도 그리지 않습니다.
+   */
+  function todayBar() {
+    var today = S.events.filter(isTodayEvent).sort(function (a, b) {
+      return eventMoment(a) - eventMoment(b);
+    });
+    if (!today.length) { return ''; }
+
+    var html = '<section class="today" id="today-contents" aria-labelledby="today-contents-title">' +
+      '<p class="today__head"><span class="today__eyebrow" id="today-contents-title">🔥 오늘의 문파컨텐츠</span>' +
+      '<span class="today__more" aria-hidden="true">문파컨텐츠로 가기</span></p>' +
+      '<div class="today__list">';
+    today.forEach(function (ev) {
+      var when = eventMoment(ev);
+      var repeat = !!ev.repeat_weekly && repeatDays(ev.repeat_weekdays).length > 0;
+      html += '<button type="button" class="today__item" data-jump="sec-events" aria-controls="sec-events">' +
+        '<span class="today__time">오늘 ' + timeLabel(when) + '</span>' +
+        '<span class="today__body">' +
+        '<span class="today__title">' + esc(ev.title) +
+        (repeat ? '<span class="today__weekly">매주</span>' : '') + '</span>' +
+        '<span class="today__meta">' + esc(ev.place || '장소 미정') +
+        (ev.tag ? ' · ' + esc(ev.tag) : '') + '</span>' +
+        '</span></button>';
+    });
+    html += '</div></section>';
+    return html;
+  }
+
   /** 바로가기 → 해당 섹션으로 부드럽게 스크롤 · 잠깐 테두리로 알려 줍니다 */
   function jumpToSection(btn) {
     var target = document.getElementById(btn.getAttribute('data-jump'));
@@ -1293,6 +1362,9 @@
     /* 바로가기 — 통계 카드 아래 · 공지 위에서 섹션으로 부드럽게 내려갑니다 */
     html += shortcutBar();
 
+    /* 오늘의 문파컨텐츠 — 오늘 열리는 것만 위쪽에 크게 (없으면 통째로 숨김) */
+    html += todayBar();
+
     /* 공지 */
     html += '<section class="section" id="sec-notices" aria-labelledby="home-notice-title">' +
       '<div class="section__head"><h3 class="section__title" id="home-notice-title">공지</h3>' +
@@ -1337,31 +1409,38 @@
     });
     html += '</section>';
 
-    /* 일정 */
+    /* 문파컨텐츠 (예전 이름: 모임 일정) */
     html += '<section class="section" id="sec-events" aria-labelledby="home-event-title">' +
-      '<div class="section__head"><h3 class="section__title" id="home-event-title">모임 일정</h3>' +
-      '<span class="section__hadd">' + (admin ? '<button type="button" class="tool tool--add" data-add="event">+ 일정 추가</button>' : '') +
-      '<span class="section__more">다가오는 일정</span></span></div>';
+      '<div class="section__head"><h3 class="section__title" id="home-event-title">문파컨텐츠</h3>' +
+      '<span class="section__hadd">' + (admin ? '<button type="button" class="tool tool--add" data-add="event">+ 문파컨텐츠 추가</button>' : '') +
+      '<span class="section__more">다가오는 문파컨텐츠</span></span></div>';
 
     if (!S.events.length) {
-      html += '<div class="empty">아직 잡힌 일정이 없어요.' + (admin ? ' 위의 <b>+ 일정 추가</b>로 첫 모임을 잡아 보세요.' : '') + '</div>';
+      html += '<div class="empty">아직 올라온 문파컨텐츠가 없어요.' + (admin ? ' 위의 <b>+ 문파컨텐츠 추가</b>로 첫 컨텐츠를 남겨 보세요.' : '') + '</div>';
     } else {
       html += '<div class="events">';
       S.events.forEach(function (ev) {
-        var date = new Date(ev.starts_at);
+        var days = repeatDays(ev.repeat_weekdays);
+        var repeat = !!ev.repeat_weekly && days.length > 0;
+        var when = eventMoment(ev);
+        var date = isNaN(when.getTime()) ? new Date(ev.starts_at) : when;
         var dd = ddayOf(date);
-        html += '<article class="event">' +
+        html += '<article class="event' + (repeat ? ' event--weekly' : '') + '">' +
           '<div class="event__main">' +
           '<div class="event__date"><span class="event__d">' + date.getDate() + '</span>' +
           '<span class="event__m">' + (date.getMonth() + 1) + '월 · ' + WEEKDAYS[date.getDay()] + '</span></div>' +
           '<div class="event__info"><div class="event__title">' + esc(ev.title) + '</div>' +
-          '<div class="event__meta"><span>' + timeLabel(ev.starts_at) + '</span><span>·</span><span>' + esc(ev.place || '장소 미정') + '</span></div>' +
+          '<div class="event__meta">' +
+          (repeat
+            ? '<span class="event__weekly">매주</span><span>' + esc(weekdaysLabel(days)) + ' ' + timeLabel(when) + '</span>'
+            : '<span>' + timeLabel(ev.starts_at) + '</span>') +
+          '<span>·</span><span>' + esc(ev.place || '장소 미정') + '</span></div>' +
           (ev.note ? '<div class="event__meta"><span>' + esc(ev.note) + '</span></div>' : '') +
           '</div>' +
           '<span class="event__dday' + (dd === '오늘' || dd === '내일' ? ' is-soon' : '') + '">' + dd + '</span>' +
           '</div>' +
           (canEditEvent() ? '<div class="item-tools">' +
-            (isAdmin() ? '<button type="button" class="tool tool--danger" data-del-event="' + esc(ev.id) + '">일정 삭제</button>' : '') +
+            (isAdmin() ? '<button type="button" class="tool tool--danger" data-del-event="' + esc(ev.id) + '">문파컨텐츠 삭제</button>' : '') +
             '<button type="button" class="tool tool--edit" data-edit-event="' + esc(ev.id) + '">수정</button></div>' : '') +
           '</article>';
       });
@@ -1477,9 +1556,9 @@
 
     html += '<section class="section"><div class="privacy"><strong>이 연못에 대해</strong>' +
       (isLive()
-        ? '<p>연못 문파원이 함께 쓰는 공간이에요. 공지 · 일정 · 쿠폰은 문주가, 채팅 · 앨범 · 공략 · 자리비움은 문파원 모두가 채웁니다.</p>' +
+        ? '<p>연못 문파원이 함께 쓰는 공간이에요. 공지 · 문파컨텐츠 · 쿠폰은 문주가, 채팅 · 앨범 · 공략 · 자리비움은 문파원 모두가 채웁니다.</p>' +
           '<p>이름 · 전화번호 · 이메일은 받지 않아요. 닉네임과 PIN 만 쓰고, PIN 은 되돌릴 수 없는 암호로만 저장돼요.</p>'
-        : '<p>연못을 위한 작은 커뮤니티 앱의 체험 모드예요. 공지 · 일정 · 쿠폰 · 공략 · 자리비움 · 앨범 · 대화는 예시로 채워져 있습니다.</p>' +
+        : '<p>연못을 위한 작은 커뮤니티 앱의 체험 모드예요. 공지 · 문파컨텐츠 · 쿠폰 · 공략 · 자리비움 · 앨범 · 대화는 예시로 채워져 있습니다.</p>' +
           '<p>입력한 닉네임과 기록은 이 기기에만 저장돼요.</p>') +
       '</div></section>';
 
@@ -2388,7 +2467,7 @@
   }
 
   /* ============================================================
-     관리자: 공지 · 일정 · 쿠폰
+     관리자: 공지 · 문파컨텐츠 · 쿠폰
      ============================================================ */
   function confirmDeleteNotice(id) {
     var n = S.notices.filter(function (x) { return x.id === id; })[0];
@@ -2416,11 +2495,11 @@
 
   function confirmDeleteEvent(id) {
     var ev = S.events.filter(function (x) { return x.id === id; })[0];
-    confirmAction('일정을 지울까요?', '“' + (ev ? ev.title : '일정') + '”이 목록에서 사라져요.', '지우기', function () {
+    confirmAction('문파컨텐츠를 지울까요?', '“' + (ev ? ev.title : '문파컨텐츠') + '”가 목록에서 사라져요.', '지우기', function () {
       return DB.admin.deleteEvent(id).then(function () {
         S.events = S.events.filter(function (x) { return x.id !== id; });
         renderHome();
-        toast('일정을 지웠어요.');
+        toast('문파컨텐츠를 지웠어요.');
       });
     });
   }
@@ -2553,12 +2632,24 @@
     return (rows || []).map(function (ev) {
       return {
         id: ev.id, title: ev.title, place: ev.place || '', tag: ev.tag || '모임',
-        note: ev.note || '', starts_at: ev.starts_at, ends_at: ev.ends_at
+        note: ev.note || '', starts_at: ev.starts_at, ends_at: ev.ends_at,
+        repeat_weekly: !!ev.repeat_weekly,
+        repeat_weekdays: ev.repeat_weekly ? repeatDays(ev.repeat_weekdays) : []
       };
-    }).sort(function (a, b) { return new Date(a.starts_at) - new Date(b.starts_at); });
+    }).sort(function (a, b) { return eventMoment(a) - eventMoment(b); });
   }
 
-  /** 일정 잡기 · 수정 — event 를 넘기면 기존 값이 채워진 수정 창이 열립니다 */
+  /** 폼이 만든 값 → 카드·목록이 쓰는 모양 (체험 모드에서 서버 없이 바로 반영) */
+  function eventFromPayload(payload, id) {
+    return {
+      id: id, title: payload.title, place: payload.place || '', tag: payload.tag || '모임',
+      note: payload.note || '', starts_at: payload.startsAt, ends_at: null,
+      repeat_weekly: !!payload.repeatWeekly,
+      repeat_weekdays: payload.repeatWeekly ? repeatDays(payload.repeatWeekdays) : []
+    };
+  }
+
+  /** 문파컨텐츠 추가 · 수정 — event 를 넘기면 기존 값(한 번/매주·요일·시간)이 채워진 창이 열립니다 */
   function openEventForm(event) {
     var editing = !!event;
     var value = editing ? toLocalInput(event.starts_at) : '';
@@ -2568,13 +2659,36 @@
       now.setHours(now.getHours() + 1);
       value = toLocalInput(now.toISOString());
     }
+    var base = new Date(value);
+    if (isNaN(base.getTime())) { base = new Date(); }
+    var picked = editing ? repeatDays(event.repeat_weekdays) : [];
+    var weekly = editing && !!event.repeat_weekly && picked.length > 0;
+    var timeValue = pad(base.getHours()) + ':' + pad(base.getMinutes());
 
-    openModal(modalTitle(editing ? '일정 수정' : '일정 잡기') +
+    /* 요일 칩 — 화면에는 월 … 일 순서, 값은 0=일 … 6=토 (DB 와 같습니다) */
+    var chips = '';
+    [1, 2, 3, 4, 5, 6, 0].forEach(function (d) {
+      var on = picked.indexOf(d) !== -1;
+      chips += '<button type="button" class="daychip' + (on ? ' is-on' : '') + '" data-day="' + d + '"' +
+        ' aria-pressed="' + (on ? 'true' : 'false') + '">' + WEEKDAYS[d] + '</button>';
+    });
+
+    openModal(modalTitle(editing ? '문파컨텐츠 수정' : '문파컨텐츠 추가') +
       '<form class="form" id="event-form" novalidate style="margin-top:12px">' +
-      '<label class="field"><span class="field__label">일정 이름</span>' +
+      '<label class="field"><span class="field__label">문파컨텐츠 이름</span>' +
       '<input class="field__input" type="text" id="event-title" maxlength="60" placeholder="예) 주간 보스 원정" value="' + esc(event ? event.title : '') + '"></label>' +
-      '<label class="field"><span class="field__label">날짜와 시간</span>' +
+      '<div class="seg seg--repeat" role="tablist" aria-label="반복 설정" id="event-repeat">' +
+      '<button type="button" class="seg__btn' + (weekly ? '' : ' is-active') + '" role="tab" aria-selected="' + (weekly ? 'false' : 'true') + '" id="event-repeat-off" data-repeat="off" aria-controls="event-once">한 번만</button>' +
+      '<button type="button" class="seg__btn' + (weekly ? ' is-active' : '') + '" role="tab" aria-selected="' + (weekly ? 'true' : 'false') + '" id="event-repeat-on" data-repeat="on" aria-controls="event-weekly">매주 반복</button>' +
+      '</div>' +
+      '<label class="field" id="event-once"' + (weekly ? ' hidden' : '') + '><span class="field__label">날짜와 시간</span>' +
       '<input class="field__input" type="datetime-local" id="event-start" value="' + value + '"></label>' +
+      '<div class="field" id="event-weekly"' + (weekly ? '' : ' hidden') + '>' +
+      '<span class="field__label">반복할 요일 (여러 개 고를 수 있어요)</span>' +
+      '<div class="daychips" id="event-days" role="group" aria-label="반복할 요일">' + chips + '</div>' +
+      '<label class="field field--time"><span class="field__label">시작 시간</span>' +
+      '<input class="field__input field__input--time" type="time" id="event-time" value="' + timeValue + '" step="300"></label>' +
+      '</div>' +
       '<label class="field"><span class="field__label">모이는 곳</span>' +
       '<input class="field__input" type="text" id="event-place" maxlength="60" placeholder="예) 연못 입구 · 3구역" value="' + esc(event ? event.place : '') + '"></label>' +
       '<div class="form__row">' +
@@ -2584,26 +2698,103 @@
       '<input class="field__input" type="text" id="event-note" maxlength="200" placeholder="예) 21:20까지 모여주세요" value="' + esc(event ? event.note : '') + '"></label>' +
       '</div>' +
       '<p class="form__error" id="event-error" role="alert" hidden></p>' +
-      '<button type="submit" class="btn btn--primary">' + (editing ? '일정 고치기' : '일정 올리기') + '</button>' +
+      '<button type="submit" class="btn btn--primary">' + (editing ? '문파컨텐츠 고치기' : '문파컨텐츠 남기기') + '</button>' +
       '</form>');
 
-    $('#event-form').addEventListener('submit', function (e) {
+    var form = $('#event-form');
+    var errEl = $('#event-error');
+    var onceBox = $('#event-once');
+    var weeklyBox = $('#event-weekly');
+    var mode = weekly ? 'on' : 'off';
+
+    function pickedDays() {
+      return $$('#event-days .daychip').filter(function (chip) {
+        return chip.classList.contains('is-on');
+      }).map(function (chip) { return Number(chip.getAttribute('data-day')); })
+        .sort(function (a, b) { return a - b; });
+    }
+
+    function setMode(next) {
+      if (next === mode) { return; }
+      /* 한 번만 ↔ 매주 반복 — 고른 시간이 사라지지 않게 서로 넘겨 줍니다 */
+      if (next === 'on') {
+        var once = new Date($('#event-start').value);
+        if (!isNaN(once.getTime())) {
+          $('#event-time').value = pad(once.getHours()) + ':' + pad(once.getMinutes());
+        }
+        if (!pickedDays().length) { $('#event-time').value = $('#event-time').value || '21:00'; }
+      } else {
+        var parts = String($('#event-time').value || '').split(':');
+        var hh = Number(parts[0]);
+        var mm = Number(parts[1]);
+        if (parts.length < 2 || isNaN(hh) || isNaN(mm)) { hh = 21; mm = 0; }
+        var days = pickedDays();
+        $('#event-start').value = toLocalInput(nextWeeklyFrom(days.length ? days : [1], hh, mm).toISOString());
+      }
+      mode = next;
+      $$('#event-repeat [data-repeat]').forEach(function (btn) {
+        var on = btn.getAttribute('data-repeat') === next;
+        if (on) { btn.classList.add('is-active'); } else { btn.classList.remove('is-active'); }
+        btn.setAttribute('aria-selected', on ? 'true' : 'false');
+      });
+      onceBox.hidden = next === 'on';
+      weeklyBox.hidden = next !== 'on';
+      errEl.hidden = true;
+    }
+
+    $$('#event-repeat [data-repeat]').forEach(function (btn) {
+      btn.addEventListener('click', function () { setMode(btn.getAttribute('data-repeat')); });
+    });
+
+    $$('#event-days .daychip').forEach(function (chip) {
+      chip.addEventListener('click', function () {
+        var on = chip.classList.toggle('is-on');
+        chip.setAttribute('aria-pressed', on ? 'true' : 'false');
+        errEl.hidden = true;
+      });
+    });
+
+    form.addEventListener('submit', function (e) {
       e.preventDefault();
       var title = $('#event-title').value.trim();
-      var startRaw = $('#event-start').value;
-      var errEl = $('#event-error');
-      if (!title || !startRaw) {
-        errEl.textContent = '일정 이름과 날짜·시간을 정해 주세요.';
+      var weeklyOn = mode === 'on';
+      var days = pickedDays();
+      if (!title) {
+        errEl.textContent = '문파컨텐츠 이름을 적어 주세요.';
         errEl.hidden = false;
         return;
       }
-      var start = new Date(startRaw);
-      if (isNaN(start.getTime())) {
-        errEl.textContent = '날짜와 시간을 다시 확인해 주세요.';
-        errEl.hidden = false;
-        return;
+      var start = null;
+      if (weeklyOn) {
+        if (!days.length) {
+          errEl.textContent = '매주 반복은 요일을 하나 이상 골라 주세요.';
+          errEl.hidden = false;
+          return;
+        }
+        var parts = String($('#event-time').value || '').split(':');
+        var hh = Number(parts[0]);
+        var mm = Number(parts[1]);
+        if (parts.length < 2 || parts[0] === '' || parts[1] === '' || isNaN(hh) || isNaN(mm)) {
+          errEl.textContent = '매주 반복할 시작 시간을 정해 주세요.';
+          errEl.hidden = false;
+          return;
+        }
+        start = nextWeeklyFrom(days, hh, mm);
+      } else {
+        var startRaw = $('#event-start').value;
+        if (!startRaw) {
+          errEl.textContent = '문파컨텐츠 이름과 날짜·시간을 정해 주세요.';
+          errEl.hidden = false;
+          return;
+        }
+        start = new Date(startRaw);
+        if (isNaN(start.getTime())) {
+          errEl.textContent = '날짜와 시간을 다시 확인해 주세요.';
+          errEl.hidden = false;
+          return;
+        }
       }
-      var btn = $('button[type="submit"]', this);
+      var btn = $('button[type="submit"]', form);
       btn.disabled = true;
 
       var payload = {
@@ -2611,23 +2802,31 @@
         startsAt: start.toISOString(),
         place: $('#event-place').value.trim(),
         tag: $('#event-tag').value.trim() || '모임',
-        note: $('#event-note').value.trim()
+        note: $('#event-note').value.trim(),
+        repeatWeekly: weeklyOn,
+        repeatWeekdays: weeklyOn ? days : []
       };
 
       if (!isLive()) {
-        S.events = mapEvents(S.events.map(function (ev) {
-          return ev.id === event.id ? Object.assign({}, ev, payload) : ev;
-        }));
+        if (editing) {
+          S.events = mapEvents(S.events.map(function (ev) {
+            return ev.id === event.id ? eventFromPayload(payload, ev.id) : ev;
+          }));
+        } else {
+          S.events = mapEvents(S.events.concat([eventFromPayload(payload, 'e' + Date.now())]));
+        }
         closeModal();
-        toast('일정을 고쳤어요.');
+        toast(editing ? '문파컨텐츠를 고쳤어요.' : '문파컨텐츠를 남겼어요.');
         renderHome();
         return;
       }
 
+      S.eventPending = true;
       var job = editing ? DB.admin.updateEvent(event.id, payload) : DB.admin.createEvent(payload);
       job.then(function () {
+        S.eventPending = false;
         closeModal();
-        toast(editing ? '일정을 고쳤어요.' : '일정을 올렸어요.');
+        toast(editing ? '문파컨텐츠를 고쳤어요.' : '문파컨텐츠를 남겼어요.');
         return DB.listEvents().then(function (rows) { S.events = mapEvents(rows); });
       }).then(function () {
         renderHome();
