@@ -420,10 +420,27 @@
     deleteOwnAlbumPost: function (postId) {
       return withToken(function (t) { return rpc('delete_own_album_post', { p_token: t, p_post_id: postId }); });
     },
+    /** 앨범 글 고치기 — 올린 본인 또는 운영진(서버가 확인). 사진은 그대로, 글만 바뀝니다. */
+    updateAlbumPostText: function (postId, caption) {
+      return withToken(function (t) {
+        return rpc('update_album_post_text', { p_token: t, p_post_id: postId, p_caption: caption || '' });
+      });
+    },
 
     /* --- 쿠폰 --- */
     listCoupons: function () {
       return withToken(function (t) { return rpc('list_coupons', { p_token: t }); });
+    },
+    /** 쿠폰 수정 — 문주만(만들기·지우기와 같은 권한). 코드·유효기간만 바뀝니다. */
+    updateCoupon: function (couponId, payload) {
+      return withToken(function (t) {
+        return rpc('update_coupon', {
+          p_token: t,
+          p_coupon_id: couponId,
+          p_code: payload.code,
+          p_expires_on: payload.expiresOn || null
+        });
+      });
     },
 
     /* --- 공략 (유튜브 영상) ---
@@ -439,6 +456,14 @@
     },
     deleteGuide: function (guideId) {
       return withToken(function (t) { return rpc('delete_guide', { p_token: t, p_guide_id: guideId }); });
+    },
+    /** 공략 수정 — 올린 본인 또는 운영진(서버가 확인). 제목·유튜브 주소를 바꿉니다. */
+    updateGuide: function (guideId, title, youtubeUrl) {
+      return withToken(function (t) {
+        return rpc('update_guide', {
+          p_token: t, p_guide_id: guideId, p_title: title, p_youtube_url: youtubeUrl
+        });
+      });
     },
 
     /* --- 문파원 자리비움 ---
@@ -524,6 +549,14 @@
       deleteNotice: function (noticeId) {
         return withToken(function (t) { return rpc('admin_delete_notice', { p_token: t, p_notice_id: noticeId }); });
       },
+      updateNotice: function (noticeId, title, body, tag, pinned) {
+        return withToken(function (t) {
+          return rpc('admin_update_notice', {
+            p_token: t, p_notice_id: noticeId, p_title: title, p_body: body,
+            p_tag: tag || '공지', p_pinned: !!pinned
+          });
+        });
+      },
       createEvent: function (payload) {
         return withToken(function (t) {
           return rpc('admin_create_event', {
@@ -539,6 +572,20 @@
       },
       deleteEvent: function (eventId) {
         return withToken(function (t) { return rpc('admin_delete_event', { p_token: t, p_event_id: eventId }); });
+      },
+      updateEvent: function (eventId, payload) {
+        return withToken(function (t) {
+          return rpc('admin_update_event', {
+            p_token: t,
+            p_event_id: eventId,
+            p_title: payload.title,
+            p_starts_at: payload.startsAt,
+            p_place: payload.place === undefined ? null : payload.place,
+            p_tag: payload.tag || null,
+            p_note: payload.note === undefined ? null : payload.note,
+            p_ends_at: payload.endsAt || null
+          });
+        });
       },
       createCoupon: function (payload) {
         return withToken(function (t) {

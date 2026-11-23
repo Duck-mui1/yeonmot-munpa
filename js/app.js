@@ -174,6 +174,27 @@
     var m = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
     return m ? (Number(m[2]) + '.' + m[3]) : String(value || '');
   }
+  /** ISO 시각 → <input type="datetime-local"> 값 (기기 시간대 그대로) */
+  function toLocalInput(value) {
+    var d = new Date(value);
+    if (isNaN(d.getTime())) { return ''; }
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
+      'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+  /** 쿠폰의 마지막 날 → <input type="date"> 값 (체험 예시는 '12.31' 같은 짧은 표기) */
+  function couponDateValue(coupon) {
+    if (!coupon) { return ''; }
+    var iso = String(coupon.expires_on || '').slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) { return iso; }
+    var m = String(coupon.until || '').match(/^(\d{1,2})\.(\d{1,2})$/);
+    if (!m) { return ''; }
+    var now = new Date();
+    var date = new Date(now.getFullYear(), Number(m[1]) - 1, Number(m[2]));
+    if (date.getTime() < dayStart(now)) {
+      date = new Date(now.getFullYear() + 1, Number(m[1]) - 1, Number(m[2]));
+    }
+    return dayKey(date);
+  }
   /** 자리비움 배지 — 오늘이 기간 안이면 '자리비움 중', 아직이면 '예정' */
   function absenceState(absence) {
     var today = dayKey(new Date());
@@ -285,6 +306,34 @@
     if (!isLive() || !guide) { return false; }
     if (myRole() === 'admin' || myRole() === 'officer') { return true; }
     return !!guide.created_by && guide.created_by === myId();
+  }
+
+  /* ---------- 글 수정 권한 ----------
+     공지 · 일정 · 쿠폰: 문주(만들기·지우기와 같은 권한)
+     공략: 올린 본인 또는 운영진(삭제와 같은 권한)
+     앨범: 올린 본인 또는 운영진 — 글만 고칩니다(사진은 그대로)
+     자리비움: 수정 없음 — 기간·이유를 바꾸려면 지우고 다시 등록합니다. */
+  function canEditNotice() { return !isLive() || isAdmin(); }
+  function canEditEvent() { return !isLive() || isAdmin(); }
+  function canEditCoupon() { return !isLive() || isAdmin(); }
+  function canEditGuide(guide) { return !isLive() || canDeleteGuide(guide); }
+  function canEditAlbum(item) {
+    if (!item) { return false; }
+    if (!isLive()) { return true; }
+    if (myRole() === 'admin' || myRole() === 'officer') { return true; }
+    return !!item.author_id && item.author_id === myId();
+  }
+
+  /** 수정 RPC 가 아직 서버에 없을 때(마이그레이션 전) — 알아듣기 쉬운 안내로 바꿉니다 */
+  function editErrorHint(err) {
+    var msg = errorMessage(err);
+    var code = String(err && err.code);
+    if (code === 'PGRST202'
+        || msg.indexOf('Could not find the function') !== -1
+        || msg.indexOf('이 기능이 아직') !== -1) {
+      return '서버에 글 수정 기능이 아직 준비되지 않았어요. SQL Editor 에서 supabase/migration-edit-posts.sql 을 한 번 실행해 주세요.';
+    }
+    return msg;
   }
 
   /* ============================================================
@@ -1162,6 +1211,46 @@
   /* ============================================================
      홈
      ============================================================ */
+  /** 홈 바로가기 4버튼 — 공지 · 공략 · 쿠폰 · 자리비움 (각 섹션 개수 표시) */
+  function shortcutBar() {
+    var items = [
+      { target: 'sec-notices', label: '공지', count: S.notices.length,
+        icon: '<path d="M12 4a5.2 5.2 0 0 0-5.2 5.2c0 4.1-1.6 5.5-1.6 5.5h13.6s-1.6-1.4-1.6-5.5A5.2 5.2 0 0 0 12 4z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M10.2 18a2 2 0 0 0 3.6 0" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>' },
+      { target: 'sec-guides', label: '공략', count: S.guides.length,
+        icon: '<circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10.2 8.7 16.2 12l-6 3.3z" fill="currentColor"/>' },
+      { target: 'sec-coupons', label: '쿠폰', count: S.coupons.length,
+        icon: '<path d="M4 8.5A1.5 1.5 0 0 1 5.5 7h13A1.5 1.5 0 0 1 20 8.5v1.9a1.9 1.9 0 0 0 0 3.7v1.9A1.5 1.5 0 0 1 18.5 17h-13A1.5 1.5 0 0 1 4 15.5v-1.9a1.9 1.9 0 0 0 0-3.7z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M12 9.2v5.6" stroke="currentColor" stroke-width="1.4" stroke-dasharray="1.4 1.8" stroke-linecap="round"/>' },
+      { target: 'sec-absences', label: '자리비움', count: S.absences.length,
+        icon: '<path d="M15.6 4.7a8 8 0 1 0 3.7 12.4 6.3 6.3 0 0 1-3.7-12.4z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>' }
+    ];
+    var html = '<nav class="shortcuts" aria-label="홈 바로가기">';
+    items.forEach(function (it) {
+      html += '<button type="button" class="shortcut" data-jump="' + it.target + '" aria-controls="' + it.target + '">' +
+        '<span class="shortcut__icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="17" height="17" focusable="false">' + it.icon + '</svg></span>' +
+        '<span class="shortcut__label">' + esc(it.label) + '</span>' +
+        '<span class="shortcut__count' + (it.count ? '' : ' is-zero') + '">' + fmtNum(it.count) + '</span>' +
+        '</button>';
+    });
+    html += '</nav>';
+    return html;
+  }
+
+  /** 바로가기 → 해당 섹션으로 부드럽게 스크롤 · 잠깐 테두리로 알려 줍니다 */
+  function jumpToSection(btn) {
+    var target = document.getElementById(btn.getAttribute('data-jump'));
+    if (!target) { return; }
+    $$('.shortcut', $('#home-body')).forEach(function (b) { b.classList.remove('is-active'); });
+    btn.classList.add('is-active');
+    if (typeof target.scrollIntoView === 'function') {
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+    target.classList.add('is-flash');
+    window.setTimeout(function () {
+      target.classList.remove('is-flash');
+      btn.classList.remove('is-active');
+    }, 1300);
+  }
+
   function renderHome() {
     if (!S.ready || !S.clan) {
       $('#home-body').innerHTML = '<div class="empty">연못을 불러오는 중이에요…</div>';
@@ -1199,8 +1288,11 @@
       '<div class="stat"><strong>+' + fmtNum(clan.new_members_7d) + '</strong><span>새 문파원</span></div>' +
       '</div>';
 
+    /* 바로가기 — 통계 카드 아래 · 공지 위에서 섹션으로 부드럽게 내려갑니다 */
+    html += shortcutBar();
+
     /* 공지 */
-    html += '<section class="section" aria-labelledby="home-notice-title">' +
+    html += '<section class="section" id="sec-notices" aria-labelledby="home-notice-title">' +
       '<div class="section__head"><h3 class="section__title" id="home-notice-title">공지</h3>' +
       '<span class="section__hadd">' + (admin ? '<button type="button" class="tool tool--add" data-add="notice">+ 공지 추가</button>' : '') +
       '<span class="section__more">' + S.notices.length + '개</span></span></div>';
@@ -1234,15 +1326,17 @@
         '<svg viewBox="0 0 24 24" width="15" height="15" focusable="false"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
         '</span></button>' +
         '<div class="notice__body" id="notice-body-' + esc(n.id) + '">' + body + '</div>' +
-        (admin ? '<div class="item-tools"><button type="button" class="tool" data-pin="' + esc(n.id) + '" data-pinned="' + (n.pinned ? '1' : '0') + '">' +
-          (n.pinned ? '고정 해제' : '고정') + '</button>' +
-          '<button type="button" class="tool tool--danger" data-del-notice="' + esc(n.id) + '">삭제</button></div>' : '') +
+        (canEditNotice() ? '<div class="item-tools">' +
+          (isAdmin() ? '<button type="button" class="tool" data-pin="' + esc(n.id) + '" data-pinned="' + (n.pinned ? '1' : '0') + '">' +
+            (n.pinned ? '고정 해제' : '고정') + '</button>' +
+            '<button type="button" class="tool tool--danger" data-del-notice="' + esc(n.id) + '">삭제</button>' : '') +
+          '<button type="button" class="tool tool--edit" data-edit-notice="' + esc(n.id) + '">수정</button></div>' : '') +
         '</article>';
     });
     html += '</section>';
 
     /* 일정 */
-    html += '<section class="section" aria-labelledby="home-event-title">' +
+    html += '<section class="section" id="sec-events" aria-labelledby="home-event-title">' +
       '<div class="section__head"><h3 class="section__title" id="home-event-title">모임 일정</h3>' +
       '<span class="section__hadd">' + (admin ? '<button type="button" class="tool tool--add" data-add="event">+ 일정 추가</button>' : '') +
       '<span class="section__more">다가오는 일정</span></span></div>';
@@ -1264,7 +1358,9 @@
           '</div>' +
           '<span class="event__dday' + (dd === '오늘' || dd === '내일' ? ' is-soon' : '') + '">' + dd + '</span>' +
           '</div>' +
-          (admin ? '<div class="item-tools"><button type="button" class="tool tool--danger" data-del-event="' + esc(ev.id) + '">일정 삭제</button></div>' : '') +
+          (canEditEvent() ? '<div class="item-tools">' +
+            (isAdmin() ? '<button type="button" class="tool tool--danger" data-del-event="' + esc(ev.id) + '">일정 삭제</button>' : '') +
+            '<button type="button" class="tool tool--edit" data-edit-event="' + esc(ev.id) + '">수정</button></div>' : '') +
           '</article>';
       });
       html += '</div>';
@@ -1272,7 +1368,7 @@
     html += '</section>';
 
     /* 쿠폰 */
-    html += '<section class="section" aria-labelledby="home-coupon-title">' +
+    html += '<section class="section" id="sec-coupons" aria-labelledby="home-coupon-title">' +
       '<div class="section__head"><h3 class="section__title" id="home-coupon-title">도깨비의 세계 쿠폰</h3>' +
       '<span class="section__hadd">' + (admin ? '<button type="button" class="tool tool--add" data-add="coupon">+ 쿠폰 추가</button>' : '') +
       '<span class="section__more">옆으로 넘겨보세요</span></span></div>';
@@ -1294,7 +1390,9 @@
           '<div class="coupon__code"><span>' + esc(c.code) + '</span>' +
           '<button type="button" class="coupon__copy" data-copy="' + esc(c.code) + '">복사</button></div>' +
           '<p class="coupon__until">게임 내 쿠폰 등록창에 입력해 보세요</p>' +
-          (admin ? '<div class="item-tools"><button type="button" class="tool tool--danger" data-del-coupon="' + esc(c.id) + '">쿠폰 삭제</button></div>' : '') +
+          (canEditCoupon() ? '<div class="item-tools">' +
+            (isAdmin() ? '<button type="button" class="tool tool--danger" data-del-coupon="' + esc(c.id) + '">쿠폰 삭제</button>' : '') +
+            '<button type="button" class="tool tool--edit" data-edit-coupon="' + esc(c.id) + '">수정</button></div>' : '') +
           '</article>';
       });
       html += '</div>';
@@ -1303,7 +1401,7 @@
     html += '</section>';
 
     /* 공략 — 유튜브 영상 2×2 */
-    html += '<section class="section" aria-labelledby="home-guide-title">' +
+    html += '<section class="section" id="sec-guides" aria-labelledby="home-guide-title">' +
       '<div class="section__head"><h3 class="section__title" id="home-guide-title">공략</h3>' +
       '<span class="section__hadd">' + (isLive() ? '<button type="button" class="tool tool--add" data-add="guide">+ 공략 추가</button>' : '') +
       '<span class="section__more">' + (S.guides.length ? S.guides.length + '개' : '영상으로 보기') + '</span></span></div>';
@@ -1327,6 +1425,8 @@
           '<span class="guide__title">' + esc(g.title) + '</span>' +
           (g.youtube_url ? '</a>' : '</div>') +
           (canDeleteGuide(g) ? '<button type="button" class="guide__del" data-del-guide="' + esc(g.id) + '" aria-label="공략 삭제">×</button>' : '') +
+          (canEditGuide(g) ? '<button type="button" class="guide__edit" data-edit-guide="' + esc(g.id) + '" aria-label="공략 수정">' +
+            '<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" focusable="false"><path d="M4 20h4.2L19 9.2a2.1 2.1 0 0 0-3-3L5.2 17 4 20z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg></button>' : '') +
           '</div>';
       });
       html += '</div>';
@@ -1340,8 +1440,8 @@
     }
     html += '</section>';
 
-    /* 문파원 자리비움 — 잠시 연못을 비우는 문파원 알림 */
-    html += '<section class="section" aria-labelledby="home-absence-title">' +
+    /* 문파원 자리비움 — 잠시 연못을 비우는 문파원 알림 (수정 없음 — 지우고 다시 등록) */
+    html += '<section class="section" id="sec-absences" aria-labelledby="home-absence-title">' +
       '<div class="section__head"><h3 class="section__title" id="home-absence-title">문파원 자리비움</h3>' +
       '<span class="section__hadd">' + (isLive() ? '<button type="button" class="tool tool--add" data-add="absence">+ 자리비움 등록</button>' : '') +
       '<span class="section__more">' + (S.absences.length ? S.absences.length + '건' : '지금은 모두 함께') + '</span></span></div>';
@@ -1436,6 +1536,45 @@
         e.preventDefault();
         e.stopPropagation();
         confirmDeleteGuide(btn.getAttribute('data-del-guide'));
+      });
+    });
+
+    /* 바로가기 · 글 수정 — 누를 수 있는 사람에게만 버튼이 그려져 있습니다 */
+    $$('[data-jump]', $('#home-body')).forEach(function (btn) {
+      btn.addEventListener('click', function () { jumpToSection(btn); });
+    });
+
+    $$('[data-edit-notice]', $('#home-body')).forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var id = btn.getAttribute('data-edit-notice');
+        var notice = S.notices.filter(function (x) { return x.id === id; })[0];
+        if (notice) { openNoticeForm(notice); }
+      });
+    });
+
+    $$('[data-edit-event]', $('#home-body')).forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var id = btn.getAttribute('data-edit-event');
+        var event = S.events.filter(function (x) { return x.id === id; })[0];
+        if (event) { openEventForm(event); }
+      });
+    });
+
+    $$('[data-edit-coupon]', $('#home-body')).forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var id = btn.getAttribute('data-edit-coupon');
+        var coupon = S.coupons.filter(function (x) { return x.id === id; })[0];
+        if (coupon) { openCouponForm(coupon); }
+      });
+    });
+
+    $$('[data-edit-guide]', $('#home-body')).forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        var id = btn.getAttribute('data-edit-guide');
+        var guide = S.guides.filter(function (x) { return x.id === id; })[0];
+        if (guide) { openGuideForm(guide); }
       });
     });
 
@@ -1857,6 +1996,7 @@
       : (item.image_mime && image !== 'failed' ? '<span class="shot__loading">사진을 불러오는 중…</span>' : ART.scene(item.kind || 'moon'));
 
     var canDelete = isAdmin() || (isLive() && item.author_id && item.author_id === myId());
+    var canEdit = canEditAlbum(item);
     // 글이 있으면 글만, 글 기능 이전에 올린 사진은 제목을 그대로 머리말로 보여 줍니다.
     var heading = item.caption ? '연못의 장면' : (item.title || '연못의 장면');
 
@@ -1870,7 +2010,12 @@
       heartSvg(item.liked) + '<span id="like-text">물결 ' + item.likes + '</span></button>' +
       '<span class="section__more">마음이 닿으면 한 번 눌러주세요</span>' +
       '</div>' +
-      (canDelete ? '<div class="item-tools" style="justify-content:flex-start;margin-top:12px"><button type="button" class="tool tool--danger" id="album-del">이 사진 지우기</button></div>' : '') +
+      ((canEdit || canDelete)
+        ? '<div class="item-tools" style="justify-content:flex-start;margin-top:12px">' +
+          (canEdit ? '<button type="button" class="tool tool--edit" id="album-edit">글 고치기</button>' : '') +
+          (canDelete ? '<button type="button" class="tool tool--danger" id="album-del">이 사진 지우기</button>' : '') +
+          '</div>'
+        : '') +
       '</div>';
     openModal(html);
 
@@ -1904,6 +2049,67 @@
         confirmDeleteAlbum(item.id);
       });
     }
+
+    var edit = $('#album-edit');
+    if (edit) {
+      edit.addEventListener('click', function () { openAlbumTextForm(item); });
+    }
+  }
+
+  /** 앨범 사진 글 고치기 — 사진은 그대로 두고 글만 바꿉니다. 비우면 사진만 남습니다. */
+  function openAlbumTextForm(item) {
+    var LIMIT = 300;
+    var text = albumText(item);
+    openModal(modalTitle('사진 글 고치기') +
+      '<p class="lightbox__meta">사진은 그대로 두고 글만 바꿔요. 글을 비우면 사진만 남습니다.</p>' +
+      '<form class="form" id="album-edit-form" novalidate style="margin-top:14px">' +
+      '<label class="field"><span class="field__label">글 <span class="field__opt">(선택)</span></span>' +
+      '<textarea class="field__input field__textarea" id="album-edit-caption" maxlength="' + LIMIT + '" rows="4" placeholder="남기고 싶은 말이 있으면 적어 주세요. 비워 두면 사진만 남아요.">' + esc(text) + '</textarea>' +
+      '<span class="field__count" id="album-edit-count" aria-live="polite">' + text.length + ' / ' + LIMIT + '</span></label>' +
+      '<p class="form__error" id="album-edit-error" role="alert" hidden></p>' +
+      '<button type="submit" class="btn btn--primary">글 고치기</button>' +
+      '</form>');
+
+    var form = $('#album-edit-form');
+    var captionEl = $('#album-edit-caption');
+    var countEl = $('#album-edit-count');
+    captionEl.addEventListener('input', function () {
+      countEl.textContent = captionEl.value.length + ' / ' + LIMIT;
+    });
+
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var caption = captionEl.value.trim();
+      var errEl = $('#album-edit-error');
+      if (caption.length > LIMIT) {
+        errEl.textContent = '글은 ' + LIMIT + '자까지 쓸 수 있어요.';
+        errEl.hidden = false;
+        return;
+      }
+      var btn = $('button[type="submit"]', form);
+      btn.disabled = true;
+
+      if (!isLive()) {
+        item.caption = caption;
+        item.title = albumTitleFor(caption);
+        closeModal();
+        toast('글을 고쳤어요.');
+        renderAlbum();
+        return;
+      }
+
+      DB.updateAlbumPostText(item.id, caption).then(function (res) {
+        item.caption = (res && res.caption !== undefined) ? res.caption : caption;
+        item.title = (res && res.title !== undefined) ? res.title : albumTitleFor(caption);
+        closeModal();
+        toast('글을 고쳤어요.');
+        renderAlbum();
+      }).catch(function (err) {
+        btn.disabled = false;
+        errEl.textContent = editErrorHint(err);
+        errEl.hidden = false;
+      });
+    });
   }
 
   function openAlbumForm() {
@@ -2281,20 +2487,22 @@
     });
   }
 
-  function openNoticeForm() {
-    openModal(modalTitle('공지 쓰기') +
+  /** 공지 쓰기 · 수정 — notice 를 넘기면 기존 값이 채워진 수정 창이 열립니다 */
+  function openNoticeForm(notice) {
+    var editing = !!notice;
+    openModal(modalTitle(editing ? '공지 수정' : '공지 쓰기') +
       '<form class="form" id="notice-form" novalidate style="margin-top:12px">' +
       '<label class="field"><span class="field__label">제목</span>' +
-      '<input class="field__input" type="text" id="notice-title" maxlength="60" placeholder="예) 연꽃 등불 축제 단체 참가 신청"></label>' +
+      '<input class="field__input" type="text" id="notice-title" maxlength="60" placeholder="예) 연꽃 등불 축제 단체 참가 신청" value="' + esc(notice ? notice.title : '') + '"></label>' +
       '<label class="field"><span class="field__label">내용</span>' +
-      '<textarea class="field__input field__textarea" id="notice-body" rows="6" maxlength="4000" placeholder="문파원에게 전할 이야기를 적어 주세요"></textarea></label>' +
+      '<textarea class="field__input field__textarea" id="notice-body" rows="6" maxlength="4000" placeholder="문파원에게 전할 이야기를 적어 주세요">' + esc(notice ? notice.body : '') + '</textarea></label>' +
       '<div class="form__row">' +
       '<label class="field"><span class="field__label">태그</span>' +
-      '<input class="field__input" type="text" id="notice-tag" maxlength="10" value="공지"></label>' +
-      '<label class="check"><input type="checkbox" id="notice-pinned"> 위에 고정</label>' +
+      '<input class="field__input" type="text" id="notice-tag" maxlength="10" value="' + esc(notice ? (notice.tag || '공지') : '공지') + '"></label>' +
+      '<label class="check"><input type="checkbox" id="notice-pinned"' + (notice && notice.pinned ? ' checked' : '') + '> 위에 고정</label>' +
       '</div>' +
       '<p class="form__error" id="notice-error" role="alert" hidden></p>' +
-      '<button type="submit" class="btn btn--primary">공지 올리기</button>' +
+      '<button type="submit" class="btn btn--primary">' + (editing ? '공지 고치기' : '공지 올리기') + '</button>' +
       '</form>');
 
     $('#notice-form').addEventListener('submit', function (e) {
@@ -2312,43 +2520,69 @@
       var btn = $('button[type="submit"]', this);
       btn.disabled = true;
 
-      DB.admin.createNotice(title, body, tag, pinned).then(function () {
+      var job;
+      if (!isLive()) {
+        S.notices = S.notices.map(function (x) {
+          return x.id === notice.id
+            ? Object.assign({}, x, { title: title, body: body, tag: tag, pinned: pinned })
+            : x;
+        });
+        job = Promise.resolve();
+      } else if (editing) {
+        job = DB.admin.updateNotice(notice.id, title, body, tag, pinned);
+      } else {
+        job = DB.admin.createNotice(title, body, tag, pinned);
+      }
+
+      job.then(function () {
         closeModal();
-        toast('공지를 올렸어요.');
-        return reloadClanContent();
-      }).then(function () {
-        renderHome();
+        toast(editing ? '공지를 고쳤어요.' : '공지를 올렸어요.');
+        if (!isLive()) { renderHome(); return; }
+        return reloadClanContent().then(function () { renderHome(); });
       }).catch(function (err) {
         btn.disabled = false;
-        errEl.textContent = errorMessage(err);
+        errEl.textContent = editErrorHint(err);
         errEl.hidden = false;
       });
     });
   }
 
-  function openEventForm() {
-    var now = new Date();
-    now.setMinutes(0, 0, 0);
-    now.setHours(now.getHours() + 1);
-    var value = now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate()) +
-      'T' + pad(now.getHours()) + ':' + pad(now.getMinutes());
+  function mapEvents(rows) {
+    return (rows || []).map(function (ev) {
+      return {
+        id: ev.id, title: ev.title, place: ev.place || '', tag: ev.tag || '모임',
+        note: ev.note || '', starts_at: ev.starts_at, ends_at: ev.ends_at
+      };
+    }).sort(function (a, b) { return new Date(a.starts_at) - new Date(b.starts_at); });
+  }
 
-    openModal(modalTitle('일정 잡기') +
+  /** 일정 잡기 · 수정 — event 를 넘기면 기존 값이 채워진 수정 창이 열립니다 */
+  function openEventForm(event) {
+    var editing = !!event;
+    var value = editing ? toLocalInput(event.starts_at) : '';
+    if (!value) {
+      var now = new Date();
+      now.setMinutes(0, 0, 0);
+      now.setHours(now.getHours() + 1);
+      value = toLocalInput(now.toISOString());
+    }
+
+    openModal(modalTitle(editing ? '일정 수정' : '일정 잡기') +
       '<form class="form" id="event-form" novalidate style="margin-top:12px">' +
       '<label class="field"><span class="field__label">일정 이름</span>' +
-      '<input class="field__input" type="text" id="event-title" maxlength="60" placeholder="예) 주간 보스 원정"></label>' +
+      '<input class="field__input" type="text" id="event-title" maxlength="60" placeholder="예) 주간 보스 원정" value="' + esc(event ? event.title : '') + '"></label>' +
       '<label class="field"><span class="field__label">날짜와 시간</span>' +
       '<input class="field__input" type="datetime-local" id="event-start" value="' + value + '"></label>' +
       '<label class="field"><span class="field__label">모이는 곳</span>' +
-      '<input class="field__input" type="text" id="event-place" maxlength="60" placeholder="예) 연못 입구 · 3구역"></label>' +
+      '<input class="field__input" type="text" id="event-place" maxlength="60" placeholder="예) 연못 입구 · 3구역" value="' + esc(event ? event.place : '') + '"></label>' +
       '<div class="form__row">' +
       '<label class="field"><span class="field__label">태그</span>' +
-      '<input class="field__input" type="text" id="event-tag" maxlength="10" value="모임"></label>' +
+      '<input class="field__input" type="text" id="event-tag" maxlength="10" value="' + esc(event ? (event.tag || '모임') : '모임') + '"></label>' +
       '<label class="field"><span class="field__label">메모 (선택)</span>' +
-      '<input class="field__input" type="text" id="event-note" maxlength="200" placeholder="예) 21:20까지 모여주세요"></label>' +
+      '<input class="field__input" type="text" id="event-note" maxlength="200" placeholder="예) 21:20까지 모여주세요" value="' + esc(event ? event.note : '') + '"></label>' +
       '</div>' +
       '<p class="form__error" id="event-error" role="alert" hidden></p>' +
-      '<button type="submit" class="btn btn--primary">일정 올리기</button>' +
+      '<button type="submit" class="btn btn--primary">' + (editing ? '일정 고치기' : '일정 올리기') + '</button>' +
       '</form>');
 
     $('#event-form').addEventListener('submit', function (e) {
@@ -2370,47 +2604,62 @@
       var btn = $('button[type="submit"]', this);
       btn.disabled = true;
 
-      DB.admin.createEvent({
+      var payload = {
         title: title,
         startsAt: start.toISOString(),
         place: $('#event-place').value.trim(),
         tag: $('#event-tag').value.trim() || '모임',
         note: $('#event-note').value.trim()
-      }).then(function () {
+      };
+
+      if (!isLive()) {
+        S.events = mapEvents(S.events.map(function (ev) {
+          return ev.id === event.id ? Object.assign({}, ev, payload) : ev;
+        }));
         closeModal();
-        toast('일정을 올렸어요.');
-        return DB.listEvents().then(function (rows) {
-          S.events = (rows || []).map(function (ev) {
-            return {
-              id: ev.id, title: ev.title, place: ev.place || '', tag: ev.tag || '모임',
-              note: ev.note || '', starts_at: ev.starts_at, ends_at: ev.ends_at
-            };
-          });
-        });
+        toast('일정을 고쳤어요.');
+        renderHome();
+        return;
+      }
+
+      var job = editing ? DB.admin.updateEvent(event.id, payload) : DB.admin.createEvent(payload);
+      job.then(function () {
+        closeModal();
+        toast(editing ? '일정을 고쳤어요.' : '일정을 올렸어요.');
+        return DB.listEvents().then(function (rows) { S.events = mapEvents(rows); });
       }).then(function () {
         renderHome();
       }).catch(function (err) {
         btn.disabled = false;
-        errEl.textContent = errorMessage(err);
+        errEl.textContent = editErrorHint(err);
         errEl.hidden = false;
       });
     });
   }
 
-  function openCouponForm() {
-    openModal(modalTitle('쿠폰 만들기') +
+  function mapCoupons(rows) {
+    return (rows || []).map(function (c) {
+      return { id: c.id, code: c.code, title: c.title, reward: c.reward, expires_on: c.expires_on, tone: c.tone || 'lotus' };
+    });
+  }
+
+  /** 쿠폰 만들기 · 수정 — coupon 을 넘기면 코드·유효기간이 채워진 수정 창이 열립니다 */
+  function openCouponForm(coupon) {
+    var editing = !!coupon;
+    openModal(modalTitle(editing ? '쿠폰 수정' : '쿠폰 만들기') +
       '<form class="form" id="coupon-form" novalidate style="margin-top:12px">' +
       '<label class="field"><span class="field__label">쿠폰 코드</span>' +
-      '<input class="field__input" type="text" id="coupon-code" maxlength="24" placeholder="한글·영문·숫자 3~24자 (예: 연꽃2026)" autocapitalize="characters"></label>' +
+      '<input class="field__input" type="text" id="coupon-code" maxlength="24" placeholder="한글·영문·숫자 3~24자 (예: 연꽃2026)" autocapitalize="characters" value="' + esc(coupon ? coupon.code : '') + '"></label>' +
       '<label class="field"><span class="field__label">유효기간 (선택 · 비우면 기한 없음)</span>' +
-      '<input class="field__input" type="date" id="coupon-expires"></label>' +
+      '<input class="field__input" type="date" id="coupon-expires" value="' + esc(couponDateValue(coupon)) + '"></label>' +
       '<p class="form__error" id="coupon-error" role="alert" hidden></p>' +
-      '<button type="submit" class="btn btn--primary">쿠폰 올리기</button>' +
+      '<button type="submit" class="btn btn--primary">' + (editing ? '쿠폰 고치기' : '쿠폰 올리기') + '</button>' +
       '</form>');
 
     $('#coupon-form').addEventListener('submit', function (e) {
       e.preventDefault();
       var code = $('#coupon-code').value.trim().toUpperCase();
+      var expiresOn = $('#coupon-expires').value || null;
       var errEl = $('#coupon-error');
       if (!/^[가-힣A-Za-z0-9][가-힣A-Za-z0-9_-]{2,23}$/.test(code)) {
         errEl.textContent = '쿠폰 코드는 한글·영문·숫자·-·_ 3~24자로 정해 주세요.';
@@ -2420,25 +2669,37 @@
       var btn = $('button[type="submit"]', this);
       btn.disabled = true;
 
-      DB.admin.createCoupon({
-        code: code,
-        title: COUPON_BLANK,
-        reward: COUPON_BLANK,
-        expiresOn: $('#coupon-expires').value || null,
-        tone: 'lotus'
-      }).then(function () {
-        closeModal();
-        toast('쿠폰을 올렸어요.');
-        return DB.listCoupons().then(function (rows) {
-          S.coupons = (rows || []).map(function (c) {
-            return { id: c.id, code: c.code, title: c.title, reward: c.reward, expires_on: c.expires_on, tone: c.tone || 'lotus' };
-          });
+      if (!isLive()) {
+        S.coupons = S.coupons.map(function (c) {
+          return c.id === coupon.id
+            ? Object.assign({}, c, { code: code, expires_on: expiresOn, until: null })
+            : c;
         });
+        closeModal();
+        toast('쿠폰을 고쳤어요.');
+        renderHome();
+        return;
+      }
+
+      var job = editing
+        ? DB.updateCoupon(coupon.id, { code: code, expiresOn: expiresOn })
+        : DB.admin.createCoupon({
+          code: code,
+          title: COUPON_BLANK,
+          reward: COUPON_BLANK,
+          expiresOn: expiresOn,
+          tone: 'lotus'
+        });
+
+      job.then(function () {
+        closeModal();
+        toast(editing ? '쿠폰을 고쳤어요.' : '쿠폰을 올렸어요.');
+        return DB.listCoupons().then(function (rows) { S.coupons = mapCoupons(rows); });
       }).then(function () {
         renderHome();
       }).catch(function (err) {
         btn.disabled = false;
-        errEl.textContent = errorMessage(err);
+        errEl.textContent = editErrorHint(err);
         errEl.hidden = false;
       });
     });
@@ -2455,17 +2716,21 @@
     return m ? m[1] : null;
   }
 
-  function openGuideForm() {
-    openModal(modalTitle('공략 영상 추가') +
+  /** 공략 영상 추가 · 수정 — guide 를 넘기면 제목·주소가 채워진 수정 창이 열립니다 */
+  function openGuideForm(guide) {
+    var editing = !!guide;
+    // 체험 모드의 예시 카드는 유튜브 주소가 없습니다 — 주소 없이 제목만 고칠 수 있게 둡니다.
+    var sampleOnly = editing && !isLive() && !guide.youtube_url;
+    openModal(modalTitle(editing ? '공략 수정' : '공략 영상 추가') +
       '<p class="lightbox__meta">유튜브 주소를 붙여 넣으면 썸네일과 함께 홈 <b>공략</b>에 2×2로 보여요.</p>' +
       '<form class="form" id="guide-form" novalidate style="margin-top:14px">' +
       '<label class="field"><span class="field__label">유튜브 주소</span>' +
-      '<input class="field__input" type="text" id="guide-url" inputmode="url" autocomplete="off" placeholder="https://youtu.be/… 또는 youtube.com/watch?v=…"></label>' +
+      '<input class="field__input" type="text" id="guide-url" inputmode="url" autocomplete="off" placeholder="https://youtu.be/… 또는 youtube.com/watch?v=…" value="' + esc(guide ? (guide.youtube_url || '') : '') + '"></label>' +
       '<div class="guide-preview" id="guide-preview" hidden></div>' +
       '<label class="field"><span class="field__label">제목</span>' +
-      '<input class="field__input" type="text" id="guide-title" maxlength="80" placeholder="예) 물그림자 2페이즈 물기둥 피하기"></label>' +
+      '<input class="field__input" type="text" id="guide-title" maxlength="80" placeholder="예) 물그림자 2페이즈 물기둥 피하기" value="' + esc(guide ? guide.title : '') + '"></label>' +
       '<p class="form__error" id="guide-error" role="alert" hidden></p>' +
-      '<button type="submit" class="btn btn--primary">공략에 올리기</button>' +
+      '<button type="submit" class="btn btn--primary">' + (editing ? '공략 고치기' : '공략에 올리기') + '</button>' +
       '</form>');
 
     var urlInput = $('#guide-url');
@@ -2496,7 +2761,7 @@
       var vid = youtubeId(url);
       var errEl = $('#guide-error');
 
-      if (!vid) {
+      if (!vid && !sampleOnly) {
         errEl.textContent = '유튜브 주소를 확인해 주세요. youtu.be/… 또는 youtube.com/watch?v=… 를 붙여 넣어 주세요.';
         errEl.hidden = false;
         return;
@@ -2511,15 +2776,31 @@
       var btn = $('button[type="submit"]', this);
       btn.disabled = true;
 
-      DB.createGuide(title, url).then(function () {
+      if (!isLive()) {
+        S.guides = S.guides.map(function (g) {
+          if (g.id !== guide.id) { return g; }
+          return Object.assign({}, g, {
+            title: title,
+            video_id: vid || null,
+            youtube_url: vid ? 'https://www.youtube.com/watch?v=' + vid : null
+          });
+        });
         closeModal();
-        toast('공략 영상을 올렸어요');
+        toast('공략을 고쳤어요.');
+        renderHome();
+        return;
+      }
+
+      var job = editing ? DB.updateGuide(guide.id, title, url) : DB.createGuide(title, url);
+      job.then(function () {
+        closeModal();
+        toast(editing ? '공략을 고쳤어요.' : '공략 영상을 올렸어요');
         return DB.listGuides().then(function (rows) { S.guides = (rows || []).map(mapGuide); });
       }).then(function () {
         renderHome();
       }).catch(function (err) {
         btn.disabled = false;
-        errEl.textContent = errorMessage(err);
+        errEl.textContent = editErrorHint(err);
         errEl.hidden = false;
       });
     });

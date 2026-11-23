@@ -627,6 +627,72 @@ svg { max-width: 100%; }
 }
 .stat span { display: block; margin-top: 2px; font-size: 9.5px; color: var(--muted); }
 
+/* 홈 바로가기 — 통계 아래 · 공지 위에 놓이는 4버튼 (공지 · 공략 · 쿠폰 · 자리비움) */
+.shortcuts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 10px;
+}
+.shortcut {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 8px 3px 7px;
+  border-radius: 14px;
+  border: 1px solid var(--line-cool);
+  background: rgba(8, 36, 38, .5);
+  color: var(--ink-dim);
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: .02em;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: border-color .18s ease, background .18s ease, transform .14s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.shortcut__icon { display: grid; place-items: center; height: 18px; color: var(--jade-soft); opacity: .92; }
+.shortcut__icon svg { width: 17px; height: 17px; }
+.shortcut__label { white-space: nowrap; }
+.shortcut__count {
+  position: absolute;
+  top: 4px;
+  right: 5px;
+  min-width: 14px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: rgba(217, 184, 120, .16);
+  color: var(--gold-soft);
+  font-size: 8.5px;
+  line-height: 14px;
+  text-align: center;
+  letter-spacing: 0;
+}
+.shortcut__count.is-zero { color: var(--muted); background: rgba(147, 183, 174, .1); }
+.shortcut:hover { border-color: rgba(127, 209, 189, .38); }
+.shortcut:active,
+.shortcut.is-active {
+  transform: translateY(1px);
+  border-color: rgba(217, 184, 120, .45);
+  background: rgba(46, 139, 122, .2);
+  color: #f2faf6;
+}
+.shortcut:focus-visible { outline: 2px solid var(--gold-soft); outline-offset: 2px; }
+
+/* 바로가기로 도착한 섹션 — 잠깐 테두리를 비춰 어디로 왔는지 알려 줍니다 */
+.section[id] { scroll-margin-top: 12px; }
+.section.is-flash {
+  border-radius: 18px;
+  animation: sectionFlash 1.25s ease;
+}
+@keyframes sectionFlash {
+  0% { box-shadow: 0 0 0 0 rgba(127, 209, 189, 0); }
+  28% { box-shadow: 0 0 0 3px rgba(127, 209, 189, .26); }
+  100% { box-shadow: 0 0 0 0 rgba(127, 209, 189, 0); }
+}
+
 /* 섹션 */
 .section { margin-top: 24px; }
 .section__head {
@@ -2018,6 +2084,23 @@ body.is-locked { overflow: hidden; }
   background: rgba(4, 20, 22, .72);
   border: 1px solid rgba(242, 162, 185, .45);
 }
+/* 공략 수정 — 삭제 버튼 왼쪽에 연필 */
+.guide__edit {
+  position: absolute;
+  top: 6px;
+  right: 36px;
+  z-index: 3;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #d9f3e8;
+  background: rgba(4, 20, 22, .72);
+  border: 1px solid rgba(127, 209, 189, .45);
+}
+.guide__edit:hover { background: rgba(46, 139, 122, .3); }
+.guide__edit svg { display: block; }
 .guides__more { width: auto; margin-top: 10px; }
 
 .guide-preview {

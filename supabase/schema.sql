@@ -1574,6 +1574,68 @@ begin
 end;
 $fn$;
 
+-- 앨범 사진의 글 고치기 — 올린 본인 또는 운영진(admin·officer). 사진 본문은 건드리지 않습니다.
+--   · 글은 300자까지(만들기와 같은 규칙) · 빈 글로 지우는 것도 됩니다.
+--   · 제목 자리(title)는 예전 사진 호환용입니다 — 글의 첫 줄(40자)로 맞춰 두고, 글을 비우면 함께 비웁니다.
+create or replace function public.update_album_post_text(
+  p_token   text,
+  p_post_id uuid,
+  p_caption text default ''
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $fn$
+declare
+  v_actor   private.session_actor := private.current_member(p_token);
+  v_caption text := btrim(coalesce(p_caption, ''));
+  v_post    private.album_posts;
+  v_title   text;
+begin
+  if char_length(v_caption) > 300 then
+    raise exception '글은 300자까지 쓸 수 있어요.' using errcode = '22023';
+  end if;
+
+  select * into v_post
+    from private.album_posts p
+   where p.id = p_post_id
+     and p.deleted_at is null
+   for update;
+
+  if not found then
+    raise exception '사진을 찾을 수 없어요.' using errcode = 'P0002';
+  end if;
+
+  if v_post.member_id is distinct from v_actor.member_id
+     and v_actor.member_role not in ('admin', 'officer') then
+    raise exception '내가 올린 사진이나 운영진만 글을 고칠 수 있어요.' using errcode = '42501';
+  end if;
+
+  select left(btrim(s), 40) into v_title
+    from regexp_split_to_table(v_caption, E'\n') s
+   where btrim(s) <> ''
+   limit 1;
+  v_title := coalesce(v_title, '');
+
+  update private.album_posts
+     set caption = v_caption,
+         title = v_title
+   where id = p_post_id;
+
+  perform private.log_admin(v_actor.member_id, 'album.update_text', 'album_post', p_post_id::text,
+                            jsonb_build_object('owner', v_post.member_id::text,
+                                               'chars', char_length(v_caption)));
+
+  return jsonb_build_object(
+    'id', p_post_id,
+    'caption', v_caption,
+    'title', v_title,
+    'ok', true
+  );
+end;
+$fn$;
+
 
 -- ===========================================================================
 -- 10. RPC · 관리자(문주)
@@ -2197,6 +2259,60 @@ begin
 end;
 $fn$;
 
+-- 쿠폰 수정 — 문주만(만들기·지우기와 같은 권한) · 코드와 마지막 날만 바뀝니다
+create or replace function public.update_coupon(
+  p_token      text,
+  p_coupon_id  uuid,
+  p_code       text,
+  p_expires_on date default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $fn$
+declare
+  v_actor private.session_actor := private.require_admin(p_token);
+  v_code  text := upper(btrim(coalesce(p_code, '')));
+  v_coupon private.coupons;
+begin
+  if v_code !~ '^[가-힣A-Za-z0-9][가-힣A-Za-z0-9_-]{2,23}$' then
+    raise exception '쿠폰 코드는 한글·영문·숫자·-·_ 3~24자로 정해 주세요.' using errcode = '22023';
+  end if;
+
+  select * into v_coupon
+    from private.coupons c
+   where c.id = p_coupon_id
+     and c.deleted_at is null
+   for update;
+
+  if not found then
+    raise exception '쿠폰을 찾을 수 없어요.' using errcode = 'P0002';
+  end if;
+
+  if exists (select 1 from private.coupons c
+              where upper(c.code) = v_code
+                and c.deleted_at is null
+                and c.id <> p_coupon_id) then
+    raise exception '같은 쿠폰 코드가 이미 있어요.' using errcode = '23505';
+  end if;
+
+  update private.coupons
+     set code = v_code,
+         expires_on = p_expires_on
+   where id = p_coupon_id;
+
+  perform private.log_admin(v_actor.member_id, 'coupon.update', 'coupon', p_coupon_id::text,
+                            jsonb_build_object('code', v_code));
+
+  return jsonb_build_object(
+    'id', p_coupon_id,
+    'code', v_code,
+    'expires_on', p_expires_on
+  );
+end;
+$fn$;
+
 -- 공략 영상 작성 — 로그인한 문파원이면 누구나 (문주·운영진·문파원)
 --   youtu.be/ID · youtube.com/watch?v=ID · youtube.com/shorts/ID · youtube.com/embed/ID · ID(11자)
 --   유튜브 주소에서 영상 ID 를 서버에서도 다시 뽑아 11자만 저장합니다.
@@ -2290,6 +2406,80 @@ begin
                                                'owner', v_guide.created_by::text));
 
   return jsonb_build_object('id', p_guide_id, 'deleted', true);
+end;
+$fn$;
+
+-- 공략 영상 수정 — 올린 본인 또는 운영진(admin·officer)
+--   제목과 유튜브 주소를 바꿉니다. 주소에서 영상 ID 를 다시 뽑아 함께 저장합니다.
+create or replace function public.update_guide(
+  p_token       text,
+  p_guide_id    uuid,
+  p_title       text,
+  p_youtube_url text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $fn$
+declare
+  v_actor private.session_actor := private.current_member(p_token);
+  v_title text := btrim(coalesce(p_title, ''));
+  v_url   text := btrim(coalesce(p_youtube_url, ''));
+  v_video text;
+  v_guide public.guides;
+begin
+  select * into v_guide
+    from public.guides g
+   where g.id = p_guide_id
+     and g.deleted_at is null
+   for update;
+
+  if not found then
+    raise exception '공략을 찾을 수 없어요.' using errcode = 'P0002';
+  end if;
+
+  if v_guide.created_by is distinct from v_actor.member_id
+     and v_actor.member_role not in ('admin', 'officer') then
+    raise exception '내가 올린 공략이나 운영진만 고칠 수 있어요.' using errcode = '42501';
+  end if;
+
+  if char_length(v_title) = 0 or char_length(v_title) > 80 then
+    raise exception '공략 제목은 1~80자로 적어 주세요.' using errcode = '22023';
+  end if;
+
+  if char_length(v_url) = 0 or char_length(v_url) > 300 then
+    raise exception '유튜브 주소를 넣어 주세요.' using errcode = '22023';
+  end if;
+
+  if v_url ~ '^[A-Za-z0-9_-]{11}$' then
+    v_video := v_url;
+    v_url := 'https://www.youtube.com/watch?v=' || v_url;
+  else
+    v_video := substring(v_url from '(?:youtu\.be/|youtube\.com/(?:watch\?(?:.*&)?v=|shorts/|embed/|live/|v/))([A-Za-z0-9_-]{11})');
+  end if;
+
+  if v_video is null then
+    raise exception '유튜브 주소를 알아보지 못했어요. youtu.be/… 또는 youtube.com/watch?v=… 를 붙여 넣어 주세요.' using errcode = '22023';
+  end if;
+
+  update public.guides
+     set title = v_title,
+         youtube_url = v_url,
+         video_id = v_video
+   where id = p_guide_id;
+
+  perform private.log_admin(v_actor.member_id, 'guide.update', 'guide', p_guide_id::text,
+                            jsonb_build_object('by_role', v_actor.member_role,
+                                               'owner', v_guide.created_by::text,
+                                               'video_id', v_video));
+
+  return jsonb_build_object(
+    'id', p_guide_id,
+    'title', v_title,
+    'youtube_url', v_url,
+    'video_id', v_video
+  );
 end;
 $fn$;
 
@@ -2703,13 +2893,13 @@ begin
          'mark_attendance', 'post_chat_message', 'list_chat_messages', 'clan_overview',
          'list_coupons', 'list_album_posts', 'create_album_post', 'get_album_image',
          'list_absences', 'create_absence', 'delete_absence',
-         'toggle_album_like', 'delete_own_album_post', 'list_guides',
+         'toggle_album_like', 'delete_own_album_post', 'update_album_post_text', 'list_guides',
          'admin_update_invite_code', 'admin_get_settings', 'admin_list_members',
          'admin_kick_member', 'admin_ban_member', 'admin_restore_member', 'admin_set_role',
          'admin_create_notice', 'admin_update_notice', 'admin_pin_notice', 'admin_delete_notice',
          'admin_create_event', 'admin_update_event', 'admin_delete_event',
-         'admin_create_coupon', 'admin_delete_coupon',
-         'create_guide', 'delete_guide',
+         'admin_create_coupon', 'update_coupon', 'admin_delete_coupon',
+         'create_guide', 'update_guide', 'delete_guide',
          'admin_delete_chat_message', 'admin_delete_album_post', 'admin_list_audit',
          'bootstrap_admin'
        )
@@ -2774,6 +2964,7 @@ where not exists (select 1 from public.chat_messages c);
 -- drop function if exists public.admin_delete_album_post(text, uuid);
 -- drop function if exists public.admin_delete_chat_message(text, bigint);
 -- drop function if exists public.admin_delete_coupon(text, uuid);
+-- drop function if exists public.update_coupon(text, uuid, text, date);
 -- drop function if exists public.admin_create_coupon(text, text, text, text, date, text);
 -- drop function if exists public.admin_delete_event(text, uuid);
 -- drop function if exists public.admin_update_event(text, uuid, text, timestamptz, text, text, text, timestamptz);
@@ -2790,6 +2981,8 @@ where not exists (select 1 from public.chat_messages c);
 -- drop function if exists public.admin_get_settings(text);
 -- drop function if exists public.admin_update_invite_code(text, text);
 -- drop function if exists public.delete_own_album_post(text, uuid);
+-- drop function if exists public.update_album_post_text(text, uuid, text);
+-- drop function if exists public.update_guide(text, uuid, text, text);
 -- drop function if exists public.toggle_album_like(text, uuid);
 -- drop function if exists public.get_album_image(text, uuid);
 -- drop function if exists public.create_album_post(text, text, text, text, text);
