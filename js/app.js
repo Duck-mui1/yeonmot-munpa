@@ -4102,6 +4102,29 @@
   /* ============================================================
      전역 이벤트
      ============================================================ */
+  /* ============================================================
+     🍡 경단만들기 (미니게임)
+     ============================================================ */
+  /** 상단 헤더의 🍡 미니게임 버튼 → 경단만들기를 엽니다.
+   *  실제 문파에서는 점수 저장·랭킹을 Supabase로, 체험 모드에서는 이 기기 최고 점수만 씁니다. */
+  function openGyeongdan() {
+    var G = window.YM_GYEONGDAN;
+    if (!G) {
+      toast('경단만들기를 불러오지 못했어요. 새로고침해 주세요.');
+      return;
+    }
+    var options = {
+      live: isLive(),
+      nickname: myNick(),
+      onToast: toast
+    };
+    if (isLive()) {
+      options.submitScore = function (score, tier) { return DB.submitGyeongdanScore(score, tier); };
+      options.listRanking = function () { return DB.listGyeongdanRanking(20); };
+    }
+    G.open(options);
+  }
+
   function bindGlobal() {
     $('#modal').addEventListener('click', function (e) {
       var target = e.target;
@@ -4111,6 +4134,8 @@
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape') { closeModal(); }
     });
+    var gameBtn = $('#game-btn');
+    if (gameBtn) { gameBtn.addEventListener('click', openGyeongdan); }
   }
 
   if ('serviceWorker' in navigator && window.location.protocol.indexOf('http') === 0) {

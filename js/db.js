@@ -544,6 +544,25 @@
       }
     },
 
+    /* --- 🍡 경단만들기 ---
+     *  점수는 한 사람당 최고 기록만 남깁니다(서버가 더 높은 점수일 때만 갱신).
+     *  마이그레이션 전(PGRST202)에는 게임은 이 기기 최고 점수로 그대로 돌고, 랭킹 탭에만 안내가 나옵니다.
+     */
+    submitGyeongdanScore: function (score, maxTier) {
+      return withToken(function (t) {
+        return rpc('submit_gyeongdan_score', {
+          p_token: t,
+          p_score: Math.max(0, Math.floor(Number(score) || 0)),
+          p_max_tier: Math.max(1, Math.floor(Number(maxTier) || 1))
+        });
+      });
+    },
+    listGyeongdanRanking: function (limit) {
+      return withToken(function (t) {
+        return rpc('list_gyeongdan_ranking', { p_token: t, p_limit: limit || 20 });
+      });
+    },
+
     /* --- 관리자(문주) --- */
     admin: {
       getSettings: function () {
