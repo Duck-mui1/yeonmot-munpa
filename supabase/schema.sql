@@ -428,7 +428,7 @@ comment on table public.member_absences is
 create table if not exists private.gyeongdan_scores (
   member_id  uuid primary key references private.members (id) on delete cascade,
   best_score integer not null default 0
-               constraint gyeongdan_scores_score_range check (best_score between 0 and 1000000),
+               constraint gyeongdan_scores_score_range check (best_score between 0 and 100000000),
   max_tier   smallint not null default 1
                constraint gyeongdan_scores_tier_range check (max_tier between 1 and 11),
   updated_at timestamptz not null default now()
@@ -2936,7 +2936,7 @@ declare
   v_new   boolean := false;
   v_rank  integer;
 begin
-  if p_score is null or p_score < 0 or p_score > 1000000 then
+  if p_score is null or p_score < 0 or p_score > 100000000 then
     raise exception '점수가 올바르지 않아요.' using errcode = '22023';
   end if;
 

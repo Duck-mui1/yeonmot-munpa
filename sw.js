@@ -1,5 +1,5 @@
 /* 연못 서비스 워커 — 오프라인에서도 연못이 열리도록 */
-var CACHE_NAME = 'yeonmot-munpa-v17';
+var CACHE_NAME = 'yeonmot-munpa-v18';
 var CORE_ASSETS = [
   './',
   './index.html',
