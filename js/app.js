@@ -2066,15 +2066,301 @@
     return '';
   }
 
+  /* ------------------------------------------------------------
+     사진 크게 보기 — 원본 해상도 그대로 띄우고, 확대·축소 / 끌어서 이동
+     ------------------------------------------------------------ */
+  var V = {
+    open: false, scale: 1, base: 1, min: 1, max: 1, x: 0, y: 0,
+    natW: 0, natH: 0, pointers: {}, pinch: null, drag: null,
+    lastTap: 0, hintTimer: 0, bound: false
+  };
+
+  function stageBox() {
+    var stage = $('#viewer-stage');
+    var r = stage.getBoundingClientRect();
+    return { w: r.width, h: r.height, left: r.left, top: r.top };
+  }
+
+  function localPoint(e) {
+    var st = stageBox();
+    return { x: e.clientX - st.left, y: e.clientY - st.top };
+  }
+
+  function openViewer(src, alt) {
+    var el = $('#viewer');
+    if (!src || !el) { return; }
+    var img = $('#viewer-img');
+    V.open = true;
+    V.scale = 1; V.base = 1; V.min = 1; V.max = 1; V.x = 0; V.y = 0;
+    V.natW = 0; V.natH = 0; V.pointers = {}; V.pinch = null; V.drag = null; V.lastTap = 0;
+    img.classList.add('is-loading');
+    img.setAttribute('alt', alt || '연못에 남긴 사진');
+    el.hidden = false;
+    document.body.classList.add('is-locked');
+    bindViewer();
+    showViewerHint();
+
+    var loaded = function () {
+      V.natW = img.naturalWidth || 1;
+      V.natH = img.naturalHeight || 1;
+      img.style.width = V.natW + 'px';
+      img.style.height = V.natH + 'px';
+      img.classList.remove('is-loading');
+      fitViewer(true);
+    };
+    img.onload = loaded;
+    img.onerror = function () {
+      toast('사진을 열지 못했어요.');
+      closeViewer();
+    };
+    img.removeAttribute('style');
+    img.src = src;
+    if (img.complete && img.naturalWidth > 0) { loaded(); }
+  }
+
+  function closeViewer() {
+    var el = $('#viewer');
+    if (!el || el.hidden) { return; }
+    V.open = false;
+    V.pointers = {}; V.pinch = null; V.drag = null;
+    el.hidden = true;
+    var img = $('#viewer-img');
+    img.style.transform = '';
+    img.removeAttribute('src');
+    window.clearTimeout(V.hintTimer);
+    if ($('#modal').hidden) { document.body.classList.remove('is-locked'); }
+  }
+
+  function showViewerHint() {
+    var hint = $('#viewer-hint');
+    if (!hint) { return; }
+    hint.classList.remove('is-fade');
+    window.clearTimeout(V.hintTimer);
+    V.hintTimer = window.setTimeout(function () { hint.classList.add('is-fade'); }, 3600);
+  }
+
+  /** 화면에 꼭 맞는 크기를 기준(base)으로 삼고, 그 기준에서 6배까지 넓힐 수 있게 합니다. */
+  function fitViewer(reset) {
+    var st = stageBox();
+    var pad = 14;
+    var availW = Math.max(60, st.w - pad * 2);
+    var availH = Math.max(60, st.h - pad * 2 - 64);   // 위 조작줄 자리
+    var fit = Math.min(availW / V.natW, availH / V.natH);
+    V.base = Math.min(fit, 1);          // 작은 사진은 늘리지 않고 원래 크기까지만
+    V.min = V.base;
+    V.max = Math.max(V.base * 6, 1);
+    if (reset) { V.scale = fit; V.x = 0; V.y = 0; }
+    V.scale = Math.min(V.max, Math.max(V.min, V.scale));
+    clampViewer();
+    applyViewer();
+    updateViewerButtons();
+  }
+
+  function clampViewer() {
+    var st = stageBox();
+    var mx = Math.max(0, (V.natW * V.scale - st.w) / 2);
+    var my = Math.max(0, (V.natH * V.scale - st.h) / 2);
+    V.x = Math.min(mx, Math.max(-mx, V.x));
+    V.y = Math.min(my, Math.max(-my, V.y));
+  }
+
+  function applyViewer() {
+    var img = $('#viewer-img');
+    /* 그림은 left/top 50%에 놓여 있어 왼쪽 위 모서리가 판 가운데에 있습니다.
+       몸통(그림) 가운데가 (판 가운데 + 이동값)에 오도록 그만큼 되돌립니다. */
+    var tx = V.x - (V.natW * V.scale) / 2;
+    var ty = V.y - (V.natH * V.scale) / 2;
+    img.style.transform = 'translate3d(' + tx + 'px,' + ty + 'px,0) scale(' + V.scale + ')';
+  }
+
+  function updateViewerButtons() {
+    var outBtn = $('#viewer-out');
+    var inBtn = $('#viewer-in');
+    var pill = $('#viewer-fit');
+    if (outBtn) { outBtn.disabled = V.scale <= V.min + 0.0005; }
+    if (inBtn) { inBtn.disabled = V.scale >= V.max - 0.0005; }
+    if (pill) { pill.textContent = V.scale < 0.999 ? '1:1' : '맞춤'; }
+  }
+
+  /** (ax, ay) 지점을 그 자리에 둔 채 배율만 바꿉니다. */
+  function zoomViewerTo(next, ax, ay) {
+    var st = stageBox();
+    var s2 = Math.min(V.max, Math.max(V.min, next));
+    if (Math.abs(s2 - V.scale) < 0.0008) { return; }
+    var cx = st.w / 2, cy = st.h / 2;
+    var px = (ax - cx - V.x) / V.scale;
+    var py = (ay - cy - V.y) / V.scale;
+    V.scale = s2;
+    V.x = ax - cx - px * s2;
+    V.y = ay - cy - py * s2;
+    clampViewer();
+    applyViewer();
+    updateViewerButtons();
+  }
+
+  function viewerCenter() {
+    var st = stageBox();
+    return { x: st.w / 2, y: st.h / 2 };
+  }
+
+  function bindViewer() {
+    if (V.bound) { return; }
+    V.bound = true;
+    var stage = $('#viewer-stage');
+    stage.addEventListener('pointerdown', onViewerDown);
+    stage.addEventListener('pointermove', onViewerMove);
+    stage.addEventListener('pointerup', onViewerUp);
+    stage.addEventListener('pointercancel', onViewerUp);
+    stage.addEventListener('wheel', onViewerWheel, { passive: false });
+    $('#viewer-close').addEventListener('click', closeViewer);
+    $('#viewer-in').addEventListener('click', function () {
+      var c = viewerCenter();
+      zoomViewerTo(V.scale * 1.7, c.x, c.y);
+    });
+    $('#viewer-out').addEventListener('click', function () {
+      var c = viewerCenter();
+      zoomViewerTo(V.scale / 1.7, c.x, c.y);
+    });
+    $('#viewer-fit').addEventListener('click', function () {
+      var c = viewerCenter();
+      if (V.scale < 0.999) { zoomViewerTo(Math.min(V.max, 1), c.x, c.y); }
+      else { zoomViewerTo(V.base, c.x, c.y); }
+    });
+    window.addEventListener('resize', function () {
+      if (V.open && V.natW) { fitViewer(false); }
+    });
+  }
+
+  function onViewerDown(e) {
+    if (e.pointerType === 'mouse' && e.button !== 0) { return; }
+    var p = localPoint(e);
+    V.pointers[e.pointerId] = { x: p.x, y: p.y };
+    try { e.target.setPointerCapture(e.pointerId); } catch (err) { /* 무시 */ }
+    var n = Object.keys(V.pointers).length;
+    if (n === 1) {
+      V.drag = { nx: p.x, ny: p.y, ox: V.x, oy: V.y, moved: 0, t: Date.now() };
+      V.pinch = null;
+    } else if (n === 2) {
+      startPinch();
+    }
+    e.preventDefault();
+  }
+
+  function startPinch() {
+    var ids = Object.keys(V.pointers);
+    var a = V.pointers[ids[0]];
+    var b = V.pointers[ids[1]];
+    var d = Math.sqrt(Math.pow(a.x - b.x, 2) + Math.pow(a.y - b.y, 2)) || 1;
+    V.pinch = { d: d, s: V.scale, x: V.x, y: V.y, mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
+    V.drag = null;
+  }
+
+  function onViewerMove(e) {
+    if (!V.pointers[e.pointerId]) { return; }
+    var p = localPoint(e);
+    V.pointers[e.pointerId] = { x: p.x, y: p.y };
+    var ids = Object.keys(V.pointers);
+
+    if (ids.length >= 2 && V.pinch) {
+      var a = V.pointers[ids[0]];
+      var b = V.pointers[ids[1]];
+      var d = Math.sqrt(Math.pow(a.x - b.x, 2) + Math.pow(a.y - b.y, 2)) || 1;
+      var mx = (a.x + b.x) / 2;
+      var my = (a.y + b.y) / 2;
+      var st = stageBox();
+      var cx = st.w / 2, cy = st.h / 2;
+      var s2 = Math.min(V.max, Math.max(V.min, V.pinch.s * (d / V.pinch.d)));
+      var px = (V.pinch.mx - cx - V.pinch.x) / V.pinch.s;
+      var py = (V.pinch.my - cy - V.pinch.y) / V.pinch.s;
+      V.scale = s2;
+      V.x = mx - cx - px * s2;
+      V.y = my - cy - py * s2;
+      clampViewer();
+      applyViewer();
+      updateViewerButtons();
+      e.preventDefault();
+      return;
+    }
+
+    if (V.drag) {
+      var dx = p.x - V.drag.nx;
+      var dy = p.y - V.drag.ny;
+      V.drag.moved = Math.max(V.drag.moved, Math.abs(dx) + Math.abs(dy));
+      if (V.scale > V.min + 0.0005) {
+        V.x = V.drag.ox + dx;
+        V.y = V.drag.oy + dy;
+        clampViewer();
+        applyViewer();
+      }
+      $('#viewer-stage').classList.add('is-dragging');
+      if (V.drag.moved > 4) { e.preventDefault(); }
+    }
+  }
+
+  function onViewerUp(e) {
+    if (!V.pointers[e.pointerId]) { return; }
+    var p = localPoint(e);
+    var moved = V.drag ? V.drag.moved : 99;
+    var started = V.drag ? V.drag.t : 0;
+    delete V.pointers[e.pointerId];
+    $('#viewer-stage').classList.remove('is-dragging');
+    var ids = Object.keys(V.pointers);
+    if (ids.length === 1) {
+      var q = V.pointers[ids[0]];
+      V.pinch = null;
+      V.drag = { nx: q.x, ny: q.y, ox: V.x, oy: V.y, moved: 99, t: Date.now() };
+      return;
+    }
+    if (ids.length > 1) { return; }
+    V.pinch = null;
+    V.drag = null;
+    if (moved < 8 && Date.now() - started < 340) { tapViewer(p); }
+  }
+
+  /** 한 번 누르면 — 사진 밖은 닫기, 사진 안은 두 번 누르기로 확대/원래대로 */
+  function tapViewer(p) {
+    var st = stageBox();
+    var dw = V.natW * V.scale;
+    var dh = V.natH * V.scale;
+    var left = st.w / 2 + V.x - dw / 2;
+    var top = st.h / 2 + V.y - dh / 2;
+    var onPhoto = p.x >= left && p.x <= left + dw && p.y >= top && p.y <= top + dh;
+    if (!onPhoto) { closeViewer(); return; }
+    var now = Date.now();
+    if (now - V.lastTap < 320) {
+      V.lastTap = 0;
+      if (V.scale > V.base * 1.3) { zoomViewerTo(V.base, p.x, p.y); }
+      else { zoomViewerTo(Math.min(V.max, V.base * 2.6), p.x, p.y); }
+      return;
+    }
+    V.lastTap = now;
+  }
+
+  function onViewerWheel(e) {
+    e.preventDefault();
+    var p = localPoint(e);
+    var f = Math.exp(-e.deltaY * 0.0016);
+    zoomViewerTo(V.scale * f, p.x, p.y);
+  }
+
   function openLightbox(id) {
     var item = findAlbumItem(id);
     if (!item) { return; }
     var image = S.albumImages[item.id];
     var text = albumText(item);
     var alt = text ? text.slice(0, 60) : '연못에 남긴 사진';
-    var art = (image && image !== 'loading' && image !== 'failed')
-      ? '<img class="shot__img" src="' + esc(image) + '" alt="' + esc(alt) + '">'
-      : (item.image_mime && image !== 'failed' ? '<span class="shot__loading">사진을 불러오는 중…</span>' : ART.scene(item.kind || 'moon'));
+    var ready = image && image !== 'loading' && image !== 'failed';
+    var art;
+    if (ready) {
+      /* 사진을 누르면 원본 해상도로 크게 보는 뷰어가 열립니다 */
+      art = '<button type="button" class="lightbox__zoom" id="lightbox-zoom" aria-label="사진 원본 크게 보기">' +
+        '<img class="shot__img" src="' + esc(image) + '" alt="' + esc(alt) + '">' +
+        '<span class="lightbox__zoom-badge">' +
+        '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M15.5 15.5 21 21M10.5 7.5v6M7.5 10.5h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>' +
+        '크게 보기</span></button>';
+    } else {
+      art = (item.image_mime && image !== 'failed' ? '<span class="shot__loading">사진을 불러오는 중…</span>' : ART.scene(item.kind || 'moon'));
+    }
 
     var canDelete = isAdmin() || (isLive() && item.author_id && item.author_id === myId());
     var canEdit = canEditAlbum(item);
@@ -2099,6 +2385,11 @@
         : '') +
       '</div>';
     openModal(html);
+
+    var zoomBtn = $('#lightbox-zoom');
+    if (zoomBtn) {
+      zoomBtn.addEventListener('click', function () { openViewer(image, alt); });
+    }
 
     var likeBtn = $('#like-btn');
     likeBtn.addEventListener('click', function () {
@@ -4132,7 +4423,10 @@
       if (closer) { closeModal(); }
     });
     document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape') { closeModal(); }
+      if (e.key === 'Escape') {
+        if (V.open) { closeViewer(); return; }
+        closeModal();
+      }
     });
     var gameBtn = $('#game-btn');
     if (gameBtn) { gameBtn.addEventListener('click', openGyeongdan); }

@@ -1853,6 +1853,119 @@ svg { max-width: 100%; }
 }
 .modal__close:hover { color: var(--ink); }
 
+/* 문파앨범 사진 크게 보기 — 원본 해상도 그대로, 두 손가락 확대 · 끌어서 이동 */
+.viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  background: #000;
+  touch-action: none;
+  overscroll-behavior: contain;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.viewer[hidden] { display: none; }
+.viewer__stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  touch-action: none;
+  cursor: grab;
+}
+.viewer__stage.is-dragging { cursor: grabbing; }
+.viewer__img {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: block;
+  max-width: none;
+  max-height: none;
+  transform-origin: 0 0;
+  will-change: transform;
+  -webkit-user-drag: none;
+  user-select: none;
+  pointer-events: none;
+}
+.viewer__img.is-loading { opacity: 0; }
+.viewer__bar {
+  position: absolute;
+  top: calc(10px + env(safe-area-inset-top, 0px));
+  right: 12px;
+  left: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+.viewer__bar > * { pointer-events: auto; }
+.viewer__spacer { flex: 1 1 auto; }
+.viewer__btn {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, .22);
+  background: rgba(0, 0, 0, .55);
+  color: #f3f7f5;
+  backdrop-filter: blur(6px);
+  transition: background .18s ease, opacity .18s ease;
+}
+.viewer__btn:hover { background: rgba(30, 42, 44, .8); }
+.viewer__btn:disabled { opacity: .35; }
+.viewer__btn--fit {
+  width: auto;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: .02em;
+}
+.viewer__hint {
+  position: absolute;
+  left: 50%;
+  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 7px 13px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, .5);
+  color: rgba(233, 242, 240, .78);
+  font-size: 10.5px;
+  white-space: nowrap;
+  pointer-events: none;
+  transition: opacity .3s ease;
+}
+.viewer__hint.is-fade { opacity: 0; }
+
+/* 상세 보기 사진 — 누르면 원본 크게 보기 */
+.lightbox__zoom {
+  position: relative;
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
+}
+.lightbox__zoom-badge {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: rgba(2, 16, 18, .72);
+  border: 1px solid rgba(255, 255, 255, .16);
+  color: #eef6f2;
+  font-size: 10.5px;
+  font-weight: 650;
+  pointer-events: none;
+}
+.lightbox__zoom-badge svg { width: 12px; height: 12px; }
+
 body.is-locked { overflow: hidden; }
 
 /* =========================================================

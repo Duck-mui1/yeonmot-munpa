@@ -226,6 +226,27 @@
   </div>
 </div>
 
+<!-- 문파앨범 사진 크게 보기 — 원본 해상도 그대로, 두 손가락 확대·끌어서 이동 -->
+<div class="viewer" id="viewer" hidden>
+  <div class="viewer__stage" id="viewer-stage">
+    <img class="viewer__img" id="viewer-img" alt="">
+  </div>
+  <div class="viewer__bar" role="group" aria-label="사진 크게 보기">
+    <button type="button" class="viewer__btn" id="viewer-close" aria-label="닫기">
+      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+    </button>
+    <span class="viewer__spacer"></span>
+    <button type="button" class="viewer__btn" id="viewer-out" aria-label="축소">
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><path d="M5 12h14" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
+    </button>
+    <button type="button" class="viewer__btn viewer__btn--fit" id="viewer-fit" aria-label="화면에 맞추기">1:1</button>
+    <button type="button" class="viewer__btn" id="viewer-in" aria-label="확대">
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
+    </button>
+  </div>
+  <p class="viewer__hint" id="viewer-hint">두 손가락으로 확대 · 두 번 눌러 크게 · 끌어서 이동</p>
+</div>
+
 <script src="./js/data.js"></script>
 <script src="./js/art.js"></script>
 <!-- Supabase 실시간 구독용 (문파 채팅 · 공지 · 문파컨텐츠). 오프라인에서도 열리도록 저장소에 함께 둡니다. -->
