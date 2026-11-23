@@ -120,7 +120,7 @@ python3 -m http.server 8000
 
 ## 고칠 때
 
-- 화면을 고친 뒤 `sw.js`의 `CACHE_NAME`(지금은 `yeonmot-munpa-v4`)을 올리면, 이미 앱을 설치한 기기도 새 화면을 받습니다.
+- 화면을 고친 뒤 `sw.js`의 `CACHE_NAME`(지금은 `yeonmot-munpa-v5`)을 올리면, 이미 앱을 설치한 기기도 새 화면을 받습니다.
 - 서버 규칙을 바꾸면 `supabase/schema.sql` 도 함께 고치고 SQL Editor에서 다시 실행해야 합니다.
 - 확인:
   ```bash
