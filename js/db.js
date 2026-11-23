@@ -505,8 +505,16 @@
         'select=id,title,body,tag,pinned,author_id,created_at&deleted_at=is.null&order=pinned.desc,created_at.desc&limit=30');
     },
     listEvents: function () {
-      return select('events',
-        'select=id,title,place,tag,note,starts_at,ends_at,repeat_weekly,repeat_weekdays,created_by&deleted_at=is.null&order=starts_at.asc&limit=30');
+      var base = 'select=id,title,place,tag,note,starts_at,ends_at,created_by';
+      var order = '&deleted_at=is.null&order=starts_at.asc&limit=30';
+      return select('events', base + ',repeat_weekly,repeat_weekdays' + order).catch(function (err) {
+        /* 마이그레이션 전 서버 — 새 칸이 없으면 예전 칸만으로 읽어 목록이 비지 않게 합니다 */
+        var msg = String((err && err.message) || '');
+        if (String(err && err.code) === '42703' || msg.indexOf('repeat_weekly') !== -1) {
+          return select('events', base + order);
+        }
+        throw err;
+      });
     },
 
     /* --- 관리자(문주) --- */
