@@ -849,9 +849,9 @@ svg { max-width: 100%; }
 }
 .notice__body p:last-child { margin-bottom: 0; }
 
-/* 오늘의 문파컨텐츠 — 홈 위쪽 하이라이트 (오늘 열리는 것이 있을 때만 그립니다) */
+/* 오늘의 문파컨텐츠 — 홈 맨 위(연못 배너 바로 위) 하이라이트 (오늘 열리는 것이 있을 때만 그립니다) */
 .today {
-  margin-top: 12px;
+  margin: 0 0 12px;
   padding: 11px 12px 10px;
   border-radius: 18px;
   border: 1px solid rgba(240, 217, 165, .38);
@@ -866,6 +866,8 @@ svg { max-width: 100%; }
   from { opacity: 0; transform: translateY(-4px); }
   to { opacity: 1; transform: none; }
 }
+/* 상단 문구 바로 아래에 붙을 때는 위 여백을 살짝 줄여 배너 → 연못 배너 간격과 맞춥니다 */
+.screen__head + .today { margin-top: -6px; }
 .today__head {
   display: flex;
   align-items: center;

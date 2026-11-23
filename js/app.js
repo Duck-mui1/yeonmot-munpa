@@ -1339,6 +1339,9 @@
       '<p class="screen__sub">' + esc(clan.motto || '') + '</p>' +
       '</header>';
 
+    /* 오늘의 문파컨텐츠 — 홈에 들어오자마자 맨 위에서 보이도록 연못 배너 바로 위에 (없으면 통째로 숨김) */
+    html += todayBar();
+
     html += '<section class="hero" aria-label="연못 배너">' + ART.hero() +
       '<div class="hero__pills">' +
       (clan.level ? '<span class="pill pill--gold">문파 레벨 ' + esc(clan.level) + '</span>' : '') +
@@ -1361,9 +1364,6 @@
 
     /* 바로가기 — 통계 카드 아래 · 공지 위에서 섹션으로 부드럽게 내려갑니다 */
     html += shortcutBar();
-
-    /* 오늘의 문파컨텐츠 — 오늘 열리는 것만 위쪽에 크게 (없으면 통째로 숨김) */
-    html += todayBar();
 
     /* 공지 */
     html += '<section class="section" id="sec-notices" aria-labelledby="home-notice-title">' +
