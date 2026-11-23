@@ -147,12 +147,15 @@
     ],
 
     album: [
-      { id: 'a1', title: '달빛 아래 연못', author: '청연', daysAgo: 0, likes: 18, kind: 'moon' },
-      { id: 'a2', title: '첫 주간 보스 클리어', author: '물결따라', daysAgo: 2, likes: 24, kind: 'boss' },
+      { id: 'a1', title: '달빛 아래 연못', author: '청연', daysAgo: 0, likes: 18, kind: 'moon',
+        caption: '밤 11시, 연못 수면이 거울처럼 잠겼어요.\n달빛이 물 위에 한 줄로 내려앉은 걸 보고 한참 서 있었네요.' },
+      { id: 'a2', title: '첫 주간 보스 클리어', author: '물결따라', daysAgo: 2, likes: 24, kind: 'boss',
+        caption: '3트 만에 잡았습니다!' },
       { id: 'a3', title: '잉어 정령과 한 컷', author: '잉어왕', daysAgo: 3, likes: 15, kind: 'koi' },
       { id: 'a4', title: '문파 단체샷', author: '반딧불이', daysAgo: 5, likes: 31, kind: 'group' },
       { id: 'a5', title: '반딧불이 가득한 밤', author: '수련', daysAgo: 6, likes: 12, kind: 'firefly' },
-      { id: 'a6', title: '연꽃 등불 만들기', author: '연꽃등불', daysAgo: 8, likes: 21, kind: 'lantern' },
+      { id: 'a6', title: '연꽃 등불 만들기', author: '연꽃등불', daysAgo: 8, likes: 21, kind: 'lantern',
+        caption: '연분홍 등불 완성! 다음 축제 때 달아 두려고요.' },
       { id: 'a7', title: '새벽 사냥터', author: '달빛조각', daysAgo: 10, likes: 9, kind: 'reed' },
       { id: 'a8', title: '물그림자 처치!', author: '잉어왕', daysAgo: 12, likes: 27, kind: 'wave' }
     ],

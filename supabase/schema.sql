@@ -340,10 +340,12 @@ create unique index if not exists coupons_code_uidx
   where deleted_at is null;
 
 -- 2-9. 문파앨범 : 글(메타) 과 이미지(본문) 를 나눠 목록 조회가 가볍게
+--   · title 은 글 기능 이전(제목 필수 시절)에 올린 사진을 위한 자리입니다 — 지금은 빈 값도 됩니다.
+--   · caption 이 화면에 보이는 '글(선택)' 이며, 비워 두고 사진만 올려도 됩니다.
 create table if not exists private.album_posts (
   id          uuid primary key default gen_random_uuid(),
   member_id   uuid not null references private.members (id) on delete cascade,
-  title       text not null check (char_length(title) between 1 and 40),
+  title       text not null default '' check (char_length(title) <= 40),
   caption     text not null default '' check (char_length(caption) <= 300),
   image_mime  text not null default 'image/jpeg'
                 check (image_mime in ('image/jpeg', 'image/png', 'image/webp')),
@@ -1380,7 +1382,7 @@ begin
 end;
 $fn$;
 
--- 앨범 사진 올리기 (Base64 data URL, 원본 800KB 이하)
+-- 앨범 사진 올리기 (Base64 data URL, 원본 800KB 이하) — 글(설명)은 선택
 create or replace function public.create_album_post(
   p_token      text,
   p_title      text,
@@ -1403,11 +1405,11 @@ declare
   v_post   private.album_posts;
   v_today_count integer;
 begin
-  if char_length(v_title) = 0 or char_length(v_title) > 40 then
-    raise exception '제목은 1~40자로 적어 주세요.' using errcode = '22023';
+  if char_length(v_title) > 40 then
+    raise exception '제목은 40자까지 쓸 수 있어요.' using errcode = '22023';
   end if;
   if char_length(v_caption) > 300 then
-    raise exception '설명은 300자까지 쓸 수 있어요.' using errcode = '22023';
+    raise exception '글은 300자까지 쓸 수 있어요.' using errcode = '22023';
   end if;
 
   if p_image_mime is not null
@@ -1463,6 +1465,7 @@ begin
   return jsonb_build_object(
     'id', v_post.id,
     'title', v_post.title,
+    'caption', v_post.caption,
     'image_mime', v_post.image_mime,
     'image_bytes', v_post.image_bytes,
     'created_at', v_post.created_at

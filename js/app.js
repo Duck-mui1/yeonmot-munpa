@@ -414,7 +414,7 @@
       return {
         id: a.id,
         title: a.title,
-        caption: '',
+        caption: a.caption || '',
         author_id: null,
         author: a.author,
         author_role: '',
@@ -573,7 +573,7 @@
   function mapAlbum(p) {
     return {
       id: p.id,
-      title: p.title,
+      title: p.title || '',
       caption: p.caption || '',
       author_id: p.author_id,
       author: p.author || '문파원',
@@ -1729,19 +1729,21 @@
     items.forEach(function (item) {
       var img = S.albumImages[item.id];
       var ready = img && img !== 'loading' && img !== 'failed';
+      var text = albumText(item);
+      var alt = text ? text.slice(0, 60) : '연못에 남긴 사진';
       var art = ready
-        ? '<img class="shot__img" src="' + esc(img) + '" alt="' + esc(item.title) + '" loading="lazy">'
+        ? '<img class="shot__img" src="' + esc(img) + '" alt="' + esc(alt) + '" loading="lazy">'
         : ((item.image_mime && img !== 'failed')
           ? '<span class="shot__loading">사진을 불러오는 중…</span>'
           : ART.scene(item.kind || 'moon'));
       var canDelete = admin || (isLive() && item.author_id && item.author_id === myId());
       var authorAvatar = memberAvatarById(item.author_id) || item.author_avatar;
-      html += '<div class="shot" role="button" tabindex="0" data-shot="' + esc(item.id) + '" aria-label="' + esc(item.title) + ' 크게 보기">' +
+      html += '<div class="shot" role="button" tabindex="0" data-shot="' + esc(item.id) + '" aria-label="' + esc(text ? text.slice(0, 40) : '사진') + ' 크게 보기">' +
         '<span class="shot__art">' + art + '</span>' +
         (relDayLabel(item.created_at) === relDayLabel(new Date()) ? '<span class="shot__new">NEW</span>' : '') +
         (canDelete ? '<button type="button" class="shot__del" data-del-album="' + esc(item.id) + '" aria-label="사진 지우기">×</button>' : '') +
         '<span class="shot__meta">' +
-        '<span class="shot__title">' + esc(item.title) + '</span>' +
+        (text ? '<span class="shot__title' + (item.caption ? ' shot__title--body' : '') + '">' + esc(text) + '</span>' : '') +
         '<span class="shot__sub">' + '<span class="shot__author">' + avatarSpan('avatar--xs', item.author, authorAvatar) + '<span>' + esc(item.author) + '</span></span>' +
         '<span class="shot__like" data-like-count="' + esc(item.id) + '">' +
         heartSvg(item.liked) + ' ' + item.likes + '</span></span>' +
@@ -1751,7 +1753,7 @@
 
     html += '<div class="section"><button type="button" class="btn btn--ghost" id="upload-btn">사진 올리기</button>' +
       '<p class="section__note">' + (isLive()
-        ? '사진은 긴 변 1,280px · 800KB 이하로 자동으로 줄여서 올라가요. 하루 10장까지 올릴 수 있습니다.'
+        ? '사진은 긴 변 1,280px · 800KB 이하로 자동으로 줄여서 올라가요. 하루 10장까지 올릴 수 있습니다. 글은 안 적어도 돼요.'
         : '체험 모드에서는 사진 올리기가 열려 있지 않아요. 실제 문파로 들어가면 문파원 모두가 올릴 수 있습니다.') +
       '</p></div>';
 
@@ -1806,7 +1808,8 @@
         S.albumImages[item.id] = res.data_url;
         var img = $('[data-shot="' + item.id + '"] .shot__art');
         if (img) {
-          img.innerHTML = '<img class="shot__img" src="' + esc(res.data_url) + '" alt="' + esc(item.title) + '" loading="lazy">';
+          var text = albumText(item);
+          img.innerHTML = '<img class="shot__img" src="' + esc(res.data_url) + '" alt="' + esc(text ? text.slice(0, 60) : '연못에 남긴 사진') + '" loading="lazy">';
         }
       }).catch(function () {
         S.albumImages[item.id] = 'failed';
@@ -1825,19 +1828,41 @@
     return S.album.filter(function (a) { return a.id === id; })[0] || null;
   }
 
+  /** 앨범 카드에 보여 줄 글 — 글이 있으면 글, 없으면 글 기능 이전에 올린 사진의 제목.
+   *  둘 다 없으면 빈 글자를 돌려주고, 화면은 사진·작성자만 그립니다. */
+  function albumText(item) {
+    if (!item) { return ''; }
+    return String(item.caption || item.title || '').replace(/\s+$/, '');
+  }
+
+  /** 서버(구버전 포함)는 제목 1~40자를 요구합니다. 글의 첫 줄을 제목 자리에 함께 보내
+   *  화면에는 글만 보이게 하고, 글 없이 올리는 것은 새 스키마에서만 됩니다. */
+  function albumTitleFor(text) {
+    var lines = String(text || '').split('\n');
+    for (var i = 0; i < lines.length; i += 1) {
+      var line = lines[i].trim();
+      if (line) { return line.slice(0, 40); }
+    }
+    return '';
+  }
+
   function openLightbox(id) {
     var item = findAlbumItem(id);
     if (!item) { return; }
     var image = S.albumImages[item.id];
+    var text = albumText(item);
+    var alt = text ? text.slice(0, 60) : '연못에 남긴 사진';
     var art = (image && image !== 'loading' && image !== 'failed')
-      ? '<img class="shot__img" src="' + esc(image) + '" alt="' + esc(item.title) + '">'
+      ? '<img class="shot__img" src="' + esc(image) + '" alt="' + esc(alt) + '">'
       : (item.image_mime && image !== 'failed' ? '<span class="shot__loading">사진을 불러오는 중…</span>' : ART.scene(item.kind || 'moon'));
 
     var canDelete = isAdmin() || (isLive() && item.author_id && item.author_id === myId());
+    // 글이 있으면 글만, 글 기능 이전에 올린 사진은 제목을 그대로 머리말로 보여 줍니다.
+    var heading = item.caption ? '연못의 장면' : (item.title || '연못의 장면');
 
     var html = '<div class="lightbox">' +
       '<div class="lightbox__art">' + art + '</div>' +
-      modalTitle(item.title) +
+      modalTitle(heading) +
       '<p class="lightbox__meta">' + esc(item.author) + ' · ' + relDayLabel(item.created_at) + ' · 문파앨범</p>' +
       (item.caption ? '<p class="lightbox__caption">' + esc(item.caption) + '</p>' : '') +
       '<div class="lightbox__actions">' +
@@ -1883,33 +1908,40 @@
 
   function openAlbumForm() {
     openModal(modalTitle('사진 올리기') +
-      '<p class="lightbox__meta">스크린샷이나 연못에서 찍은 장면을 남겨 보세요.</p>' +
+      '<p class="lightbox__meta">스크린샷이나 연못에서 찍은 장면을 남겨 보세요. 글은 안 적어도 올라가요.</p>' +
       '<form class="form" id="album-form" novalidate style="margin-top:14px">' +
       '<label class="field"><span class="field__label">사진</span>' +
       '<input class="field__input field__file" type="file" accept="image/jpeg,image/png,image/webp" id="album-file">' +
       '</label>' +
-      '<label class="field"><span class="field__label">제목</span>' +
-      '<input class="field__input" type="text" id="album-title" maxlength="40" placeholder="예) 달빛 아래 연못"></label>' +
-      '<label class="field"><span class="field__label">설명 (선택)</span>' +
-      '<textarea class="field__input field__textarea" id="album-caption" maxlength="300" rows="3" placeholder="어떤 순간이었는지 적어 주세요"></textarea></label>' +
+      '<label class="field"><span class="field__label">글 <span class="field__opt">(선택)</span></span>' +
+      '<textarea class="field__input field__textarea" id="album-caption" maxlength="300" rows="4" placeholder="남기고 싶은 말이 있으면 적어 주세요. 안 적어도 올라가요."></textarea>' +
+      '<span class="field__count" id="album-count" aria-live="polite">0 / 300</span></label>' +
       '<p class="form__error" id="album-error" role="alert" hidden></p>' +
       '<button type="submit" class="btn btn--primary">연못에 남기기</button>' +
       '</form>');
 
     var form = $('#album-form');
+    var captionEl = $('#album-caption');
+    var countEl = $('#album-count');
+    var LIMIT = 300;
+    captionEl.addEventListener('input', function () {
+      countEl.textContent = captionEl.value.length + ' / ' + LIMIT;
+    });
+
     form.addEventListener('submit', function (e) {
       e.preventDefault();
       var fileInput = $('#album-file');
-      var title = $('#album-title').value.trim();
-      var caption = $('#album-caption').value.trim();
+      var caption = captionEl.value.trim();
       var errEl = $('#album-error');
       var file = fileInput.files && fileInput.files[0];
 
-      var problem = '';
-      if (!file) { problem = '사진을 골라 주세요.'; }
-      else if (!title) { problem = '제목을 적어 주세요.'; }
-      if (problem) {
-        errEl.textContent = problem;
+      if (!file) {
+        errEl.textContent = '사진을 골라 주세요.';
+        errEl.hidden = false;
+        return;
+      }
+      if (caption.length > LIMIT) {
+        errEl.textContent = '글은 ' + LIMIT + '자까지 쓸 수 있어요.';
         errEl.hidden = false;
         return;
       }
@@ -1921,7 +1953,7 @@
 
       DB.compressPhoto(file).then(function (photo) {
         btn.textContent = '연못에 남기는 중…';
-        return DB.createAlbumPost(title, photo.dataUrl, caption, photo.mime).then(function (created) {
+        return DB.createAlbumPost(albumTitleFor(caption), photo.dataUrl, caption, photo.mime).then(function (created) {
           if (created && created.id) { S.albumImages[created.id] = photo.dataUrl; }
           return created;
         });
@@ -1935,7 +1967,12 @@
       }).catch(function (err) {
         btn.disabled = false;
         btn.textContent = '연못에 남기기';
-        errEl.textContent = errorMessage(err);
+        var msg = errorMessage(err);
+        // 서버가 아직 글 없는 사진을 받지 않을 때(제목 필수 스키마) — 화면에서는 글로 안내합니다.
+        if (!caption && msg.indexOf('제목') !== -1) {
+          msg = '지금은 글을 한 줄이라도 적어야 사진이 올라가요. 서버 준비가 끝나면 글 없이도 올라가요.';
+        }
+        errEl.textContent = msg;
         errEl.hidden = false;
       });
     });

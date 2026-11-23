@@ -304,6 +304,14 @@ svg { max-width: 100%; }
   color: var(--muted);
   padding-left: 3px;
 }
+.field__opt { color: rgba(147, 183, 174, .72); }
+.field__count {
+  align-self: flex-end;
+  padding-right: 4px;
+  font-size: 9.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
 .field__input {
   width: 100%;
   padding: 12px 14px;
@@ -1089,6 +1097,7 @@ svg { max-width: 100%; }
 .shot__art { display: block; aspect-ratio: 4 / 3; background: #061e21; }
 .shot__art .scene { width: 100%; height: 100%; display: block; }
 .shot__meta {
+  display: block;
   padding: 8px 9px 9px;
   background: linear-gradient(to top, rgba(3, 20, 22, .98), rgba(6, 30, 32, .82));
 }
@@ -1100,6 +1109,19 @@ svg { max-width: 100%; }
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* 앨범에 남긴 글 — 줄바꿈 그대로, 카드에서는 두 줄까지 */
+.shot__title--body {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow: hidden;
+  text-overflow: clip;
+  max-height: 2.9em;
+  font-weight: 600;
+  line-height: 1.45;
 }
 .shot__sub {
   margin-top: 4px;
