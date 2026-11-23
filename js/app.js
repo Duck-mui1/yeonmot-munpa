@@ -2635,7 +2635,7 @@
         // 아직 v4 마이그레이션 전인 서버라면(대리 등록 인자를 모름) 알아보기 쉽게 알려 줍니다
         if ((payload.targetName || payload.targetMemberId) &&
             (String(err && err.code) === 'PGRST202' || msg.indexOf('Could not find') !== -1)) {
-          msg = '지금은 내 자리비움만 등록할 수 있어요. (서버 업데이트가 필요해요) 운영진에게 문의해 주세요.';
+          msg = '지금은 내 자리비움만 등록할 수 있어요. 서버에 v4 마이그레이션(supabase/migration-v4.sql)을 먼저 적용해 주세요.';
         }
         errEl.textContent = msg;
         errEl.hidden = false;
