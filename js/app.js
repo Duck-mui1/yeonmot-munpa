@@ -331,7 +331,9 @@
     if (code === 'PGRST202'
         || msg.indexOf('Could not find the function') !== -1
         || msg.indexOf('이 기능이 아직') !== -1) {
-      return '서버에 글 수정 기능이 아직 준비되지 않았어요. SQL Editor 에서 supabase/migration-edit-posts.sql 을 한 번 실행해 주세요.';
+      var hint = '서버에 글 수정 기능이 아직 준비되지 않았어요. SQL Editor 에서 supabase/migration-edit-posts.sql 을 한 번 실행해 주세요.';
+      toast(hint);
+      return hint;
     }
     return msg;
   }
