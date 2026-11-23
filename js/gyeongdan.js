@@ -25,6 +25,10 @@
   var DEAD_Y = 106;         // 데드라인 — 이 위로 2초 넘게 머물면 게임 오버
   var DEAD_GRACE = 2.0;     // 유예 시간(초)
   var GRAVITY = 1750;
+  /* 보이는 벽은 그릇 안쪽 금선(x=2, x=W-2, y=H-2)입니다. 경단 그림이 그 선에 딱 붙어
+     잘려 보이지 않도록 안쪽으로 살짝 들어온 선을 실제 벽·바닥으로 씁니다. */
+  var WALL = 3;
+  var FLOOR = H - 5;
   var STEP = 1 / 120;       // 물리 고정 스텝
   var SAVE_KEY = 'ym.gyeongdan.save.v1';
   var BEST_KEY = 'ym.gyeongdan.best';
@@ -297,10 +301,10 @@
       b.av *= 0.988;
       if (b.age < 60) { b.age += dt; }
 
-      if (b.x - b.r < 0) { b.x = b.r; if (b.vx < 0) { b.vx = -b.vx * 0.34; } }
-      if (b.x + b.r > W) { b.x = W - b.r; if (b.vx > 0) { b.vx = -b.vx * 0.34; } }
-      if (b.y + b.r > H) {
-        b.y = H - b.r;
+      if (b.x - b.r < WALL) { b.x = WALL + b.r; if (b.vx < 0) { b.vx = -b.vx * 0.34; } }
+      if (b.x + b.r > W - WALL) { b.x = W - WALL - b.r; if (b.vx > 0) { b.vx = -b.vx * 0.34; } }
+      if (b.y + b.r > FLOOR) {
+        b.y = FLOOR - b.r;
         /* 떡처럼 묵직하게 — 바닥 반발은 낮추고 마찰은 세게 */
         if (b.vy > 0) { b.vy = b.vy > 260 ? -b.vy * 0.13 : 0; }
         b.vx *= 0.94;
@@ -458,9 +462,9 @@
     /* 해소 뒤에도 벽·바닥을 벗어나지 않게 한 번 더 */
     for (var i = 0; i < S.bodies.length; i++) {
       var b = S.bodies[i];
-      if (b.x - b.r < -0.5) { b.x = b.r; b.vx = Math.abs(b.vx) * 0.2; }
-      if (b.x + b.r > W + 0.5) { b.x = W - b.r; b.vx = -Math.abs(b.vx) * 0.2; }
-      if (b.y + b.r > H + 0.5) { b.y = H - b.r; if (b.vy > 0) { b.vy *= -0.1; } }
+      if (b.x - b.r < WALL - 0.5) { b.x = WALL + b.r; b.vx = Math.abs(b.vx) * 0.2; }
+      if (b.x + b.r > W - WALL + 0.5) { b.x = W - WALL - b.r; b.vx = -Math.abs(b.vx) * 0.2; }
+      if (b.y + b.r > FLOOR + 0.5) { b.y = FLOOR - b.r; if (b.vy > 0) { b.vy *= -0.1; } }
       /* 아주 느린 속도는 깔끔하게 멈춰 미세한 떨림을 없앱니다 (떡의 무게감) */
       if (Math.abs(b.vx) < 2.5) { b.vx = 0; }
       if (Math.abs(b.vy) < 2.5) { b.vy = 0; }
