@@ -1415,6 +1415,114 @@ svg { max-width: 100%; }
   color: var(--muted);
 }
 
+/* ---------- 앱 설치 안내 (로그인 하단 · 홈 상단 · 내정보) ---------- */
+.install-banner { margin: 0 0 12px; }
+.install-banner--auth { margin: 14px 0 0; }
+.install-banner__inner {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 13px;
+  border-radius: 14px;
+  border: 1px solid rgba(240, 217, 165, .24);
+  background:
+    radial-gradient(120% 140% at 0% 0%, rgba(240, 217, 165, .1), transparent 60%),
+    rgba(7, 40, 43, .68);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, .22);
+}
+.install-banner__icon { flex: none; font-size: 16px; line-height: 1; }
+.install-banner__text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 10.8px;
+  line-height: 1.6;
+  color: var(--ink-dim);
+}
+.install-banner__text b { display: block; margin-bottom: 2px; font-size: 11.8px; color: var(--gold-soft); letter-spacing: .01em; }
+.install-banner__text span { display: block; font-size: 10.2px; color: var(--muted); }
+.install-banner__inner--cta { flex-wrap: wrap; padding-right: 34px; }
+.install-banner__inner--cta .install-banner__text { flex: 1 1 100%; padding-right: 8px; }
+.install-banner__go {
+  flex: 1 1 100%;
+  width: 100%;
+  padding: 11px 14px;
+  font-size: 13px;
+  border-radius: 12px;
+}
+.install-banner__x {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  background: none;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+}
+.install-banner__x:hover { color: var(--ink); background: rgba(127, 209, 189, .1); }
+.install-banner__link {
+  display: block;
+  width: 100%;
+  padding: 11px 13px;
+  border-radius: 13px;
+  border: 1px dashed rgba(127, 209, 189, .24);
+  background: rgba(127, 209, 189, .04);
+  color: var(--muted);
+  font-size: 10.8px;
+  line-height: 1.5;
+  text-align: center;
+  transition: border-color .2s ease, color .2s ease, background .2s ease;
+}
+.install-banner__link:hover { color: var(--jade-soft); border-color: rgba(127, 209, 189, .4); background: rgba(127, 209, 189, .08); }
+
+/* 설치 순서 — 기기 하나만 2~3줄 */
+.install-guide__device {
+  margin: 0 0 10px;
+  font-size: 11px;
+  letter-spacing: .02em;
+  color: var(--gold-soft);
+}
+.install-guide__steps {
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.install-guide__steps li {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 11px;
+  border-radius: 12px;
+  border: 1px solid var(--line-cool);
+  background: rgba(4, 26, 28, .55);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-dim);
+}
+.install-guide__n {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(127, 209, 189, .14);
+  color: var(--jade-soft);
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
 .privacy {
   margin-top: 12px;
   padding: 13px 14px;
@@ -1695,7 +1803,7 @@ body.is-locked { overflow: hidden; }
 .notice.is-open .notice__summary { display: none; }
 
 /* =========================================================
-   프로필 그림 (연못 일러스트 8종 · 내 사진)
+   프로필 그림 (연못 일러스트 9종 · 내 사진)
    ========================================================= */
 .avatar-art { display: block; width: 100%; height: 100%; border-radius: inherit; }
 .avatar__img { display: block; width: 100%; height: 100%; object-fit: cover; border-radius: inherit; }
@@ -1745,7 +1853,7 @@ body.is-locked { overflow: hidden; }
 
 .avatar-presets {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   padding: 12px 14px 2px;
 }
@@ -1766,7 +1874,7 @@ body.is-locked { overflow: hidden; }
   -webkit-tap-highlight-color: transparent;
 }
 .avatar-pick:active { transform: scale(.97); }
-.avatar-pick .avatar-art { width: 44px; height: 44px; border-radius: 12px; box-shadow: 0 3px 10px rgba(0, 0, 0, .3); }
+.avatar-pick .avatar-art { width: 54px; height: 54px; border-radius: 13px; box-shadow: 0 3px 10px rgba(0, 0, 0, .3); }
 .avatar-pick.is-active {
   border-color: rgba(242, 162, 185, .5);
   background: rgba(242, 162, 185, .1);

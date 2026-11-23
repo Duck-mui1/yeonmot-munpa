@@ -71,6 +71,7 @@
     likes: {},
     attendance: null,
     installEvent: null,
+    installHidden: store.get('installHidden', {}) || {},
     firstSendNoted: false,
     realtime: 'off',
     busy: false,
@@ -105,7 +106,7 @@
   }
 
   /* ---------- 프로필 그림 (일러스트 preset: / 내 사진 data:image/) ---------- */
-  var AVATAR_PRESETS = ['lotus', 'koi', 'frog', 'firefly', 'moon', 'leaf', 'turtle', 'lantern'];
+  var AVATAR_PRESETS = ['lotus', 'koi', 'frog', 'firefly', 'moon', 'leaf', 'turtle', 'lantern', 'duck'];
 
   function presetName(value) {
     if (typeof value !== 'string' || value.indexOf('preset:') !== 0) { return null; }
@@ -695,7 +696,6 @@
     bindTabs();
     bindChat();
     bindGlobal();
-    bindInstall();
 
     var settings = store.get('settings', null);
     if (settings && settings.theme === 'moon') { document.documentElement.setAttribute('data-theme', 'moon'); }
@@ -751,6 +751,7 @@
   function showMain(loading) {
     $('#auth-view').hidden = true;
     $('#main-view').hidden = false;
+    renderInstallBanners();
     S.user = S.user || {};
     if (loading && !S.ready) {
       S.ready = false;
@@ -766,6 +767,7 @@
   function showAuth() {
     $('#main-view').hidden = true;
     $('#auth-view').hidden = false;
+    renderInstallBanners();
     window.scrollTo(0, 0);
     $('#auth-view').scrollTop = 0;
   }
@@ -2764,7 +2766,7 @@
       '<p class="profile__hint">연못 등급 Lv.' + (level || '–') + '</p>' +
       '</div></section>';
 
-    /* 프로필 그림 — 연못 일러스트 8종 · 내 사진 · 기본 글자 */
+    /* 프로필 그림 — 연못 일러스트 9종 · 내 사진 · 기본 글자 */
     var currentAvatar = myAvatarValue();
     var presetNow = presetName(currentAvatar);
     var photoNow = isImageAvatar(currentAvatar);
@@ -2811,22 +2813,7 @@
         '</div>';
     }
 
-    html += '<div class="menu-card">' +
-      '<h3 class="menu-card__title">앱으로 쓰기</h3>' +
-      '<button type="button" class="row row--action" id="install-row">' +
-      '<span class="row__icon"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19h14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>' +
-      '<span class="row__text"><span class="row__label">홈 화면에 추가</span>' +
-      '<span class="row__desc" id="install-desc">연못을 앱처럼 열 수 있어요</span></span>' +
-      '<span class="row__chevron" aria-hidden="true"><svg viewBox="0 0 24 24" width="15" height="15" focusable="false"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>' +
-      '</button>' +
-      '<div class="steps" id="install-steps">' +
-      '<h4>안드로이드 (크롬)</h4>' +
-      '<ol><li>오른쪽 위 점 세 개를 눌러요</li><li>“앱 설치” 또는 “홈 화면에 추가”를 골라요</li><li>“설치”를 누르면 홈 화면에 생겨요</li></ol>' +
-      '<h4>아이폰 (사파리)</h4>' +
-      '<ol><li>아래쪽 공유 버튼을 눌러요</li><li>목록에서 “홈 화면에 추가”를 골라요</li><li>오른쪽 위 “추가”를 누르면 끝이에요</li></ol>' +
-      '<p>설치하면 주소창 없이 전체 화면으로 열려요. 한 번 열어두면 연못 배경까지 그대로 기억합니다.</p>' +
-      '</div>' +
-      '</div>';
+    html += '<div class="menu-card" id="install-card">' + installCardHtml() + '</div>';
 
     html += '<div class="menu-card">' +
       '<h3 class="menu-card__title">화면과 알림</h3>' +
@@ -2890,17 +2877,7 @@
     });
 
     $('#rules-row').addEventListener('click', showRules);
-    $('#install-row').addEventListener('click', function () {
-      if (S.installEvent) {
-        S.installEvent.prompt();
-        S.installEvent = null;
-        return;
-      }
-      var steps = $('#install-steps');
-      var open = steps.classList.toggle('is-open');
-      this.setAttribute('aria-expanded', String(open));
-      $('#install-desc').textContent = open ? '아래 순서를 따라 눌러보세요' : '연못을 앱처럼 열 수 있어요';
-    });
+    bindInstallRow();
 
     $('#logout-btn').addEventListener('click', function () {
       openModal(modalTitle('연못을 잠시 떠날까요?') +
@@ -3048,14 +3025,245 @@
   }
 
   /* ============================================================
-     PWA 설치
+     PWA 설치 — 환경에 맞춰 딱 필요한 안내만
      ============================================================ */
+  var INSTALL_MSG_INAPP = '카톡 안에서는 설치가 안 돼요 · 오른쪽 아래 ⋮(또는 ↗) → ‘다른 브라우저로 열기’를 눌러주세요';
+
+  /* 이미 앱(standalone)으로 실행 중인가 */
+  function isStandalone() {
+    try {
+      if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) { return true; }
+    } catch (e) { /* noop */ }
+    return !!(window.navigator && window.navigator.standalone);
+  }
+
+  /* 카톡 · 네이버 · 인스타그램 같은 앱 안의 브라우저인가 */
+  function isInAppBrowser() {
+    var ua = (window.navigator && window.navigator.userAgent) || '';
+    return /KAKAOTALK|NAVER\(inapp|Instagram|FBAN|FBAV|Line\/|DaumApps|WhatsApp|Twitter/i.test(ua);
+  }
+
+  /* 지금 화면에서 할 수 있는 일: standalone | inapp | ready | guide */
+  function installEnv() {
+    if (isStandalone()) { return 'standalone'; }
+    if (isInAppBrowser()) { return 'inapp'; }
+    if (S.installEvent) { return 'ready'; }
+    return 'guide';
+  }
+
+  /* 기기에 맞는 설치 순서 — 딱 2~3줄 */
+  function deviceKind() {
+    var ua = (window.navigator && window.navigator.userAgent) || '';
+    var touchMac = window.navigator && window.navigator.platform === 'MacIntel' && window.navigator.maxTouchPoints > 1;
+    if (/iPhone|iPad|iPod/i.test(ua) || touchMac) { return 'ios'; }
+    if (/SamsungBrowser/i.test(ua)) { return 'samsung'; }
+    if (/Android/i.test(ua)) { return 'chrome'; }
+    return 'desktop';
+  }
+
+  var INSTALL_GUIDE = {
+    inapp: {
+      device: '카톡 · 네이버 · 인스타그램 같은 앱 안',
+      steps: [
+        '오른쪽 아래 ⋮ (아이폰은 ↗)를 눌러요',
+        '“다른 브라우저로 열기”를 골라요',
+        '열린 브라우저에서 다시 설치를 눌러요'
+      ],
+      note: '앱 안의 브라우저에서는 설치 창이 뜨지 않아요.'
+    },
+    ios: {
+      device: '아이폰 · 사파리',
+      steps: [
+        '아래쪽 공유 버튼(네모에 화살표)을 눌러요',
+        '목록에서 “홈 화면에 추가”를 골라요',
+        '오른쪽 위 “추가”를 누르면 끝이에요'
+      ],
+      note: '사파리에서 한 번만 추가하면 앱처럼 열려요.'
+    },
+    samsung: {
+      device: '삼성 인터넷',
+      steps: [
+        '오른쪽 아래 ☰(메뉴)를 눌러요',
+        '“홈 화면에 추가”를 골라요',
+        '“추가”를 누르면 끝이에요'
+      ],
+      note: '설치하면 주소창 없이 전체 화면으로 열려요.'
+    },
+    chrome: {
+      device: '안드로이드 · 크롬',
+      steps: [
+        '오른쪽 위 ⋮를 눌러요',
+        '“앱 설치” 또는 “홈 화면에 추가”를 골라요',
+        '“설치”를 누르면 홈 화면에 생겨요'
+      ],
+      note: '설치 창이 이미 떴다 닫혔다면, 이 순서로 다시 할 수 있어요.'
+    },
+    desktop: {
+      device: '이 브라우저',
+      steps: [
+        '주소창 오른쪽의 설치 아이콘을 눌러요',
+        '“설치”를 골라요',
+        '연못이 앱 창으로 열려요'
+      ],
+      note: '아이폰은 사파리의 공유 버튼으로 추가해요.'
+    }
+  };
+
+  function installGuideHtml(kind) {
+    var g = INSTALL_GUIDE[kind] || INSTALL_GUIDE[deviceKind()] || INSTALL_GUIDE.desktop;
+    var steps = g.steps.map(function (step, i) {
+      return '<li><span class="install-guide__n">' + (i + 1) + '</span><span>' + esc(step) + '</span></li>';
+    }).join('');
+    return modalTitle('홈 화면에 추가하는 방법') +
+      '<p class="install-guide__device">' + esc(g.device) + '</p>' +
+      '<ol class="install-guide__steps" id="install-steps">' + steps + '</ol>' +
+      (g.note ? '<p class="lightbox__meta">' + esc(g.note) + '</p>' : '') +
+      '<div class="lightbox__actions"><button type="button" class="btn btn--ghost" data-close="1">알겠어요</button></div>';
+  }
+
+  function openInstallGuide() {
+    openModal(installGuideHtml(installEnv() === 'inapp' ? 'inapp' : deviceKind()));
+  }
+
+  /* 바로 설치 — 브라우저 설치 창을 그대로 띄운다 */
+  function runInstallPrompt() {
+    var ev = S.installEvent;
+    if (!ev || typeof ev.prompt !== 'function') {
+      openInstallGuide();
+      return;
+    }
+    try { ev.prompt(); } catch (e) { /* noop */ }
+    S.installEvent = null;
+    var choice = ev.userChoice;
+    if (choice && typeof choice.then === 'function') {
+      choice.then(function (result) {
+        toast(result && result.outcome === 'accepted' ? '홈 화면에 추가하고 있어요 📲' : '언제든 다시 설치할 수 있어요');
+      }, function () { /* noop */ });
+    } else {
+      toast('홈 화면에 추가 창을 열었어요 📲');
+    }
+    refreshInstall();
+  }
+
+  var INSTALL_CHEVRON = '<span class="row__chevron" aria-hidden="true"><svg viewBox="0 0 24 24" width="15" height="15" focusable="false"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>';
+  var INSTALL_ICON = '<span class="row__icon"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19h14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>';
+
+  /* 내정보 → 앱으로 쓰기 */
+  function installCardHtml() {
+    var env = installEnv();
+    var head = '<h3 class="menu-card__title">앱으로 쓰기</h3>';
+
+    if (env === 'standalone') {
+      return head +
+        '<div class="row" id="install-row" data-install-state="standalone">' + INSTALL_ICON +
+        '<span class="row__text"><span class="row__label">홈 화면에 추가</span>' +
+        '<span class="row__desc" id="install-desc">이미 앱으로 열려 있어요</span></span>' +
+        '<span class="badge badge--jade">앱으로 실행 중</span></div>';
+    }
+
+    if (env === 'ready') {
+      return head +
+        '<button type="button" class="row row--action" id="install-row" data-install-state="ready">' + INSTALL_ICON +
+        '<span class="row__text"><span class="row__label">📲 앱으로 바로 설치</span>' +
+        '<span class="row__desc" id="install-desc">지금 눌러서 홈 화면에 추가할 수 있어요</span></span>' +
+        INSTALL_CHEVRON + '</button>';
+    }
+
+    var inapp = env === 'inapp';
+    return head +
+      '<button type="button" class="row row--action" id="install-row" data-install-state="' + env + '">' + INSTALL_ICON +
+      '<span class="row__text"><span class="row__label">' + (inapp ? '다른 브라우저로 열어 설치' : '홈 화면에 추가') + '</span>' +
+      '<span class="row__desc" id="install-desc">' + (inapp
+        ? '카톡 안에서는 설치가 안 돼요 · 눌러서 방법 보기'
+        : '눌러서 기기에 맞는 순서 보기') + '</span></span>' +
+      INSTALL_CHEVRON + '</button>';
+  }
+
+  function bindInstallRow() {
+    var row = $('#install-row');
+    if (!row) { return; }
+    row.addEventListener('click', function () {
+      var state = row.getAttribute('data-install-state');
+      if (state === 'ready') { runInstallPrompt(); return; }
+      if (state === 'standalone') { return; }
+      openInstallGuide();
+    });
+  }
+
+  /* 로그인 화면 · 홈 상단 배너 */
+  function installBannerHtml(where) {
+    var env = installEnv();
+    if (env === 'standalone') { return ''; }
+
+    if (env === 'inapp') {
+      if (S.installHidden && S.installHidden.inapp) { return ''; }
+      return '<div class="install-banner__inner">' +
+        '<span class="install-banner__icon" aria-hidden="true">📲</span>' +
+        '<p class="install-banner__text">' + esc(INSTALL_MSG_INAPP) + '</p>' +
+        (where === 'home' ? '<button type="button" class="install-banner__x" data-install-close="inapp" aria-label="안내 닫기">✕</button>' : '') +
+        '</div>';
+    }
+
+    if (env === 'ready') {
+      if (S.installHidden && S.installHidden.ready) { return ''; }
+      return '<div class="install-banner__inner install-banner__inner--cta">' +
+        '<p class="install-banner__text"><b>연못을 홈 화면에 추가해 보세요</b><span>주소창 없이 앱처럼 열려요</span></p>' +
+        '<button type="button" class="btn btn--primary install-banner__go" data-install-go="1">📲 앱으로 바로 설치</button>' +
+        (where === 'home' ? '<button type="button" class="install-banner__x" data-install-close="ready" aria-label="안내 닫기">✕</button>' : '') +
+        '</div>';
+    }
+
+    /* 일반 브라우저 — 설치 창이 자동으로 뜨지 않을 때 */
+    if (where !== 'auth') { return ''; }
+    return '<button type="button" class="install-banner__link" data-install-guide="1">📲 홈 화면에 추가해서 앱처럼 쓰기 · 방법 보기</button>';
+  }
+
+  function fillInstallBanner(host, where) {
+    if (!host) { return; }
+    host.innerHTML = installBannerHtml(where);
+    host.hidden = !host.innerHTML;
+    if (host.hidden) { return; }
+    var close = host.querySelector('[data-install-close]');
+    if (close) {
+      close.addEventListener('click', function () {
+        S.installHidden[close.getAttribute('data-install-close')] = true;
+        store.set('installHidden', S.installHidden);
+        refreshInstall();
+      });
+    }
+    var go = host.querySelector('[data-install-go]');
+    if (go) { go.addEventListener('click', runInstallPrompt); }
+    var guide = host.querySelector('[data-install-guide]');
+    if (guide) { guide.addEventListener('click', openInstallGuide); }
+  }
+
+  function renderInstallBanners() {
+    fillInstallBanner($('#auth-install'), 'auth');
+    fillInstallBanner($('#home-install'), 'home');
+  }
+
+  /* 설치 상태가 바뀔 때 — 배너와 내정보 카드를 함께 갱신 */
+  function refreshInstall() {
+    renderInstallBanners();
+    var card = $('#install-card');
+    if (card) {
+      card.innerHTML = installCardHtml();
+      bindInstallRow();
+    }
+  }
+
   function bindInstall() {
     window.addEventListener('beforeinstallprompt', function (e) {
       e.preventDefault();
       S.installEvent = e;
-      var desc = $('#install-desc');
-      if (desc) { desc.textContent = '지금 바로 앱으로 설치할 수 있어요'; }
+      refreshInstall();
+    });
+    window.addEventListener('appinstalled', function () {
+      S.installEvent = null;
+      S.installHidden = { inapp: true, ready: true };
+      store.set('installHidden', S.installHidden);
+      refreshInstall();
+      toast('연못을 홈 화면에 추가했어요 📲');
     });
   }
 
@@ -3078,6 +3286,9 @@
       navigator.serviceWorker.register('./sw.js').catch(function () { /* offline is optional */ });
     });
   }
+
+  bindInstall();
+  renderInstallBanners();
 
   document.addEventListener('DOMContentLoaded', init);
 })();

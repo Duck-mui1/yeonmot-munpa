@@ -291,14 +291,14 @@
     );
   }
 
-  /* ---------- 프로필 그림 (연못 테마 8종) ----------
+  /* ---------- 프로필 그림 (연못 테마 9종) ----------
    * 128×128 정사각형. 모두 이 앱을 위해 그린 오리지널 SVG 입니다.
    * 저장 값은 'preset:lotus' 처럼 kind 이름만 보내고, 그림은 앱이 그립니다.
    */
-  var AVATAR_KINDS = ['lotus', 'koi', 'frog', 'firefly', 'moon', 'leaf', 'turtle', 'lantern'];
+  var AVATAR_KINDS = ['lotus', 'koi', 'frog', 'firefly', 'moon', 'leaf', 'turtle', 'lantern', 'duck'];
   var AVATAR_LABEL = {
     lotus: '연꽃', koi: '잉어', frog: '개구리', firefly: '반딧불',
-    moon: '달빛', leaf: '연잎', turtle: '거북', lantern: '등불'
+    moon: '달빛', leaf: '연잎', turtle: '거북', lantern: '등불', duck: '오리'
   };
   var AVATAR_BG = {
     lotus: ['#0a2f2c', '#11453c', '#1c5f4c'],
@@ -308,7 +308,8 @@
     moon: ['#061b28', '#0a2f3f', '#114b58'],
     leaf: ['#07261d', '#0b3728', '#115331'],
     turtle: ['#06222a', '#0b383d', '#134d47'],
-    lantern: ['#091d20', '#103235', '#1c4743']
+    lantern: ['#091d20', '#103235', '#1c4743'],
+    duck: ['#082a2a', '#0d3f3b', '#175a4d']
   };
 
   function avatarBody(kind, g) {
@@ -418,6 +419,26 @@
         '<path d="M32 90c2-24 16-40 32-40s30 16 32 40z" fill="#1e5a4b"/>' +
         '<g stroke="#79c9ac" fill="none" opacity=".5"><path d="M64 52v38M44 62l16 14M84 62 68 76M36 82h56M52 52l-6 38M76 52l6 38"/></g>' +
         '<g stroke="#bfe6da" fill="none" opacity=".18"><ellipse cx="56" cy="112" rx="30" ry="4"/></g>'
+      );
+    }
+    if (kind === 'duck') {
+      return (
+        '<ellipse cx="64" cy="106" rx="46" ry="11" fill="#0b4a3c"/>' +
+        '<path d="M18 106c10-6 26-9 46-9s36 3 46 9z" fill="#083a30"/>' +
+        '<ellipse cx="58" cy="86" rx="33" ry="23" fill="#fff3da"/>' +
+        '<path d="M28 76c-9-4-15-11-18-18 9 0 18 4 25 11z" fill="#f7e4bf"/>' +
+        '<path d="M40 82c10-9 28-10 38-2-6 12-24 18-38 10z" fill="#f2ddb2"/>' +
+        '<path d="M45 84c8-6 20-7 28-3" stroke="#e0c497" stroke-width="2.2" fill="none" stroke-linecap="round" opacity=".8"/>' +
+        '<path d="M76 78c-1-10 2-16 7-20" stroke="#fff3da" stroke-width="15" fill="none" stroke-linecap="round"/>' +
+        '<circle cx="86" cy="52" r="17.5" fill="#fff3da"/>' +
+        '<circle cx="80" cy="46" r="9" fill="#fffaf0" opacity=".55"/>' +
+        '<path d="M99 50c9-2 16 0 18 5-2 5-10 7-18 4z" fill="#f4a259"/>' +
+        '<path d="M99 55c6 1 12 2 15 4-3 2-9 2-15 0z" fill="#e08a45" opacity=".8"/>' +
+        '<circle cx="90" cy="47" r="2.8" fill="#2a2320"/>' +
+        '<circle cx="91" cy="46" r=".9" fill="#fff"/>' +
+        '<circle cx="80" cy="58" r="4.2" fill="#ffb9a1" opacity=".5"/>' +
+        '<g stroke="#bfe6da" fill="none" opacity=".22"><ellipse cx="58" cy="112" rx="36" ry="4"/><ellipse cx="92" cy="116" rx="22" ry="3"/><ellipse cx="30" cy="118" rx="16" ry="2.6"/></g>' +
+        '<g fill="#eafff7" opacity=".5"><circle cx="26" cy="90" r="2.4"/><circle cx="22" cy="82" r="1.5"/><circle cx="108" cy="80" r="2"/></g>'
       );
     }
     /* lantern */

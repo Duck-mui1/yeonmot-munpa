@@ -183,7 +183,7 @@ create table if not exists private.members (
   status_changed_at  timestamptz,
   failed_login_count integer not null default 0 check (failed_login_count >= 0),
   locked_until       timestamptz,
-  -- 프로필 그림: 'preset:lotus' … 'preset:lantern' 8종 또는 클라이언트에서 128×128 로 줄인
+  -- 프로필 그림: 'preset:lotus' … 'preset:duck' 9종 또는 클라이언트에서 128×128 로 줄인
   --   data:image/(jpeg|webp|png);base64,… (최대 65,000자 ≈ 48KB). null 이면 닉네임 첫 글자.
   avatar             text
                        constraint members_avatar_len
@@ -984,7 +984,7 @@ end;
 $fn$;
 
 -- 프로필 그림 바꾸기
---   · 'preset:lotus' … 'preset:lantern' (앱이 그리는 연못 그림 8종)
+--   · 'preset:lotus' … 'preset:duck' (앱이 그리는 연못 그림 9종)
 --   · 'data:image/(jpeg|png|webp);base64,…' (브라우저에서 128×128 로 줄인 내 사진)
 --   · null / '' → 기본(닉네임 첫 글자)
 create or replace function public.update_my_avatar(
@@ -1013,7 +1013,8 @@ begin
 
   if v_avatar ~ '^preset:' then
     if v_avatar not in ('preset:lotus', 'preset:koi', 'preset:frog', 'preset:firefly',
-                        'preset:moon', 'preset:leaf', 'preset:turtle', 'preset:lantern') then
+                        'preset:moon', 'preset:leaf', 'preset:turtle', 'preset:lantern',
+                        'preset:duck') then
       raise exception '고를 수 있는 연못 그림이 아니에요.' using errcode = '22023';
     end if;
   elsif v_avatar ~ '^data:image/(jpeg|png|webp);base64,' then
@@ -1034,7 +1035,7 @@ begin
       raise exception '프로필 사진은 48KB 이하로 줄여 주세요.' using errcode = '22023';
     end if;
   else
-    raise exception '프로필 그림은 연못 그림 8종이나 사진만 쓸 수 있어요.' using errcode = '22023';
+    raise exception '프로필 그림은 연못 그림 9종이나 사진만 쓸 수 있어요.' using errcode = '22023';
   end if;
 
   update private.members set avatar = v_avatar where id = v_actor.member_id;
