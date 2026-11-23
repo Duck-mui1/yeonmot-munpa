@@ -1,13 +1,18 @@
 /* 연못 — 🍡 경단만들기 (도깨비의 세계)
  *
  *  · 수박게임 방식의 Canvas 2D 원형 물리 드롭 & 머지 게임입니다.
- *  · 외부 라이브러리 없이 직접 만든 물리: 중력 · 서브스텝 충돌(위치 보정 + 반발) ·
- *    벽/바닥 바운스 · 굴러떨어짐 · 위쪽 데드라인 2초 유예.
+ *  · 물리는 「루팡문파」 경단만들기와 같은 방식·같은 값으로 다시 썼습니다.
+ *    - 판은 화면을 꽉 채우고(비율 444:480), 경단 반지름은 판 너비 360 기준 비율.
+ *    - 중력 15 × 판높이(px/s²) · 접촉 중에는 3.5 × 판높이 — 묵직하게 떨어지고 툭 앉습니다.
+ *    - 반발은 거의 없습니다(경단끼리 0.04 · 벽 0.25 · 바닥 0.17).
+ *    - 경단은 24방향으로 살짝 울퉁불퉁한 도형(반지름 0.72~1.01배)이라 서로 파고들어 앉고
+ *      굴러가다 자리를 잡습니다. 120Hz 고정 스텝 · 겹침 보정 8회 · 0.24초 잠들기.
+ *    - 데드라인은 판 높이 8.5% — 쉬고 있는 경단이 넘으면 그 자리에서 끝.
  *  · 경단 11단계(박쥐단 … 백운단)의 그림은 「도깨비의 세계」 인게임 화면에서 오려낸
- *    assets/gyeongdan/tier-1~11.png 를 몸통 반지름에 맞춰 그립니다(1~9단계는 고화질 화면에서 새로 뽑음).
+ *    assets/gyeongdan/tier-1~11.png 를 기준 지름(2r)에 맞춰 그립니다(1~9단계는 고화질 화면에서 새로 뽑음).
  *    그림을 못 받으면 아래 Canvas 코드의 벡터 그림이 대신 나옵니다.
  *    (경단 이미지의 저작권은 「도깨비의 세계」에 있으며, 권리자 요청 시 즉시 삭제됩니다.)
- *  · 도구 3종(절구공이 · 교환부 · 승급붓)은 한 판에 각 2회.
+ *  · 도구는 절구공이 하나 — 백운단만 지울 수 있고 무제한입니다.
  *  · 진행 중인 판은 localStorage 에 남겨 두어 창을 닫아도 이어서 할 수 있습니다.
  *
  *  화면 코드는 YM_GYEONGDAN.open({ ... }) 만 부르고, 점수 저장 · 랭킹 조회는
@@ -20,44 +25,63 @@
      1. 판 · 경단 · 점수
      =================================================================== */
 
-  var W = 360;              // 놀이판 너비(논리 좌표)
-  var H = 560;              // 놀이판 높이(논리 좌표)
-  var DROP_Y = 62;          // 경단을 떨어뜨리는 높이
-  var DEAD_Y = 106;         // 데드라인 — 이 위로 2초 넘게 머물면 게임 오버
-  var DEAD_GRACE = 2.0;     // 유예 시간(초)
-  var GRAVITY = 1750;
-  /* 보이는 벽은 그릇 안쪽 금선(x=2, x=W-2, y=H-2)입니다. 경단 그림이 그 선에 딱 붙어
-     잘려 보이지 않도록 안쪽으로 살짝 들어온 선을 실제 벽·바닥으로 씁니다. */
-  var WALL = 3;
-  var FLOOR = H - 5;
-  var STEP = 1 / 120;       // 물리 고정 스텝
+  /* 놀이판은 화면(캔버스) 크기를 그대로 씁니다 — 남는 여백 없이 꽉 찹니다.
+     경단 반지름은 너비 360 기준 비율을 따르므로 폰이 크든 작든 같은 손맛이 납니다. */
+  var BASE_W = 360;         // 반지름 기준 너비
+  var W = 360;              // resize()에서 실제 캔버스 너비로 바뀝니다
+  var H = 390;              // resize()에서 실제 캔버스 높이로 바뀝니다
+  var STEP = 1 / 120;       // 물리 고정 스텝 — 「루팡문파」와 같은 120Hz
   var SAVE_KEY = 'ym.gyeongdan.save.v1';
   var BEST_KEY = 'ym.gyeongdan.best';
 
-  /* 11단계 — 반지름은 한눈에 단계가 보이도록 14 → 82 로 커집니다.
+  /* 11단계 — 반지름은 「루팡문파」 경단만들기와 같은 비율(너비 360 기준)입니다.
      색은 「경단 도감」의 영수 색감을 따릅니다. */
-  /* 반지름은 「도깨비의 세계」 화면의 크기 비율(상자 너비 360 기준 지름 32 → 136)을 따릅니다. */
+  var R_BASE = [19.2, 23.6, 25.9, 31, 38.3, 46.4, 49.2, 60.9, 66.1, 77.6, 74.2];
   var TIERS = [
     null,
-    { no: 1,  name: '박쥐단',      r: 16, color: '#b08d76', dark: '#8e6b56', light: '#d6bda8', kind: 'bat' },
-    { no: 2,  name: '사마귀단',    r: 19, color: '#5f8fc9', dark: '#416fa3', light: '#a8c8ee', kind: 'mantis' },
-    { no: 3,  name: '쥐단',        r: 23, color: '#a6bf4e', dark: '#7d9438', light: '#d9e9a0', kind: 'mouse' },
-    { no: 4,  name: '뱀단',        r: 27, color: '#b39e8f', dark: '#8c7768', light: '#e6d8c9', kind: 'snake' },
-    { no: 5,  name: '호랑이단',    r: 32, color: '#e8952f', dark: '#c2731c', light: '#ffd08a', kind: 'tiger' },
-    { no: 6,  name: '돼지단',      r: 38, color: '#b08a9a', dark: '#8a6a7a', light: '#dcbccb', kind: 'pig' },
-    { no: 7,  name: '곰단',        r: 44, color: '#a9714a', dark: '#83503a', light: '#d9ab84', kind: 'bear' },
-    { no: 8,  name: '자서귀단',    r: 50, color: '#fbfbf7', dark: '#dfe3e8', light: '#ffffff', kind: 'dokkaebi' },
-    { no: 9,  name: '황요호단',    r: 56, color: '#e8862f', dark: '#b96318', light: '#ffcf94', kind: 'fox' },
-    { no: 10, name: '산군대호단',  r: 62, color: '#cf8a5f', dark: '#a35f3c', light: '#f0c69c', kind: 'tigerking' },
-    { no: 11, name: '백운단',      r: 68, color: '#fdfcf7', dark: '#e2e6ec', light: '#ffffff', kind: 'cloud' }
+    { no: 1,  name: '박쥐단',      r: R_BASE[0],  color: '#b08d76', dark: '#8e6b56', light: '#d6bda8', kind: 'bat' },
+    { no: 2,  name: '사마귀단',    r: R_BASE[1],  color: '#5f8fc9', dark: '#416fa3', light: '#a8c8ee', kind: 'mantis' },
+    { no: 3,  name: '쥐단',        r: R_BASE[2],  color: '#a6bf4e', dark: '#7d9438', light: '#d9e9a0', kind: 'mouse' },
+    { no: 4,  name: '뱀단',        r: R_BASE[3],  color: '#b39e8f', dark: '#8c7768', light: '#e6d8c9', kind: 'snake' },
+    { no: 5,  name: '호랑이단',    r: R_BASE[4],  color: '#e8952f', dark: '#c2731c', light: '#ffd08a', kind: 'tiger' },
+    { no: 6,  name: '돼지단',      r: R_BASE[5],  color: '#b08a9a', dark: '#8a6a7a', light: '#dcbccb', kind: 'pig' },
+    { no: 7,  name: '곰단',        r: R_BASE[6],  color: '#a9714a', dark: '#83503a', light: '#d9ab84', kind: 'bear' },
+    { no: 8,  name: '자서귀단',    r: R_BASE[7],  color: '#fbfbf7', dark: '#dfe3e8', light: '#ffffff', kind: 'dokkaebi' },
+    { no: 9,  name: '황요호단',    r: R_BASE[8],  color: '#e8862f', dark: '#b96318', light: '#ffcf94', kind: 'fox' },
+    { no: 10, name: '산군대호단',  r: R_BASE[9],  color: '#cf8a5f', dark: '#a35f3c', light: '#f0c69c', kind: 'tigerking' },
+    { no: 11, name: '백운단',      r: R_BASE[10], color: '#fdfcf7', dark: '#e2e6ec', light: '#ffffff', kind: 'cloud' }
   ];
 
+  /* 경단의 진짜 모양 — 24방향 반지름 비율(1 = 기준 반지름). 완전한 원이 아니라
+     0.72~1.01 사이로 살짝 울퉁불퉁해서, 경단끼리 파고들어 앉고 굴러가다 자리를 잡습니다.
+     「루팡문파」 경단만들기가 쓰는 값 그대로입니다. */
+  var SHAPE = [
+    /*  1단계 */ [0.874, 0.8994, 0.8977, 0.8811, 0.8746, 0.86, 0.836, 0.8566, 0.8713, 0.8803, 0.9003, 0.9025, 0.887, 0.899, 0.9653, 0.9878, 0.9522, 0.8654, 0.862, 0.8627, 0.9522, 0.9878, 0.9718, 0.9008],
+    /*  2단계 */ [0.766, 0.7458, 0.7305, 0.7531, 0.7805, 0.7909, 0.801, 0.8217, 0.8425, 0.8464, 0.8495, 0.8814, 0.897, 0.9228, 0.919, 0.9221, 0.9386, 0.9017, 0.806, 0.8647, 0.8725, 0.8224, 0.8065, 0.7945],
+    /*  3단계 */ [0.872, 0.8916, 0.893, 0.8867, 0.8805, 0.8655, 0.859, 0.8703, 0.8834, 0.891, 0.8954, 0.8912, 0.878, 0.9412, 0.9943, 1.0076, 0.9785, 0.9077, 0.841, 0.9084, 0.9733, 0.9949, 0.9808, 0.9209],
+    /*  4단계 */ [0.847, 0.8686, 0.887, 0.8867, 0.887, 0.8801, 0.884, 0.8912, 0.9102, 0.9171, 0.9259, 0.9124, 0.878, 0.8705, 0.8581, 0.8521, 0.8396, 0.8758, 0.89, 0.8646, 0.8202, 0.8217, 0.8219, 0.829],
+    /*  5단계 */ [0.809, 0.8188, 0.8227, 0.816, 0.8015, 0.7847, 0.774, 0.7865, 0.8045, 0.8202, 0.8407, 0.8455, 0.838, 0.8699, 0.9318, 0.9468, 0.9139, 0.8367, 0.826, 0.8346, 0.9021, 0.9263, 0.9087, 0.8419],
+    /*  6단계 */ [0.7187, 0.7404, 0.7483, 0.7445, 0.7366, 0.7374, 0.7521, 0.7832, 0.823, 0.8627, 0.8931, 0.8994, 0.8858, 0.8878, 0.9249, 0.91, 0.9107, 0.8952, 0.8969, 0.8534, 0.8264, 0.7957, 0.7834, 0.7288],
+    /*  7단계 */ [0.869, 0.8915, 0.8971, 0.886, 0.8754, 0.8643, 0.857, 0.8693, 0.8837, 0.8987, 0.907, 0.9008, 0.888, 0.8961, 0.9588, 1.009, 1.0158, 0.9717, 0.875, 0.9702, 1.0107, 1.0041, 0.9471, 0.8805],
+    /*  8단계 */ [0.874, 0.8809, 0.8867, 0.8881, 0.8735, 0.8555, 0.85, 0.8477, 0.8569, 0.8669, 0.8623, 0.852, 0.856, 0.8618, 0.9234, 0.9645, 0.9586, 0.9012, 0.88, 0.905, 0.9632, 0.9687, 0.9346, 0.88],
+    /*  9단계 */ [0.825, 0.8927, 0.9223, 0.9016, 0.8851, 0.8528, 0.86, 0.865, 0.9086, 0.9348, 0.963, 0.9327, 0.871, 0.8473, 0.8316, 0.8514, 0.8409, 0.795, 0.789, 0.7828, 0.8253, 0.8266, 0.8013, 0.8081],
+    /* 10단계 */ [0.727, 0.7431, 0.7417, 0.7418, 0.7199, 0.7083, 0.727, 0.7503, 0.7964, 0.8499, 0.8711, 0.8888, 0.88, 0.8619, 0.8796, 0.8811, 0.8661, 0.8374, 0.825, 0.7978, 0.7882, 0.7729, 0.7526, 0.7198],
+    /* 11단계 */ [0.856, 0.8563, 0.8631, 0.8641, 0.85, 0.8317, 0.832, 0.8433, 0.874, 0.898, 0.9046, 0.9027, 0.904, 0.9106, 0.9247, 0.915, 0.896, 0.8462, 0.868, 0.8462, 0.884, 0.8895, 0.89, 0.8642]
+  ];
+  var SHAPE_MAX = SHAPE.map(function (row) { return Math.max.apply(null, row); });
+  var DIRS = (function () {
+    var list = [];
+    for (var i = 0; i < 24; i++) { list.push([Math.cos(i * Math.PI / 12), Math.sin(i * Math.PI / 12)]); }
+    return list;
+  }());
+
+  /** 단계의 기준 반지름 — 판 너비에 맞춰 늘어납니다 */
+  function rad(tier) { return TIERS[tier].r * (W / BASE_W); }
+
   /* 경단 그림 — 도감 원본 그림에서 오려낸 투명 PNG.
-     BALL[tier] = 그림 안에서 몸통(공)이 차지하는 지름 비율 → 물리 반지름과 똑같이 맞춥니다. */
+     그림 한 장이 기준 지름(2r)을 그대로 채우고, 몸통은 그 안에 조금 작게 들어 있습니다. */
   var SPRITE_PATH = 'assets/gyeongdan/tier-';
   var SPRITE_CREDIT = '경단 이미지의 저작권은 「도깨비의 세계」에 있으며, 권리자 요청 시 즉시 삭제될 수 있습니다.';
-  var SPRITE_BALL = { 1: 0.900, 2: 0.900, 3: 0.900, 4: 0.900, 5: 0.900, 6: 0.872,
-    7: 0.900, 8: 0.874, 9: 0.825, 10: 0.910, 11: 0.905 };
   /* 그림 속 몸통 중심이 그림 가운데에서 얼마나 벗어났는지 — 회전축을 몸통 가운데로
      (1~9단계는 인게임 화면에서 몸통을 캔버스 한가운데에 맞춰 잘랐습니다) */
   var SPRITE_OFF = {
@@ -94,8 +118,9 @@
     return spriteReady[tier] ? sprites[tier] : null;
   }
 
-  /* 위에서 떨어지는 경단은 1~5단계뿐입니다(작은 것일수록 자주). */
-  var SPAWN_POOL = [1, 1, 1, 1, 2, 2, 2, 3, 3, 4, 4, 5];
+  /* 위에서 떨어지는 경단은 1~5단계뿐입니다.
+     나오는 비율도 「루팡문파」와 같게 — 1단계 45% · 2단계 28% · 3단계 16% · 4단계 8% · 5단계 3% */
+  var SPAWN_CUT = [0.45, 0.73, 0.89, 0.97];   // 이 값을 넘으면 한 단계 위
   var LAST_TIER = 11;
 
   /* 합쳐서 만들어낸 단계의 점수 — 「경단 도감」 그대로
@@ -180,8 +205,9 @@
       maxTier: S.maxTier,
       nextTier: S.nextTier,
       bodies: S.bodies.map(function (b) {
-        return { t: b.tier, x: r2(b.x), y: r2(b.y), vx: r2(b.vx), vy: r2(b.vy),
-          a: r2(b.angle), av: r2(b.av) };
+        return { t: b.tier, x: r4(b.x / W), y: r4(b.y / H),
+          vx: r2(b.vx * 360 / W), vy: r2(b.vy * 390 / H),
+          a: r4(b.angle), av: r2(b.av) };
       }),
       at: now
     });
@@ -190,6 +216,7 @@
   function clearSave() { storeDrop(SAVE_KEY); }
 
   function r2(n) { return Math.round(n * 100) / 100; }
+  function r4(n) { return Math.round(n * 10000) / 10000; }
 
   /* ===================================================================
      4. 판 상태
@@ -205,7 +232,11 @@
   var ranking = { status: 'idle', rows: [], message: '' };
 
   function pickSpawn() {
-    return SPAWN_POOL[Math.floor(Math.random() * SPAWN_POOL.length)];
+    var roll = Math.random();
+    for (var i = 0; i < SPAWN_CUT.length; i++) {
+      if (roll < SPAWN_CUT[i]) { return i + 1; }
+    }
+    return SPAWN_CUT.length + 1;
   }
 
   function makeBody(tier, x, y, vx, vy) {
@@ -213,14 +244,16 @@
     return {
       id: uid,
       tier: tier,
-      r: TIERS[tier].r,
+      r: rad(tier),
       x: x, y: y,
       vx: vx || 0, vy: vy || 0,
       age: 0,
-      over: 0,
-      wobble: 1,
       angle: 0,
-      av: 0
+      av: 0,
+      supported: false,
+      sleeping: false,
+      quiet: 0,
+      glow: 0
     };
   }
 
@@ -263,11 +296,14 @@
     saved.bodies.forEach(function (raw) {
       var tier = clampInt(raw.t, 1, LAST_TIER, 0);
       if (!tier) { return; }
+      var rr = rad(tier);
       var x = Number(raw.x), y = Number(raw.y);
       if (!isFinite(x) || !isFinite(y)) { return; }
-      var body = makeBody(tier, clamp(x, TIERS[tier].r, W - TIERS[tier].r), clamp(y, 0, H - TIERS[tier].r));
-      body.vx = isFinite(Number(raw.vx)) ? Number(raw.vx) : 0;
-      body.vy = isFinite(Number(raw.vy)) ? Number(raw.vy) : 0;
+      /* 저장은 판 크기 대비 비율(0~1)로 — 폰이 바뀌어도 같은 자리 */
+      if (x > 1.5 || y > 1.5) { x = x / 360; y = y / 560; }
+      var body = makeBody(tier, clamp(x * W, rr, W - rr), clamp(y * H, 0, H - rr));
+      body.vx = isFinite(Number(raw.vx)) ? Number(raw.vx) * (W / 360) : 0;
+      body.vy = isFinite(Number(raw.vy)) ? Number(raw.vy) * (H / 390) : 0;
       body.angle = isFinite(Number(raw.a)) ? Number(raw.a) : 0;
       body.av = isFinite(Number(raw.av)) ? Number(raw.av) : 0;
       body.age = 1;
@@ -290,68 +326,105 @@
      =================================================================== */
 
   /* --- 경단의 손맛을 정하는 값들 ---------------------------------------
-     · REST : 경단끼리 반발 — 아주 낮게 둬서 탱탱볼처럼 튀지 않습니다.
-     · FRIC : 접선 마찰계수(쿨롱). 낮게 둬서 곡면에 얹힌 경단이 옆으로 흘러
-              굴러 내려가게 합니다. 대신 접선 속도는 경단의 각속도로 바뀌어
-              실제로 데굴데굴 돌아갑니다.
-     · FRIC_FLOOR : 바닥 마찰 — 미끄러지는 대신 굴러가게 붙잡습니다.
-     · ROLL_DRAG : 굴러가는 동안의 구름 저항(한 스텝당). 경단이 판 끝까지
-                   미끄러져 나가지 않고 한두 뼘 굴러가 서서히 멈출 만큼. */
-  var REST = 0.13;
-  var FRIC = 0.20;
-  var FRIC_FLOOR = 0.86;
-  var FRIC_WALL = 0.34;
-  var MIN_BOUNCE = 130;      // 이보다 느리게 닿으면 튀지 않고 딱 붙습니다
-  var ROLL_DRAG = 0.996;
+     「루팡문파」 경단만들기가 실제로 쓰는 값 그대로입니다.
+     · GRAV · GRAV_REST : 중력 = 15 × 판높이(px/s²). 무언가에 닿아 있는 동안에는
+                           3.5 × 판높이로 약해져 겹친 경단이 서로를 밀어내지 않습니다.
+     · VY_CAP           : 떨어지는 속도 상한 5.4 × 판높이.
+     · AIR_X · AIR_Y    : 공기저항 — 1/60초마다 0.985(가로) · 0.998(세로).
+     · WALL_E · FLOOR_E : 벽 0.25 · 바닥 0.17 — 튕기지 않고 툭.
+     · PAIR_E           : 경단끼리 법선 속도를 1.04배로 되돌립니다(반발 0.04).
+     · FRIC_V · FRIC_H  : 경단끼리 마찰 0.19(수직 접촉) · 0.43(비스듬한 접촉).
+     · SLEEP_*          : 0.24초 잠잠하면 잠들어 연산을 쉬고, 부딪히면 깨어납니다. */
+  var GRAV = 15;
+  var GRAV_REST = 3.5;
+  var VY_CAP = 5.4;
+  var AIR_X = 0.985;
+  var AIR_Y = 0.998;
+  var WALL_E = 0.25;
+  var FLOOR_E = 0.17;
+  var PAIR_E = 1.04;
+  var FRIC_V = 0.19;
+  var FRIC_H = 0.43;
+  var SLEEP_TIME = 0.24;
+  var BAND = 0.085;         // 데드라인 — 판 높이의 8.5% 위
+  var DROP_COOL = 0.31;     // 경단 사이 쿨타임(초)
+  var SEP_ITER = 8;         // 겹침 보정 · 충격 반복 횟수
 
+  /** 경단의 24방향 반지름 — 각도(굴러간 만큼)에 맞춰 돌려 씁니다 */
+  function shapeOf(b) {
+    var base = SHAPE[b.tier - 1];
+    var ang = b.angle || 0;
+    if (!ang) { return base; }
+    var cache = b._shape;
+    if (cache && cache.angle === ang) { return cache.dist; }
+    var turn = ((-ang * 12 / Math.PI) % 24 + 24) % 24;
+    var i0 = Math.floor(turn), frac = turn - i0;
+    var dist = new Array(24);
+    for (var i = 0; i < 24; i++) {
+      dist[i] = base[(i + i0) % 24] * (1 - frac) + base[(i + i0 + 1) % 24] * frac;
+    }
+    b._shape = { angle: ang, dist: dist };
+    return dist;
+  }
+
+  /** 두 경단이 닿았는지 — 24방향으로 재어 가장 얕게 파고든 방향을 돌려줍니다 */
+  function contact(a, b, gap) {
+    var dx = b.x - a.x, dy = b.y - a.y;
+    var reach = a.r * SHAPE_MAX[a.tier - 1] + b.r * SHAPE_MAX[b.tier - 1] + (gap || 0);
+    if (Math.abs(dx) > reach || Math.abs(dy) > reach) { return null; }
+    var sa = shapeOf(a), sb = shapeOf(b);
+    var best = Infinity, sx = 0, sy = 0;
+    var eps = (a.r + b.r) * 1e-8;
+    for (var i = 0; i < 24; i++) {
+      var p = a.r * sa[i] + b.r * sb[(i + 12) % 24] - dx * DIRS[i][0] - dy * DIRS[i][1] + (gap || 0);
+      if (p <= 0) { return null; }
+      if (p < best - eps) {
+        best = p; sx = DIRS[i][0]; sy = DIRS[i][1];
+      } else if (p <= best + eps) {
+        sx += DIRS[i][0]; sy += DIRS[i][1];
+        if (p < best) { best = p; }
+      }
+    }
+    var len = Math.sqrt(sx * sx + sy * sy);
+    if (len < 1e-8) { return { overlap: best, nx: 0, ny: dy < 0 ? -1 : 1 }; }
+    return { overlap: best, nx: Math.abs(sx) < 1e-12 ? 0 : sx / len, ny: sy / len };
+  }
+
+  /** 속도 · 자리 · 구르기 — 닿아 있으면 중력이 약해지고, 굴러간 만큼 얼굴이 돕니다 */
   function integrate(dt) {
     var bodies = S.bodies;
     for (var i = 0; i < bodies.length; i++) {
       var b = bodies[i];
-      if (b.held) { continue; }   // 테스트용 고정(화면에는 나오지 않습니다)
-      b.vy += GRAVITY * dt;
-      b.vx *= 0.9975;            // 아주 약한 공기 저항 — 옆으로 미끄러져 나가는 걸 막습니다
+      if (b.held || b.sleeping) { continue; }
+      var stand = !!b.supported;
+      b.supported = false;
+      b.vy = Math.min(H * VY_CAP, b.vy + H * (stand ? GRAV_REST : GRAV) * dt);
+      if (stand && b.vx) {
+        b.angle = (b.angle + b.vx * dt / (b.r * shapeOf(b)[6])) % (Math.PI * 2);
+      }
       b.x += b.vx * dt;
       b.y += b.vy * dt;
-      b.angle += b.av * dt;
-      if (b.age < 60) { b.age += dt; }
-    }
-  }
+      b.vx *= Math.pow(AIR_X, dt * 60);
+      b.vy *= Math.pow(AIR_Y, dt * 60);
 
-  /** 같은 단계끼리 닿으면 합칩니다 — 한 스텝에 여러 쌍이 동시에 합쳐질 수 있습니다. */
-  function mergePass() {
-    var bodies = S.bodies;
-    var taken = {};
-    var pairs = [];
-    for (var i = 0; i < bodies.length; i++) {
-      if (taken[i]) { continue; }
-      for (var j = i + 1; j < bodies.length; j++) {
-        if (taken[j]) { continue; }
-        var a = bodies[i], b = bodies[j];
-        if (a.held || b.held) { continue; }
-        if (a.tier !== b.tier) { continue; }
-        var dx = b.x - a.x, dy = b.y - a.y;
-        var reach = a.r + b.r + 0.8;
-        if (dx * dx + dy * dy <= reach * reach) {
-          taken[i] = true; taken[j] = true;
-          pairs.push([a, b]);
-          break;
-        }
+      var sh = shapeOf(b);
+      if (b.x < b.r * sh[12]) { b.x = b.r * sh[12]; b.vx = Math.abs(b.vx) * WALL_E; }
+      if (b.x > W - b.r * sh[0]) { b.x = W - b.r * sh[0]; b.vx = -Math.abs(b.vx) * WALL_E; }
+      if (b.y > H - b.r * sh[6]) {
+        b.supported = true;
+        b.y = H - b.r * sh[6];
+        b.vy = -Math.abs(b.vy) * FLOOR_E;
+        if (Math.abs(b.vx) < 4) { b.vx = 0; }
+        if (Math.abs(b.vy) < 28) { b.vy = 0; }
       }
+      b.age += dt;
     }
-    if (!pairs.length) { return; }
-
-    pairs.forEach(function (pair) { mergeBody(pair[0], pair[1]); });
-    S.bodies = S.bodies.filter(function (b) { return !b.dead; });
-    S.dirty = true;
   }
 
-  function mergeBody(a, b) {
+  /** 같은 단계끼리 닿으면 한 단계 위로 — 새 경단은 두 경단의 한가운데서 태어납니다 */
+  function mergeInto(a, b) {
     var tier = a.tier;
-    var cx = (a.x + b.x) / 2;
-    var cy = (a.y + b.y) / 2;
-    var vx = (a.vx + b.vx) / 2;
-    var vy = (a.vy + b.vy) / 2;
+    var cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
     a.dead = true;
     b.dead = true;
 
@@ -363,189 +436,243 @@
       S.shake = Math.min(1, S.shake + 0.55);
       S.maxTier = LAST_TIER;
       bumpBest();
-      return;
+      return null;
     }
 
-    var next = tier + 1;
-    var body = makeBody(next, cx, cy, vx * 0.6, vy * 0.6 - 40);
-    body.age = 0;
-    S.bodies.push(body);
-    var gain = scoreForTier(next);
+    var body = makeBody(tier + 1, cx, cy, (a.vx + b.vx) / 2, (a.vy + b.vy) * 0.2);
+    body.glow = 0.22;
+    var gain = scoreForTier(tier + 1);
     S.score += gain;
-    if (next > S.maxTier) { S.maxTier = next; }
-    addPop(cx, cy, '+' + fmtNum(gain), TIERS[next].light);
-    burst(cx, cy, next > 8 ? 20 : 12, [TIERS[next].color, TIERS[next].light, '#ffffff'], 90 + next * 18);
-    S.shake = Math.min(1, S.shake + (next > 7 ? 0.32 : 0.12));
+    if (tier + 1 > S.maxTier) { S.maxTier = tier + 1; }
+    addPop(cx, cy, '+' + fmtNum(gain), TIERS[tier + 1].light);
+    burst(cx, cy, tier > 8 ? 20 : 12, [TIERS[tier + 1].color, TIERS[tier + 1].light, '#ffffff'], 90 + tier * 18);
+    S.shake = Math.min(1, S.shake + (tier > 6 ? 0.32 : 0.12));
     S.lastMerge = Date.now();
     bumpBest();
+    return body;
   }
 
-  function resolvePair(a, b, impulse) {
-    if (a.held || b.held) { return; }
-    var dx = b.x - a.x, dy = b.y - a.y;
-    var rr = a.r + b.r;
-    var d2 = dx * dx + dy * dy;
-    if (d2 >= rr * rr || d2 < 0.0001) { return; }
-
-    var d = Math.sqrt(d2);
-    var nx = dx / d, ny = dy / d;
-    var overlap = rr - d;
-    var ma = a.r * a.r, mb = b.r * b.r, mt = ma + mb;
-    var ima = 1 / ma, imb = 1 / mb;
-
-    /* 위치 보정 — 겹친 만큼 무게 비율대로 나누어 밀어냅니다 */
-    a.x -= nx * overlap * (mb / mt);
-    a.y -= ny * overlap * (mb / mt);
-    b.x += nx * overlap * (ma / mt);
-    b.y += ny * overlap * (ma / mt);
-
-    if (!impulse) { return; }
-
-    var vn = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
-    if (vn > 0) { return; }
-
-    /* 법선 반발 — 천천히 닿으면 튀지 않고 딱 달라붙습니다 */
-    var e = (-vn > MIN_BOUNCE) ? REST : 0;
-    var jn = -(1 + e) * vn / (ima + imb);
-    a.vx -= jn * nx * ima; a.vy -= jn * ny * ima;
-    b.vx += jn * nx * imb; b.vy += jn * ny * imb;
-
-    /* 접선 — 접점의 상대 속도에는 각속도도 함께 들어갑니다.
-       미끄러지는 속도가 마찰로 회전으로 바뀌어 진짜 공처럼 데굴데굴 굴러갑니다. */
-    var tx = -ny, ty = nx;
-    var vaT = a.vx * tx + a.vy * ty + a.av * a.r;
-    var vbT = b.vx * tx + b.vy * ty - b.av * b.r;
-    var invEff = 3 * (ima + imb);          // I = ½mr² — 회전 몫까지 합치면 3배
-    var jt = -(vbT - vaT) / invEff;
-    var lim = FRIC * jn;
-    if (jt > lim) { jt = lim; } else if (jt < -lim) { jt = -lim; }
-    a.vx -= jt * tx * ima; a.vy -= jt * ty * ima;
-    b.vx += jt * tx * imb; b.vy += jt * ty * imb;
-    a.av -= 2 * jt * ima / a.r;
-    b.av -= 2 * jt * imb / b.r;
-    clampSpin(a);
-    clampSpin(b);
-  }
-
-  function clampSpin(b) {
-    if (b.av > 40) { b.av = 40; } else if (b.av < -40) { b.av = -40; }
-  }
-
-  /** 벽·바닥과의 접촉 — 바닥에서는 미끄러짐이 굴림으로 바뀝니다. */
-  function resolveBounds(impulse) {
+  /** 접촉 한 번 — 자리를 살짝 밀어내고, 다가오는 속도를 반발 0.04로 되돌리고, 비비며 마찰합니다 */
+  function contactPass() {
     var bodies = S.bodies;
-    for (var i = 0; i < bodies.length; i++) {
-      var b = bodies[i];
-      if (b.held) { continue; }
-      var im = 1 / (b.r * b.r);
+    var born = [];
+    var i, j;
+    var wake = Math.max(32, W * 0.1);
+    for (i = 0; i < bodies.length; i++) {
+      var a = bodies[i];
+      if (a.dead) { continue; }
+      for (j = i + 1; j < bodies.length; j++) {
+        var b = bodies[j];
+        if (b.dead) { continue; }
+        if (a.sleeping && b.sleeping && (a.tier !== b.tier || a.tier >= LAST_TIER)) { continue; }
+        var hit = contact(a, b, 0);
+        if (!hit) { continue; }
 
-      /* 왼쪽 벽 — 법선(+x) · 접선(+y) */
-      if (b.x - b.r < WALL) {
-        b.x = WALL + b.r;
-        if (impulse && b.vx < 0) { wallImpulse(b, -b.vx, im, 1, 0); }
+        /* 같은 단계 → 한 단계 위로 합칩니다 */
+        if (a.tier === b.tier && a.tier < LAST_TIER) {
+          var made = mergeInto(a, b);
+          if (made) { born.push(made); }
+          break;
+        }
+
+        if (hit.ny > 0.25) { a.supported = true; }
+        if (hit.ny < -0.25) { b.supported = true; }
+
+        var ma = a.r * a.r, mb = b.r * b.r;
+        var vrel = (a.vx - b.vx) * hit.nx + (a.vy - b.vy) * hit.ny;
+        if (a.sleeping && vrel * mb / (ma + mb) > wake) { a.sleeping = false; a.quiet = 0; }
+        if (b.sleeping && vrel * ma / (ma + mb) > wake) { b.sleeping = false; b.quiet = 0; }
+
+        var sa = a.sleeping ? 0 : (b.sleeping ? 1 : mb / (ma + mb));
+        var sb = 1 - sa;
+        a.x -= hit.nx * hit.overlap * sa;
+        a.y -= hit.ny * hit.overlap * sa;
+        b.x += hit.nx * hit.overlap * sb;
+        b.y += hit.ny * hit.overlap * sb;
+
+        var vn = (b.vx - a.vx) * hit.nx + (b.vy - a.vy) * hit.ny;
+        if (vn >= 0) { continue; }
+
+        var jn = -PAIR_E * vn;
+        a.vx -= jn * hit.nx * sa; a.vy -= jn * hit.ny * sa;
+        b.vx += jn * hit.nx * sb; b.vy += jn * hit.ny * sb;
+
+        /* 접선 마찰 — 미끄러지는 대신 서로 붙잡아 줍니다 */
+        var vt = -(b.vx - a.vx) * hit.ny + (b.vy - a.vy) * hit.nx;
+        var lim = (Math.abs(hit.ny) > 0.5 ? FRIC_V : FRIC_H) * jn;
+        var jt = Math.max(-lim, Math.min(lim, vt));
+        a.vx -= jt * hit.ny * sa; a.vy += jt * hit.nx * sa;
+        b.vx -= jt * hit.ny * sb; b.vy += jt * hit.nx * sb;
       }
-      /* 오른쪽 벽 — 법선(-x) · 접선(-y) */
-      if (b.x + b.r > W - WALL) {
-        b.x = W - WALL - b.r;
-        if (impulse && b.vx > 0) { wallImpulse(b, b.vx, im, -1, 0); }
-      }
-      /* 바닥 — 법선(위) · 접선(+x) */
-      if (b.y + b.r > FLOOR) {
-        b.y = FLOOR - b.r;
-        if (impulse) {
-          if (b.vy > 0) {
-            var e = (b.vy > MIN_BOUNCE) ? REST : 0;
-            var jn = -(1 + e) * (-b.vy) / im;
-            b.vy += jn * -1 * im;
-            /* 미끄러지는 속도 → 굴러가는 회전 */
-            var vt = b.vx - b.av * b.r;
-            var jt = -vt / (3 * im);
-            var lim = FRIC_FLOOR * jn;
-            jt = jt > lim ? lim : (jt < -lim ? -lim : jt);
-            b.vx += jt * im;
-            b.av -= 2 * jt * im / b.r;
-          } else if (b.vy < 0) {
-            b.vy = 0;
-          }
-          /* 굴러가는 동안의 구름 저항 — 아주 약하게, 서서히 멈춥니다 */
-          b.vx *= ROLL_DRAG;
-          b.av *= ROLL_DRAG;
-          clampSpin(b);
+    }
+    if (born.length || S.bodies.some(function (x) { return x.dead; })) {
+      S.bodies = bodies.filter(function (x) { return !x.dead; }).concat(born);
+      S.picks = (S.picks || []).filter(function (x) { return !x.dead; });
+      S.dirty = true;
+    }
+  }
+
+  /** 겹친 경단을 무게 비율대로 떼어 놓습니다 — 바닥을 뚫지 않게 위로 밀어 올리며 */
+  function separate() {
+    var bodies = S.bodies;
+    for (var it = 0; it < SEP_ITER; it++) {
+      var worst = 0;
+      for (var i = 0; i < bodies.length; i++) {
+        var a = bodies[i];
+        for (var j = i + 1; j < bodies.length; j++) {
+          var b = bodies[j];
+          if (a.sleeping && b.sleeping) { continue; }
+          var hit = contact(a, b, 0);
+          if (!hit || hit.overlap < 0.05) { continue; }
+          var ma = a.r * a.r, mb = b.r * b.r;
+          var share = a.sleeping ? 0 : (b.sleeping ? 1 : mb / (ma + mb));
+          var px = hit.nx * hit.overlap, py = hit.ny * hit.overlap;
+          a.x -= px * share;
+          b.x += px * (1 - share);
+          var floorA = H - a.r * shapeOf(a)[6];
+          var floorB = H - b.r * shapeOf(b)[6];
+          var liftA = Math.min(-py * share, Math.max(0, floorA - a.y));
+          var liftB = Math.min(py + liftA, Math.max(0, floorB - b.y));
+          if (!a.sleeping) { a.y += liftB - py; }
+          if (!b.sleeping) { b.y += liftB; }
+          worst = Math.max(worst, hit.overlap);
         }
       }
-      /* 천장(판 위쪽 여유) — 드물게 튀어 오를 때만 */
-      if (b.y - b.r < -40) {
-        b.y = b.r - 40;
-        if (impulse && b.vy < 0) { b.vy = 0; }
+      for (var k = 0; k < bodies.length; k++) {
+        var body = bodies[k], sh = shapeOf(body);
+        var nx2 = Math.max(body.r * sh[12], Math.min(W - body.r * sh[0], body.x));
+        var ny2 = Math.min(H - body.r * sh[6], body.y);
+        worst = Math.max(worst, Math.abs(nx2 - body.x), body.y - ny2);
+        body.x = nx2;
+        body.y = ny2;
       }
+      if (worst < 0.05) { break; }
     }
   }
 
-  /** 정지한 벽에 부딪혔을 때의 마찰·반발. sign = 법선 방향(안쪽) */
-  function wallImpulse(b, approach, im, nx, ny) {
-    var e = (approach > MIN_BOUNCE) ? REST : 0;
-    var jn = (1 + e) * approach / im;
-    b.vx += jn * nx * im;
-    b.vy += jn * ny * im;
-    /* 접선 속도(회전 포함) → 마찰 */
-    var tx = -ny, ty = nx;
-    var vxT = b.vx * tx + b.vy * ty - b.av * b.r;
-    var jt = -vxT / (3 * im);
-    var lim = FRIC_WALL * jn;
-    jt = jt > lim ? lim : (jt < -lim ? -lim : jt);
-    b.vx += jt * tx * im;
-    b.vy += jt * ty * im;
-    b.av -= 2 * jt * im / b.r;
-    clampSpin(b);
+  /** 바닥·벽·경단에 닿은 곳 — 다가오는 속도를 지우고, 마찰로 서서히 멈추고, 잠들게 합니다 */
+  function markEdge(st, nx, ny) {
+    if (ny > 0.2) {
+      st.below = true;
+      if (Math.abs(nx) < 0.16) { st.flat = true; }
+    }
+    if (nx < -0.01) { st.left = Math.max(st.left, ny / -nx); }
+    if (nx > 0.01) { st.right = Math.max(st.right, ny / nx); }
   }
 
-  function resolveAll(impulse) {
+  function bounce(dt) {
     var bodies = S.bodies;
-    for (var i = 0; i < bodies.length; i++) {
+    var gap = W / 2400;
+    var touch = W * 0.12;
+    var list = [];
+    var states = [];
+    var i, j;
+
+    for (i = 0; i < bodies.length; i++) {
+      var b = bodies[i];
+      var sh = shapeOf(b);
+      var onFloor = H - b.y - b.r * sh[6] <= gap;
+      var st = { below: onFloor, flat: onFloor, left: -Infinity, right: -Infinity };
+      if (onFloor && !b.sleeping && b.vy < touch) {
+        list.push({ a: b, b: null, nx: 0, ny: 1, sa: 1, sb: 0 });
+      }
+      if (b.x - b.r * sh[12] <= gap) {
+        markEdge(st, -1, 0);
+        if (!b.sleeping && -b.vx < touch) { list.push({ a: b, b: null, nx: -1, ny: 0, sa: 1, sb: 0 }); }
+      }
+      if (W - b.x - b.r * sh[0] <= gap) {
+        markEdge(st, 1, 0);
+        if (!b.sleeping && b.vx < touch) { list.push({ a: b, b: null, nx: 1, ny: 0, sa: 1, sb: 0 }); }
+      }
+      states.push(st);
+    }
+
+    for (i = 0; i < bodies.length; i++) {
       var a = bodies[i];
-      for (var j = i + 1; j < bodies.length; j++) {
-        resolvePair(a, bodies[j], impulse);
+      for (j = i + 1; j < bodies.length; j++) {
+        var c = bodies[j];
+        var hit = contact(a, c, gap);
+        if (!hit) { continue; }
+        var ma = a.r * a.r, mb = c.r * c.r;
+        var share = a.sleeping ? 0 : (c.sleeping ? 1 : mb / (ma + mb));
+        markEdge(states[i], hit.nx, hit.ny);
+        markEdge(states[j], -hit.nx, -hit.ny);
+        if (a.sleeping && c.sleeping) { continue; }
+        if ((a.vx - c.vx) * hit.nx + (a.vy - c.vy) * hit.ny <= touch) {
+          list.push({ a: a, b: c, nx: hit.nx, ny: hit.ny, sa: share, sb: 1 - share });
+        }
+      }
+    }
+
+    for (var it = 0; it < SEP_ITER; it++) {
+      var most = 0;
+      for (var k = 0; k < list.length; k++) {
+        var im = list[k];
+        var vn = (im.a.vx - (im.b ? im.b.vx : 0)) * im.nx + (im.a.vy - (im.b ? im.b.vy : 0)) * im.ny;
+        if (vn <= 0) { continue; }
+        im.a.vx -= im.nx * vn * im.sa;
+        im.a.vy -= im.ny * vn * im.sa;
+        if (im.b) {
+          im.b.vx += im.nx * vn * im.sb;
+          im.b.vy += im.ny * vn * im.sb;
+        }
+        most = Math.max(most, vn);
+      }
+      if (most < W * 0.00015) { break; }
+    }
+
+    for (i = 0; i < bodies.length; i++) {
+      var body = bodies[i], s = states[i];
+      if (body.held) { body.supported = true; continue; }   // 테스트용 고정 — 늘 버티는 것으로 봅니다
+      var stand = s.below && (s.flat || s.left + s.right > 0.04);
+      body.supported = s.below;
+      if (body.sleeping && stand) { continue; }
+      body.sleeping = false;
+      if (s.below) {
+        var slide = Math.min(1, Math.abs(body.vx) / (W * 0.18));
+        var coef = s.flat ? 16 - 11 * slide : (stand ? 16 : 3);
+        body.vx *= Math.exp(-coef * dt);
+        if (stand) { body.vy *= Math.exp(-16 * dt); }
+      }
+      var quiet = Math.abs(body.vx) < W * 0.018 && Math.abs(body.vy) < W * 0.09;
+      body.quiet = stand && quiet ? (body.quiet || 0) + dt : 0;
+      if (body.quiet >= SLEEP_TIME) {
+        body.sleeping = true;
+        body.vx = 0;
+        body.vy = 0;
       }
     }
   }
 
-  function checkDeadline(dt) {
+  /** 데드라인 — 쉬고 있는 경단이 판 위 8.5% 선을 넘으면 그 자리에서 끝 */
+  function checkDeadline() {
     if (S.over) { return; }
-    var warn = 0;
+    var band = H * BAND;
+    var hot = 0;
     for (var i = 0; i < S.bodies.length; i++) {
       var b = S.bodies[i];
-      if (b.y - b.r < DEAD_Y && b.age > 0.8) {
-        b.over = (b.over || 0) + dt;
-        if (b.over > warn) { warn = b.over; }
-      } else {
-        b.over = 0;
-      }
+      if (!b.supported) { continue; }
+      if (b.y - b.r * shapeOf(b)[18] <= band) { hot += 1; }
     }
-    S.warn = warn;
-    if (warn > DEAD_GRACE) { gameOver('데드라인 위로 2초 넘게 머물렀어요'); }
+    S.warn = hot;
+    if (hot > 0) { gameOver('경단이 데드라인에 닿았어요'); }
   }
 
   function step(dt) {
     integrate(dt);
-    mergePass();
-    /* 속도(반발·마찰)는 한 번, 겹침 보정은 여러 번 — 굴러가는 손맛이 살아 있습니다. */
-    resolveAll(true);
-    resolveBounds(true);
-    for (var it = 0; it < 3; it++) {
-      resolveAll(false);
-      resolveBounds(false);
-    }
+    contactPass();
+    separate();
+    bounce(dt);
     for (var i = 0; i < S.bodies.length; i++) {
       var b = S.bodies[i];
-      /* 완전히 멈춘 경단만 속도를 0으로 — 각도(angle)는 굴러간 그대로 둡니다! */
-      if (Math.abs(b.vx) < 0.8 && Math.abs(b.vy) < 3 && Math.abs(b.av) < 0.25) {
-        b.vx = 0; b.av = 0;
-      }
+      /* 각속도(테스트 · 저장용) — 구르는 속도에서 뽑습니다 */
+      b.av = b.supported ? b.vx / b.r : 0;
+      if (b.glow > 0) { b.glow = Math.max(0, b.glow - dt); }
     }
     stepParticles(dt);
     if (S.dropCool > 0) { S.dropCool = Math.max(0, S.dropCool - dt); }
     if (S.shake > 0) { S.shake = Math.max(0, S.shake - dt * 2.2); }
-    checkDeadline(dt);
+    checkDeadline();
   }
 
   /* ===================================================================
@@ -580,7 +707,7 @@
       var p = list[i];
       p.life -= dt;
       if (p.life <= 0) { list.splice(i, 1); continue; }
-      p.vy += GRAVITY * 0.45 * dt;
+      p.vy += H * GRAV * 0.45 * dt;
       p.vx *= 0.99;
       p.x += p.vx * dt;
       p.y += p.vy * dt;
@@ -664,7 +791,9 @@
     /* 도감 원본 그림(PNG)이 있으면 그것을 그립니다. 없으면 아래 벡터 그림이 그대로 나옵니다. */
     var img = spriteOf(tier);
     if (img) {
-      var size = (r * 2) / (SPRITE_BALL[tier] || 0.9);
+      /* 그림 한 장이 기준 지름(2r)을 그대로 채웁니다 — 몸통은 그 안에서 살짝 작게.
+         「루팡문파」와 같은 방식이라 충돌 반지름과 그림이 자연스럽게 겹칩니다. */
+      var size = r * 2;
       var off = SPRITE_OFF[tier] || [0, 0];
       g.save();
       if (alpha !== undefined && alpha !== 1) { g.globalAlpha = alpha; }
@@ -1456,19 +1585,37 @@
 
   function resize() {
     if (!el.canvas || !el.stage) { return; }
-    var rect = el.stage.getBoundingClientRect();
-    var w = Math.max(1, Math.round(rect.width));
-    var h = Math.max(1, Math.round(rect.height));
+    /* 테두리 안쪽(내용 상자)을 그대로 놀이판으로 — 남는 여백도 넘침도 없습니다 */
+    var w = Math.round(el.stage.clientWidth);
+    var h = Math.round(el.stage.clientHeight);
+    if (w < 40 || h < 40) { return; }   // 아직 화면에 올라오기 전
     var dpr = Math.min(2.5, window.devicePixelRatio || 1);
+    var oldW = W, oldH = H;
+    /* 그림이 테두리에 잘려 보이지 않도록 가장자리에 살짝 여유 */
+    var padX = Math.max(2, Math.round(w * 0.006));
+    var padB = Math.max(4, Math.round(h * 0.018));
+    W = w - padX * 2;
+    H = h - padB;
     view.w = w; view.h = h; view.dpr = dpr;
+    view.scale = 1; view.ox = padX; view.oy = 0;
     el.canvas.width = Math.round(w * dpr);
     el.canvas.height = Math.round(h * dpr);
     el.canvas.style.width = w + 'px';
     el.canvas.style.height = h + 'px';
-    var scale = Math.min(w / W, h / H);
-    view.scale = scale;
-    view.ox = (w - W * scale) / 2;
-    view.oy = (h - H * scale) / 2;
+    /* 판 크기가 바뀌면 경단도 같이 — 반지름은 너비를 따릅니다 */
+    if (S && oldW > 40 && (oldW !== w || oldH !== h)) {
+      var sx = w / oldW, sy = h / oldH;
+      S.bodies.forEach(function (b) {
+        b.x *= sx;
+        b.y *= sy;
+        b.vx *= sx;
+        b.vy *= sy;
+        b.r = rad(b.tier);
+        b._shape = null;
+        b.sleeping = false;
+      });
+      S.aimX *= sx;
+    }
     buildBackdrop();
   }
 
@@ -1597,6 +1744,18 @@
           ctx.fill();
           ctx.restore();
         }
+        /* 막 합쳐진 경단은 잠깐 금빛으로 번집니다 */
+        if (b.glow > 0) {
+          var gl = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, b.r * 1.55);
+          gl.addColorStop(0, '#fff1b7');
+          gl.addColorStop(0.55, '#ffbd68');
+          gl.addColorStop(1, 'rgba(255, 176, 76, 0)');
+          ctx.save();
+          ctx.globalAlpha = Math.min(1, b.glow / 0.22);
+          ctx.fillStyle = gl;
+          ctx.fillRect(b.x - b.r * 1.55, b.y - b.r * 1.55, b.r * 3.1, b.r * 3.1);
+          ctx.restore();
+        }
         ctx.save();
         ctx.translate(b.x, b.y);
         ctx.rotate(b.angle || 0);
@@ -1619,92 +1778,48 @@
     ctx.fillStyle = inner;
     ctx.fillRect(0, 0, W, H);
 
-    /* 금빛 그릇 테두리 — 위는 사다리꼴 입구 */
-    var inset = W * 0.2, rimY = 8, topY = 34;
-    var x0 = 2, x1 = W - 2, yb = H - 2, rad = 26;
-
-    function bowlStroke() {
-      ctx.beginPath();
-      ctx.moveTo(inset, rimY);
-      ctx.lineTo(x0 + 2, topY);
-      ctx.quadraticCurveTo(x0, topY + 2, x0, topY + 6);
-      ctx.lineTo(x0, yb - rad);
-      ctx.quadraticCurveTo(x0, yb, x0 + rad, yb);
-      ctx.lineTo(x1 - rad, yb);
-      ctx.quadraticCurveTo(x1, yb, x1, yb - rad);
-      ctx.lineTo(x1, topY + 6);
-      ctx.quadraticCurveTo(x1, topY + 2, x1 - 2, topY);
-      ctx.lineTo(W - inset, rimY);
-    }
-
+    /* 안쪽 금선 — 판 가장자리에 은은하게 */
+    var corner = Math.min(16, W * 0.045);
     ctx.save();
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    /* 바깥 번짐 */
-    ctx.strokeStyle = 'rgba(255, 220, 150, .16)';
-    ctx.lineWidth = 8;
-    bowlStroke();
-    ctx.stroke();
-    /* 금선 */
-    ctx.strokeStyle = 'rgba(242, 216, 164, .85)';
-    ctx.lineWidth = 2.2;
-    bowlStroke();
-    ctx.stroke();
-    /* 입구 윗변 */
-    ctx.beginPath();
-    ctx.moveTo(inset, rimY);
-    ctx.lineTo(W - inset, rimY);
-    ctx.strokeStyle = 'rgba(242, 216, 164, .8)';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    /* 안쪽 얇은 금선 */
-    ctx.strokeStyle = 'rgba(242, 216, 164, .24)';
+    ctx.strokeStyle = 'rgba(242, 216, 164, .18)';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(x0 + 7, topY + 8);
-    ctx.lineTo(x0 + 7, yb - rad + 2);
-    ctx.quadraticCurveTo(x0 + 7, yb - 7, x0 + rad - 2, yb - 7);
-    ctx.lineTo(x1 - rad + 2, yb - 7);
-    ctx.quadraticCurveTo(x1 - 7, yb - 7, x1 - 7, yb - rad + 2);
-    ctx.lineTo(x1 - 7, topY + 8);
+    ctx.moveTo(6, corner + 6);
+    ctx.quadraticCurveTo(6, 6, corner + 6, 6);
+    ctx.lineTo(W - corner - 6, 6);
+    ctx.quadraticCurveTo(W - 6, 6, W - 6, corner + 6);
+    ctx.lineTo(W - 6, H - corner - 6);
+    ctx.quadraticCurveTo(W - 6, H - 6, W - corner - 6, H - 6);
+    ctx.lineTo(corner + 6, H - 6);
+    ctx.quadraticCurveTo(6, H - 6, 6, H - corner - 6);
+    ctx.closePath();
     ctx.stroke();
     ctx.restore();
 
     /* 데드라인 — 가는 점선 */
-    var over = S ? S.warn : 0;
-    var hot = over > 0;
+    var hot = S && S.warn > 0;
+    var bandY = H * BAND;
     ctx.save();
-    ctx.setLineDash([10, 9]);
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = hot ? 'rgba(255, 138, 118, .95)' : 'rgba(248, 231, 194, .5)';
+    ctx.setLineDash([4, 6]);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = hot ? 'rgba(255, 160, 140, .95)' : 'rgba(255, 217, 143, .85)';
     ctx.beginPath();
-    ctx.moveTo(x0 + 10, DEAD_Y);
-    ctx.lineTo(x1 - 10, DEAD_Y);
+    ctx.moveTo(W * 0.08, bandY);
+    ctx.lineTo(W * 0.92, bandY);
     ctx.stroke();
     ctx.restore();
 
-    if (hot) {
-      var left = Math.max(0, DEAD_GRACE - over);
+    /* 떨어질 자리 안내선 — 다음 경단을 놓을 수 있을 때만 */
+    if (S && !S.over && !S.tool && S.dropCool <= 0) {
+      var aimR = rad(S.nextTier);
+      var ax = clamp(S.aimX, aimR + 5, W - aimR - 5);
       ctx.save();
-      ctx.fillStyle = 'rgba(255, 150, 128, .98)';
-      ctx.font = '600 12px "Pretendard", system-ui, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.lineWidth = 3;
-      ctx.strokeStyle = 'rgba(58, 37, 24, .65)';
-      ctx.strokeText('데드라인 초과 · ' + left.toFixed(1) + '초', W / 2, DEAD_Y - 8);
-      ctx.fillText('데드라인 초과 · ' + left.toFixed(1) + '초', W / 2, DEAD_Y - 8);
-      ctx.restore();
-    }
-
-    /* 떨어질 자리 안내선 */
-    if (S && !S.over && !S.tool) {
-      ctx.save();
-      ctx.setLineDash([3, 8]);
-      ctx.strokeStyle = 'rgba(248, 226, 178, .22)';
-      ctx.lineWidth = 1.4;
+      ctx.setLineDash([4, 5]);
+      ctx.strokeStyle = 'rgba(243, 206, 136, .42)';
+      ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.moveTo(clamp(S.aimX, 4, W - 4), DROP_Y + 10);
-      ctx.lineTo(clamp(S.aimX, 4, W - 4), H - 6);
+      ctx.moveTo(ax, bandY + 8);
+      ctx.lineTo(ax, H - 3);
       ctx.stroke();
       ctx.restore();
     }
@@ -1712,11 +1827,11 @@
 
   function drawAim() {
     var tier = S.nextTier;
-    var r = TIERS[tier].r;
-    var x = clamp(S.aimX, r + 1, W - r - 1);
+    var r = rad(tier);
+    var x = clamp(S.aimX, r + 5, W - r - 5);
     if (S.dropCool > 0) { return; }
     ctx.save();
-    drawGyeongdan(ctx, tier, x, DROP_Y, r, S.aiming ? 0.96 : 0.82);
+    drawGyeongdan(ctx, tier, x, r, r, S.aiming ? 0.95 : 0.55);
     ctx.restore();
   }
 
@@ -1827,13 +1942,12 @@
     if (S.tool) { return; }
     if (S.dropCool > 0) { return; }
     var tier = S.nextTier;
-    var r = TIERS[tier].r;
-    var bx = clamp(x, r + 1, W - r - 1);
-    var body = makeBody(tier, bx, DROP_Y, 0, 260);
+    var r = rad(tier);
+    var bx = (W - r - 5 < r + 5) ? W / 2 : clamp(x, r + 5, W - r - 5);
+    var body = makeBody(tier, bx, r, 0, 0);
     S.bodies.push(body);
-    S.score += 0;
     S.nextTier = pickSpawn();
-    S.dropCool = 0.32;
+    S.dropCool = DROP_COOL;
     S.dirty = true;
     saveGame(true);
     if (S.nextTier > S.maxTier) { S.maxTier = S.nextTier; }
@@ -2403,6 +2517,11 @@
         if (e.target && e.target.closest && e.target.closest('[data-sheet-close]')) { closeSheet(); }
       });
       window.addEventListener('resize', function () { if (opened) { resize(); } });
+      /* 폰을 돌리거나 판이 늦게 자리를 잡아도 바로 따라가도록 */
+      if (window.ResizeObserver) {
+        var ro = new window.ResizeObserver(function () { if (opened) { resize(); } });
+        if (el.stage) { ro.observe(el.stage); }
+      }
       window.addEventListener('keydown', function (e) {
         if (!opened) { return; }
         if (e.key === 'Escape') {
@@ -2465,8 +2584,9 @@
       add: function (tier, x, y, vx) {
         if (!S) { return null; }
         var t = clampInt(tier, 1, LAST_TIER, 1);
-        var body = makeBody(t, clamp(x || W / 2, TIERS[t].r, W - TIERS[t].r),
-          clamp(y === undefined ? H - TIERS[t].r - 4 : y, TIERS[t].r, H - TIERS[t].r),
+        var rr = rad(t);
+        var body = makeBody(t, clamp(x || W / 2, rr, W - rr),
+          clamp(y === undefined ? H - rr - 4 : y, rr, H - rr),
           Number(vx) || 0, 0);
         body.age = 1;
         S.bodies.push(body);
@@ -2474,6 +2594,7 @@
         return body.id;
       },
       setNext: function (tier) { if (S) { S.nextTier = clampInt(tier, 1, LAST_TIER, 1); } },
+      clear: function () { if (S) { S.bodies = []; S.picks = []; S.dirty = true; } },
       bodies: function () { return S ? S.bodies.map(function (b) { return { id: b.id, tier: b.tier, x: r2(b.x), y: r2(b.y), r: b.r, angle: b.angle, av: b.av }; }) : []; },
       state: function () {
         return S ? {
@@ -2488,7 +2609,11 @@
       anchor: function (tier, x, y) {
         var id = this.add(tier, x, y);
         for (var i = 0; i < S.bodies.length; i++) {
-          if (S.bodies[i].id === id) { S.bodies[i].held = true; S.bodies[i].age = 2; }
+          if (S.bodies[i].id === id) {
+            S.bodies[i].held = true;
+            S.bodies[i].supported = true;
+            S.bodies[i].age = 2;
+          }
         }
         return id;
       },

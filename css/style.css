@@ -2314,8 +2314,8 @@ body.is-locked { overflow: hidden; }
   flex-direction: column;
   width: 100%;
   max-width: 440px;
-  height: 100%;
-  max-height: 860px;
+  height: auto;
+  max-height: 100%;
   padding: 10px 12px calc(10px + var(--safe-b));
   border-radius: 22px;
   border: 1px solid rgba(233, 199, 140, .42);
@@ -2415,8 +2415,11 @@ body.is-locked { overflow: hidden; }
 /* ---- 놀이판 ---- */
 .gyeongdan__stage {
   position: relative;
-  flex: 1 1 auto;
-  min-height: 0;
+  flex: 0 1 auto;
+  width: 100%;
+  /* 「루팡문파」 경단만들기와 같은 판 비율 — 넓고 낮은 그릇 */
+  aspect-ratio: 444 / 480;
+  min-height: 200px;
   border-radius: 18px;
   overflow: hidden;
   border: 1px solid rgba(233, 199, 140, .5);
