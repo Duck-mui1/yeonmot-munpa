@@ -295,13 +295,14 @@
               굴러 내려가게 합니다. 대신 접선 속도는 경단의 각속도로 바뀌어
               실제로 데굴데굴 돌아갑니다.
      · FRIC_FLOOR : 바닥 마찰 — 미끄러지는 대신 굴러가게 붙잡습니다.
-     · ROLL_DRAG : 굴러가는 동안의 구름 저항(한 스텝당). 아주 약하게. */
+     · ROLL_DRAG : 굴러가는 동안의 구름 저항(한 스텝당). 경단이 판 끝까지
+                   미끄러져 나가지 않고 한두 뼘 굴러가 서서히 멈출 만큼. */
   var REST = 0.13;
   var FRIC = 0.20;
-  var FRIC_FLOOR = 0.62;
+  var FRIC_FLOOR = 0.86;
   var FRIC_WALL = 0.34;
   var MIN_BOUNCE = 130;      // 이보다 느리게 닿으면 튀지 않고 딱 붙습니다
-  var ROLL_DRAG = 0.9988;
+  var ROLL_DRAG = 0.996;
 
   function integrate(dt) {
     var bodies = S.bodies;
@@ -309,6 +310,7 @@
       var b = bodies[i];
       if (b.held) { continue; }   // 테스트용 고정(화면에는 나오지 않습니다)
       b.vy += GRAVITY * dt;
+      b.vx *= 0.9975;            // 아주 약한 공기 저항 — 옆으로 미끄러져 나가는 걸 막습니다
       b.x += b.vx * dt;
       b.y += b.vy * dt;
       b.angle += b.av * dt;
