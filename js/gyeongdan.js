@@ -1831,7 +1831,14 @@
     var x = clamp(S.aimX, r + 5, W - r - 5);
     if (S.dropCool > 0) { return; }
     ctx.save();
-    drawGyeongdan(ctx, tier, x, r, r, S.aiming ? 0.95 : 0.55);
+    /* 다음 경단은 ‘아직 떨어지지 않은 그림자’ — 테두리까지 점선으로 둡니다 */
+    drawGyeongdan(ctx, tier, x, r, r, S.aiming ? 0.95 : 0.42);
+    ctx.setLineDash([3, 5]);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = S.aiming ? 'rgba(255, 236, 190, .8)' : 'rgba(248, 226, 178, .38)';
+    ctx.beginPath();
+    ctx.arc(x, r, r * 0.98, 0, Math.PI * 2);
+    ctx.stroke();
     ctx.restore();
   }
 
