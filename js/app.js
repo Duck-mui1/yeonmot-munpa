@@ -1268,7 +1268,7 @@
           (S.guideOpen ? '접어 두기' : '공략 더 보기 (' + (S.guides.length - 4) + ')') + '</button>';
       }
       if (!isLive()) {
-        html += '<p class="section__note">체험 모드의 예시 영상이에요. 실제 문파에서는 문주가 유튜브 주소를 붙여 넣어 공략을 올려요.</p>';
+        html += '<p class="section__note">체험 모드의 예시 카드예요. 실제 문파에서는 문파원 누구나 유튜브 주소를 붙여 넣어 공략을 올릴 수 있어요.</p>';
       }
     }
     html += '</section>';
