@@ -78,16 +78,25 @@
   /** 단계의 기준 반지름 — 판 너비에 맞춰 늘어납니다 */
   function rad(tier) { return TIERS[tier].r * (W / BASE_W); }
 
-  /* 경단 그림 — 도감 원본 그림에서 오려낸 투명 PNG.
-     그림 한 장이 기준 지름(2r)을 그대로 채우고, 몸통은 그 안에 조금 작게 들어 있습니다. */
+  /* 경단 그림 — 「도깨비의 세계」 1~11단계 고화질 시트에서 오려낸 투명 PNG.
+     그림마다 투명 여백이 달라서, 그림 속 '몸통 원'을 재어 두고 몸통이 기준 반지름에
+     오도록 크기와 위치를 맞춥니다. */
   var SPRITE_PATH = 'assets/gyeongdan/tier-';
   var SPRITE_CREDIT = '경단 이미지의 저작권은 「도깨비의 세계」에 있으며, 권리자 요청 시 즉시 삭제될 수 있습니다.';
-  /* 그림 속 몸통 중심이 그림 가운데에서 얼마나 벗어났는지 — 회전축을 몸통 가운데로
-     (1~9단계는 인게임 화면에서 몸통을 캔버스 한가운데에 맞춰 잘랐습니다) */
-  var SPRITE_OFF = {
-    1: [0, 0], 2: [0, 0], 3: [0, 0], 4: [0, 0], 5: [0, 0], 6: [0, 0],
-    7: [0, 0], 8: [0, 0], 9: [0, 0], 10: [0.004, -0.008], 11: [-0.013, 0.020]
+  /* 그림 정사각 한 변에서 몸통 지름이 차지하는 비율 (시트에서 잰 값) */
+  var SPRITE_BALL = {
+    1: 0.9419, 2: 0.9228, 3: 0.9361, 4: 0.9382, 5: 0.9440, 6: 0.9678,
+    7: 0.9413, 8: 0.9611, 9: 0.9214, 10: 0.9307, 11: 0.9558
   };
+  /* 그림 속 몸통 중심이 그림 가운데에서 얼마나 벗어났는지 — 회전축을 몸통 가운데로 */
+  var SPRITE_OFF = {
+    1: [-0.0015, -0.0224], 2: [0.0014, 0.0012], 3: [-0.0018, -0.0039],
+    4: [-0.0001, 0.0142], 5: [0.0019, 0.0006], 6: [-0.0027, 0.0147],
+    7: [-0.0057, -0.0185], 8: [0.0005, -0.0346], 9: [-0.0036, 0.0069],
+    10: [-0.0008, -0.0007], 11: [0.0006, -0.0027]
+  };
+  /* 기준 반지름 r 에 대한 '보이는 몸통' 반지름 비율 — 예전 그림과 같은 크기로 맞춥니다 */
+  var SPRITE_FILL = 0.907;
   var sprites = [];          // sprites[tier] = Image
   var spriteReady = {};      // 로드가 끝난 단계
   var spritesAsked = false;
@@ -116,6 +125,17 @@
 
   function spriteOf(tier) {
     return spriteReady[tier] ? sprites[tier] : null;
+  }
+
+  /** 그림의 '몸통'이 반지름 bodyR 이 되도록 (cx, cy)에 그립니다 — SPRITE_BALL·SPRITE_OFF 반영 */
+  function drawSpriteArt(g, tier, cx, cy, bodyR) {
+    var img = spriteOf(tier);
+    if (!img) { return false; }
+    var ball = SPRITE_BALL[tier] || 0.94;
+    var size = (bodyR * 2) / ball;
+    var off = SPRITE_OFF[tier] || [0, 0];
+    g.drawImage(img, cx - size / 2 - off[0] * size, cy - size / 2 - off[1] * size, size, size);
+    return true;
   }
 
   /* 위에서 떨어지는 경단은 1~5단계뿐입니다.
@@ -791,14 +811,9 @@
     /* 도감 원본 그림(PNG)이 있으면 그것을 그립니다. 없으면 아래 벡터 그림이 그대로 나옵니다. */
     var img = spriteOf(tier);
     if (img) {
-      /* 그림 한 장이 기준 지름(2r)을 그대로 채웁니다 — 몸통은 그 안에서 살짝 작게.
-         「루팡문파」와 같은 방식이라 충돌 반지름과 그림이 자연스럽게 겹칩니다. */
-      var size = r * 2;
-      var off = SPRITE_OFF[tier] || [0, 0];
       g.save();
       if (alpha !== undefined && alpha !== 1) { g.globalAlpha = alpha; }
-      g.translate(cx, cy);
-      g.drawImage(img, -size / 2 - off[0] * size, -size / 2 - off[1] * size, size, size);
+      drawSpriteArt(g, tier, cx, cy, r * SPRITE_FILL);
       g.restore();
       return;
     }
@@ -2318,10 +2333,9 @@
         return;
       }
       var tier = Number(c.getAttribute('data-tier'));
-      var img = spriteOf(tier);
-      if (img) {
+      if (spriteOf(tier)) {
         /* 도감 원본 그림 — 줄마다 같은 크기로 놓습니다(원본 도감처럼) */
-        g.drawImage(img, 0, 0, size, size);
+        drawSpriteArt(g, tier, size / 2, size / 2, size * 0.4535);
         return;
       }
       drawGyeongdan(g, tier, size / 2, size / 2, size * (ICON_RATIO[tier] || 0.28), 1);
@@ -2479,16 +2493,19 @@
      13. 열기 · 닫기 · 다시하기
      =================================================================== */
 
+  var restartArmTimer = 0;
+
   function restart(withConfirm) {
     if (!S) { return; }
+    window.clearTimeout(restartArmTimer);   // 예전에 걸어 둔 '한 번 더' 되돌림 타이머는 지웁니다
     if (withConfirm && !S.over && S.score > 0 && el.restartBtn) {
       if (el.restartBtn.getAttribute('data-armed') !== '1') {
         el.restartBtn.setAttribute('data-armed', '1');
         el.restartBtn.classList.add('is-armed');
         el.restartBtn.textContent = '한 번 더 누르면 새 판';
         setHint('진행 중인 판을 버리고 새로 시작해요 · 한 번 더 눌러 주세요');
-        window.setTimeout(function () {
-          if (el.restartBtn) {
+        restartArmTimer = window.setTimeout(function () {
+          if (el.restartBtn && el.restartBtn.getAttribute('data-armed') === '1') {
             el.restartBtn.setAttribute('data-armed', '0');
             el.restartBtn.classList.remove('is-armed');
             el.restartBtn.textContent = '다시하기';
@@ -2559,6 +2576,12 @@
 
   function closeGame() {
     if (!opened) { return; }
+    window.clearTimeout(restartArmTimer);
+    if (el.restartBtn && el.restartBtn.getAttribute('data-armed') === '1') {
+      el.restartBtn.setAttribute('data-armed', '0');
+      el.restartBtn.classList.remove('is-armed');
+      el.restartBtn.textContent = '다시하기';
+    }
     saveGame(true);
     pause();
     if (S) { S.running = false; }
