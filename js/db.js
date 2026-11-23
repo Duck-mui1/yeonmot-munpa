@@ -517,6 +517,33 @@
       });
     },
 
+    /* --- 백업용 전체 조회 (문주 도구의 “전체 데이터 백업”)
+     *  화면 목록은 공지 · 문파컨텐츠를 30건까지만 읽지만, 백업은 빠짐없이 모아야 합니다.
+     *  공지 · 일정은 Realtime 때문에 열려 있는 공개 테이블이라 넉넉한 limit 으로 바로 읽습니다
+     *  (새 SQL 없이 지금 있는 규약만 씁니다 — DB 마이그레이션 필요 없음).
+     *  채팅 · 앨범은 RPC 한 번에 100건 · 30건까지만 주므로 화면에서 p_before 로 나눠 받습니다.
+     */
+    backup: {
+      /** 공지 전체 — 오래된 것부터 */
+      notices: function (limit) {
+        return select('notices',
+          'select=id,title,body,tag,pinned,author_id,created_at&deleted_at=is.null&order=created_at.asc&limit=' +
+          (limit || 1000));
+      },
+      /** 문파컨텐츠 전체 — 매주 반복 칸이 없는(마이그레이션 전) 서버면 예전 칸만으로 */
+      events: function (limit) {
+        var base = 'select=id,title,place,tag,note,starts_at,ends_at,created_by';
+        var order = '&deleted_at=is.null&order=starts_at.asc&limit=' + (limit || 1000);
+        return select('events', base + ',repeat_weekly,repeat_weekdays' + order).catch(function (err) {
+          var msg = String((err && err.message) || '');
+          if (String(err && err.code) === '42703' || msg.indexOf('repeat_weekly') !== -1) {
+            return select('events', base + order);
+          }
+          throw err;
+        });
+      }
+    },
+
     /* --- 관리자(문주) --- */
     admin: {
       getSettings: function () {

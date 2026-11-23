@@ -3250,6 +3250,298 @@
   }
 
   /* ============================================================
+     문주 도구: 전체 데이터 백업 (JSON)
+     ------------------------------------------------------------
+     · 내정보 → 문주 도구 → “📦 전체 데이터 백업 받기 (JSON)” — 문주에게만 보입니다.
+       (체험 모드에서는 예시 데이터로 같은 버튼을 눌러 볼 수 있어요)
+     · 화면 목록은 최근 30건까지만 읽지만, 백업은 공지 · 문파컨텐츠 전체와
+       채팅 · 앨범을 p_before 로 끝까지 나눠 받아 모읍니다 — 지금 있는 조회 API 만 씁니다.
+       (SQL 마이그레이션 없음 · 사용자가 실행할 것 없음)
+     · PIN 해시 같은 인증 비밀값은 서버가 내려주지도 않고, 혹시 섞여 와도 withoutSecrets 가 지웁니다.
+     ============================================================ */
+  var BACKUP_KEY = 'lastBackup';
+  var BACKUP_APP = '연못';
+  var BACKUP_VERSION = '0.3';
+  var BACKUP_CHAT_PAGE = 100;    // list_chat_messages 한 번에 받는 상한
+  var BACKUP_ALBUM_PAGE = 30;    // list_album_posts 한 번에 받는 상한
+  var BACKUP_MAX_PAGES = 40;     // 안전장치 — 채팅 4,000줄 · 앨범 1,200장까지
+  var BACKUP_SECRET_KEY = /^(pin|pin_hash|pin_salt|hashed_pin|password|passwd|pwd|secret|token|api_key|.*_hash|.*_token|.*_secret)$/i;
+
+  /** 백업에 담지 않을 열쇠 — 인증 비밀값(pin · hash · token …)은 모양이 어떻든 지웁니다. */
+  function withoutSecrets(value) {
+    if (Object.prototype.toString.call(value) === '[object Array]') {
+      return value.map(withoutSecrets);
+    }
+    if (value && typeof value === 'object') {
+      var out = {};
+      Object.keys(value).forEach(function (key) {
+        if (BACKUP_SECRET_KEY.test(key)) { return; }
+        out[key] = withoutSecrets(value[key]);
+      });
+      return out;
+    }
+    return value;
+  }
+
+  function backupBytes(size) {
+    if (!size) { return '0KB'; }
+    if (size < 1024 * 1024) { return Math.max(1, Math.round(size / 1024)) + 'KB'; }
+    return (size / (1024 * 1024)).toFixed(1) + 'MB';
+  }
+
+  function backupFileName() {
+    return 'yeonmot-backup-' + dayKey(new Date()) + '.json';
+  }
+
+  function backupSummary(data) {
+    return {
+      members: data.members.length,
+      notices: data.notices.length,
+      events: data.events.length,
+      coupons: data.coupons.length,
+      guides: data.guides.length,
+      absences: data.absences.length,
+      album: data.album.length,
+      album_images: data.album.filter(function (p) { return !!p.image; }).length,
+      chat: data.chat.length
+    };
+  }
+
+  /** 마지막 백업 시각 + 복구 안내 한 줄 */
+  function backupNoteHtml() {
+    var last = store.get(BACKUP_KEY, null);
+    var when = last && last.at ? (dateLabel(last.at) + ' ' + timeLabel(last.at)) : '';
+    var head = when
+      ? '<b>마지막 백업:</b> ' + esc(when) + ' · ' + esc(backupBytes(last.bytes)) +
+        (last.file ? ' <span class="backup__file">' + esc(last.file) + '</span>' : '') + '<br>'
+      : '아직 백업 파일을 만든 적이 없어요.<br>';
+    return '<p class="backup__note" id="backup-note">' + head +
+      '새 프로젝트에서 복구할 때 이 파일을 사용해요.</p>';
+  }
+
+  function backupRowHtml(desc) {
+    return '<button type="button" class="row row--action" id="admin-backup-row">' +
+      '<span class="row__icon"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">' +
+      '<path d="M4 8.5h16v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>' +
+      '<path d="M3.4 4.5h17.2v4H3.4z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>' +
+      '<path d="M12 11v5.4M9.9 14.2l2.1 2.2 2.1-2.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>' +
+      '</svg></span>' +
+      '<span class="row__text"><span class="row__label">📦 전체 데이터 백업 받기 (JSON)</span>' +
+      '<span class="row__desc">' + esc(desc) + '</span></span>' +
+      '<span class="row__chevron" aria-hidden="true"><svg viewBox="0 0 24 24" width="15" height="15" focusable="false">' +
+      '<path d="M12 5v9M9 11.6l3 3 3-3M5 18.5h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>' +
+      '</svg></span>' +
+      '</button>' + backupNoteHtml();
+  }
+
+  /** p_before 로 나눠 받기 — 짧은 쪽이 오거나 새 항목이 없으면(서버가 커서를 무시해도) 멈춥니다. */
+  function pageThrough(fetchPage, pageSize, cursorOf, keyOf) {
+    var rows = [];
+    var seen = {};
+    var before = null;
+    var pages = 0;
+
+    function step() {
+      return fetchPage(pageSize, before).then(function (page) {
+        var list = page || [];
+        var fresh = list.filter(function (row) {
+          var key = String(keyOf(row));
+          if (seen[key]) { return false; }
+          seen[key] = true;
+          return true;
+        });
+        if (!fresh.length) { return { rows: rows, truncated: false }; }
+        rows = rows.concat(fresh);
+        pages += 1;
+        var next = cursorOf(fresh);
+        if (next === null || next === undefined || next === before || list.length < pageSize) {
+          return { rows: rows, truncated: false };
+        }
+        if (pages >= BACKUP_MAX_PAGES) { return { rows: rows, truncated: true }; }
+        before = next;
+        return step();
+      });
+    }
+    return step();
+  }
+
+  /** 앨범 사진은 글과 따로 받아 data URL 그대로 담습니다 — 복구할 때 사진까지 살아나도록. */
+  function fillAlbumImages(items) {
+    var failed = 0;
+    function step(i) {
+      if (i >= items.length) { return Promise.resolve(failed); }
+      return DB.albumImage(items[i].id).then(function (res) {
+        items[i].image = (res && res.data_url) || null;
+        if (res && res.mime) { items[i].image_mime = res.mime; }
+      }, function () {
+        items[i].image = null;
+        failed += 1;
+      }).then(function () { return step(i + 1); });
+    }
+    return step(0);
+  }
+
+  function collectTrialBackup() {
+    return {
+      settings: S.clan ? {
+        clan_name: S.clan.name,
+        clan_motto: S.clan.motto,
+        member_capacity: S.clan.capacity,
+        member_count: S.clan.member_count,
+        level: S.clan.level,
+        mode: 'trial'
+      } : null,
+      members: S.members.map(function (m) {
+        return {
+          id: m.id, nickname: m.nickname, role: m.role, level: m.level,
+          status: m.status, joined_at: m.joined_at || null, avatar: m.avatar || null
+        };
+      }),
+      notices: S.notices.map(function (n) {
+        return {
+          id: n.id, title: n.title, body: n.body, tag: n.tag,
+          pinned: !!n.pinned, author: n.author, created_at: n.created_at
+        };
+      }),
+      events: S.events.map(function (ev) {
+        return {
+          id: ev.id, title: ev.title, place: ev.place, tag: ev.tag, note: ev.note,
+          starts_at: ev.starts_at, ends_at: ev.ends_at || null,
+          repeat_weekly: !!ev.repeat_weekly, repeat_weekdays: ev.repeat_weekdays || []
+        };
+      }),
+      coupons: S.coupons.map(function (c) {
+        return {
+          id: c.id, code: c.code, title: c.title, reward: c.reward,
+          expires_on: c.expires_on || c.until || null, tone: c.tone || null
+        };
+      }),
+      guides: S.guides.map(function (g) {
+        return {
+          id: g.id, title: g.title, youtube_url: g.youtube_url || null,
+          video_id: g.video_id || null, kind: g.kind || null, created_at: g.created_at || null
+        };
+      }),
+      absences: S.absences.map(function (a) {
+        return {
+          id: a.id, member_id: a.member_id || null, nickname: a.nickname,
+          target_name: a.target_name || null, is_proxy: !!a.is_proxy,
+          start_date: a.start_date, end_date: a.end_date, reason: a.reason
+        };
+      }),
+      album: S.album.map(function (a) {
+        return {
+          id: a.id, title: a.title, caption: a.caption, author: a.author,
+          kind: a.kind || null, likes: a.likes || 0, created_at: a.created_at, image: null
+        };
+      }),
+      chat: S.chat.map(function (m) {
+        return {
+          id: m.id, nickname: m.nickname, kind: m.kind, body: m.body, created_at: m.created_at
+        };
+      })
+    };
+  }
+
+  function collectLiveBackup() {
+    var data = {
+      settings: null, members: [], notices: [], events: [],
+      coupons: [], guides: [], absences: [], album: [], chat: []
+    };
+
+    return Promise.all([
+      DB.admin.getSettings().then(function (settings) { data.settings = settings; }),
+      DB.admin.listMembers().then(function (rows) { data.members = rows || []; }),
+      DB.backup.notices().then(function (rows) { data.notices = rows || []; }),
+      DB.backup.events().then(function (rows) { data.events = rows || []; }),
+      DB.listCoupons().then(function (rows) { data.coupons = rows || []; }),
+      DB.listGuides().then(function (rows) { data.guides = rows || []; }),
+      DB.listAbsences().then(function (rows) { data.absences = rows || []; })
+    ]).then(function () {
+      return Promise.all([
+        pageThrough(function (limit, before) { return DB.listChat(limit, before); }, BACKUP_CHAT_PAGE,
+          function (list) {
+            var ids = list.map(function (m) { return Number(m.id); })
+              .filter(function (n) { return !isNaN(n); });
+            return ids.length ? Math.min.apply(null, ids) : null;
+          },
+          function (m) { return m.id; }),
+        pageThrough(function (limit, before) { return DB.listAlbum(limit, before); }, BACKUP_ALBUM_PAGE,
+          function (list) { return list.length ? list[list.length - 1].created_at : null; },
+          function (p) { return p.id; })
+      ]);
+    }).then(function (paged) {
+      data.chat = paged[0].rows.sort(function (a, b) { return Number(a.id) - Number(b.id); });
+      data.album = paged[1].rows;
+      return fillAlbumImages(data.album).then(function (failed) {
+        return {
+          data: data,
+          note: failed ? '사진 ' + failed + '장은 서버에서 받지 못해 빈 채로 담았어요.' : ''
+        };
+      });
+    });
+  }
+
+  function collectBackup() {
+    return isLive() ? collectLiveBackup() : Promise.resolve({ data: collectTrialBackup(), note: '' });
+  }
+
+  /** Blob → 파일 내려받기 (다운로드 폴더로 바로 저장) */
+  function downloadFile(name, text) {
+    var blob = new window.Blob([text], { type: 'application/json;charset=utf-8' });
+    var url = window.URL.createObjectURL(blob);
+    var link = document.createElement('a');
+    link.href = url;
+    link.download = name;
+    link.rel = 'noopener';
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    window.setTimeout(function () {
+      if (link.parentNode) { link.parentNode.removeChild(link); }
+      window.URL.revokeObjectURL(url);
+    }, 4000);
+    return blob.size;
+  }
+
+  function saveBackup() {
+    var btn = $('#admin-backup-row');
+    if (!btn || btn.getAttribute('aria-busy') === 'true') { return; }
+    var label = btn.querySelector('.row__label');
+    var original = label ? label.textContent : '';
+    btn.setAttribute('aria-busy', 'true');
+    btn.setAttribute('disabled', 'disabled');
+    if (label) { label.textContent = '백업 파일을 모으는 중…'; }
+
+    collectBackup().then(function (result) {
+      var payload = {
+        exported_at: new Date().toISOString(),
+        app: BACKUP_APP,
+        version: BACKUP_VERSION,
+        summary: backupSummary(result.data),
+        data: withoutSecrets(result.data)
+      };
+      var name = backupFileName();
+      var size = downloadFile(name, JSON.stringify(payload, null, 2));
+      store.set(BACKUP_KEY, { at: payload.exported_at, file: name, bytes: size, summary: payload.summary });
+
+      var note = $('#backup-note');
+      if (note) { note.outerHTML = backupNoteHtml(); }
+
+      var s = payload.summary;
+      toast('백업 파일을 저장했어요 (공지 ' + fmtNum(s.notices) + '건 · 문파컨텐츠 ' + fmtNum(s.events) +
+        '건 · 앨범 ' + fmtNum(s.album) + '장 · 채팅 ' + fmtNum(s.chat) + '줄)');
+      if (result.note) { window.setTimeout(function () { toast(result.note); }, 3000); }
+    }).catch(function (err) {
+      toast('백업 파일을 만들지 못했어요. ' + errorMessage(err));
+    }).then(function () {
+      btn.removeAttribute('aria-busy');
+      btn.removeAttribute('disabled');
+      if (label) { label.textContent = original; }
+    });
+  }
+
+  /* ============================================================
      내정보
      ============================================================ */
   function renderMe() {
@@ -3329,6 +3621,13 @@
         '<div class="row"><span class="row__icon"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="9" cy="9" r="3" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M4 19c0-3 2.5-4.6 5.5-4.6S15 16 15 19" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M18 8v6M15 11h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></span>' +
         '<span class="row__text"><span class="row__label">지금 문파원 ' + fmtNum(S.clan ? S.clan.member_count : 0) + '명</span>' +
         '<span class="row__desc">문파원 탭에서 직위 · 내보내기 · 차단을 할 수 있어요</span></span></div>' +
+        backupRowHtml('공지 · 문파컨텐츠 · 쿠폰 · 공략 · 자리비움 · 앨범 · 채팅 · 문파 설정을 한 파일로') +
+        '</div>';
+    } else if (guest) {
+      /* 체험 모드 — 같은 버튼을 예시 데이터로 눌러 볼 수 있습니다 (서버로 가지 않아요) */
+      html += '<div class="menu-card">' +
+        '<h3 class="menu-card__title">데이터 백업</h3>' +
+        backupRowHtml('체험 데이터로 만드는 예시 파일이에요 (이 기기에서만)') +
         '</div>';
     }
 
@@ -3373,6 +3672,9 @@
 
     var inviteRow = $('#admin-invite-row');
     if (inviteRow) { inviteRow.addEventListener('click', openInviteModal); }
+
+    var backupRow = $('#admin-backup-row');
+    if (backupRow) { backupRow.addEventListener('click', saveBackup); }
 
     bindAvatarCard();
 

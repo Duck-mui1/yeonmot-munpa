@@ -1571,6 +1571,18 @@ svg { max-width: 100%; }
 .row--action { width: 100%; }
 .row__chevron { flex: none; color: var(--muted); transition: transform .25s ease; }
 .row[aria-expanded="true"] .row__chevron { transform: rotate(180deg); }
+.row[disabled] { opacity: .65; }
+
+/* 문주 도구 · 데이터 백업 — 마지막 백업 시각과 복구 안내 */
+.backup__note {
+  margin: 0;
+  padding: 9px 14px 12px;
+  font-size: 10px;
+  line-height: 1.65;
+  color: rgba(147, 183, 174, .8);
+}
+.backup__note b { color: #cdeee2; font-weight: 600; }
+.backup__file { color: rgba(147, 183, 174, .6); word-break: break-all; }
 
 .switch {
   flex: none;
