@@ -3450,7 +3450,18 @@
     };
 
     return Promise.all([
-      DB.admin.getSettings().then(function (settings) { data.settings = settings; }),
+      DB.admin.getSettings().then(function (settings) {
+        /* 초대 코드는 빼고 챙깁니다 — 문파에 드는 사람을 정하는 인증값이라
+         * 파일이 남에게 돌아가면 막을 수 없습니다. 복구할 때는 새 코드를 정하면 됩니다. */
+        data.settings = settings ? {
+          clan_name: settings.clan_name,
+          clan_motto: settings.clan_motto,
+          member_capacity: settings.member_capacity,
+          member_count: settings.member_count,
+          kicked_count: settings.kicked_count,
+          banned_count: settings.banned_count
+        } : null;
+      }),
       DB.admin.listMembers().then(function (rows) { data.members = rows || []; }),
       DB.backup.notices().then(function (rows) { data.notices = rows || []; }),
       DB.backup.events().then(function (rows) { data.events = rows || []; }),
