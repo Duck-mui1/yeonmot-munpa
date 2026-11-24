@@ -242,8 +242,12 @@
       return k < 0 ? 999 : k;
     }
 
-    /* 신식 토글 → 효과 모으기 */
-    var fx = { ultCd: 0, cd: 0, cdPct: 0, dmg: 0, ultDmg: 0, resetEvery: 0, ultResetEvery: 0, halfCdEvery: 0 };
+    /* 신식 토글 → 효과 모으기
+       · dmg         상시 피해 증가(배수에 바로 넣음)
+       · dmgBuff     버프형 피해 증가 — 「dmgBuffEvery」회마다 발동해 「dmgBuffSec」초 동안만 붙습니다
+         (파멸 요기범람: 영력 200 = 도술 14회마다 → 30초간 피해 +20%) */
+    var fx = { ultCd: 0, cd: 0, cdPct: 0, dmg: 0, ultDmg: 0, resetEvery: 0, ultResetEvery: 0, halfCdEvery: 0,
+      dmgBuff: 0, dmgBuffEvery: 0, dmgBuffSec: 0 };
     var activeToggles = [];
     DATA.styles.forEach(function (st) {
       if (!sinKeys[st.key]) { return; }
@@ -415,6 +419,7 @@
 
     var n = list.length;
     var i;
+    var j;
     for (i = 0; i < n; i++) {
       /* order = 사용 순서 설정(castOrder)에서의 자리. 궁극기도 같은 목록을 따릅니다 */
       list[i].order = (list[i].ord != null ? list[i].ord : i);
@@ -433,6 +438,17 @@
     var castsSinceReset = 0;
     var castsSinceUltReset = 0;
     var castSeq = 0;
+    /* 기만 신식 — 궁극기를 제외한 시전 횟수로 눈물(최대 2개)을 세고,
+       3회째(= 눈물 2개를 모은 다음 시전)마다 쿨 중인 도술 1개의 남은 쿨을 50% 줄입니다 */
+    var nonUltSeq = 0;
+    var halfTrig = 0, halfHit = 0, halfCoolSum = 0;
+    /* 파멸 요기범람 — 14회마다 켜지는 30초 피해 +20% 버프 구간 */
+    var buffUntil = -Infinity;
+    var castsSinceBuff = 0;
+    var buffTrig = 0;
+    var buffHitCasts = 0;
+    var buffTime = 0;
+    var buffFrom = -Infinity;
     var t = 0;
     var idle = 0;
     var segments = [];
@@ -484,11 +500,14 @@
 
       cur.casts += 1;
       cur.occupied += castLen;
-      cur.damage += cur.coeff;
+      /* 버프형 피해 증가(파멸 요기범람) — 버프가 살아 있는 시점의 시전에만 붙습니다 */
+      var buffMul = (fx.dmgBuff && t < buffUntil - EPS) ? (1 + fx.dmgBuff) : 1;
+      if (buffMul !== 1) { buffHitCasts += 1; }
+      cur.damage += cur.coeff * buffMul;
       if (cur.chain) {
-        cur.damage += cur.chain.coeff;
+        cur.damage += cur.chain.coeff * buffMul;
         cur.chainUses += cur.chain.uses;
-        cur.chainDamage += cur.chain.coeff;
+        cur.chainDamage += cur.chain.coeff * buffMul;
       }
       castSeq += 1;
 
@@ -516,7 +535,59 @@
          다음 발동의 대기시간이 아닙니다 — 은신 25초 · 묵직한 주먹 9초 ·
          쌍검 가르기 10초 · 월식 12초를 그대로 기다립니다. */
       var cd = cur.cd;
-      if (fx.halfCdEvery && castSeq % fx.halfCdEvery === 0) { cd = cd * 0.5; }
+
+      /* 파멸 신식(요기범람) — 궁극기를 제외한 도술을 쓸 때마다 영력 15.
+         14회(= 영력 200)가 된 순간부터 30초 동안 피해 +20% 버프가 켜집니다.
+         (14회 쿨 초기화 토글과 별개로, 피해 +20% 토글만 켜도 14회마다 발동합니다.
+          14회째에 시전한 도술은 영력을 채운 도술이라 버프 없이 들어갑니다.) */
+      if (cur.kind !== 'ult' && fx.dmgBuffEvery > 0) {
+        castsSinceBuff += 1;
+        if (castsSinceBuff >= fx.dmgBuffEvery) {
+          castsSinceBuff = 0;
+          buffTrig += 1;
+          if (buffUntil > t + EPS) {
+            /* 아직 버프가 남아 있으면 끝만 30초 더 */
+          } else {
+            if (buffFrom > -Infinity) {
+              buffTime += Math.max(0, Math.min(duration, buffUntil) - buffFrom);
+            }
+            buffFrom = t;
+          }
+          buffUntil = t + (fx.dmgBuffSec > 0 ? fx.dmgBuffSec : 30);
+        }
+      }
+
+      /* 기만 신식(눈물 2개 소모) — 「쿨타임이 돌고 있는 도술 1개」의 남은 쿨을 50% 줄입니다.
+         · 눈물은 궁극기를 제외한 도술을 쓸 때마다 1개(최대 2개) 쌓이고,
+           눈물 2개일 때 궁극기를 제외한 도술을 쓰면 2개를 소모합니다 → 3회마다 발동
+         · 대상은 그 순간 쿨이 돌고 있는 도술 중 무작위 1개입니다(궁극기·방금 쓴 도술 제외).
+           어느 도술이 걸리느냐에 따라 DPS가 달라지므로, 쿨 중인 도술 k개의 남은 시간을
+           (1 - 0.5 / k)배로 **함께** 줄여 무작위 1개의 평균 기댓값으로 계산합니다.
+           (k=1 → 남은 쿨 절반, k=2 → 각 25% 감소 = 하나가 걸릴 때의 기댓값)
+         · 쿨 중인 도술이 하나도 없으면 눈물만 낭비됩니다(감소 없음). */
+      if (fx.halfCdEvery > 0 && cur.kind !== 'ult') {
+        nonUltSeq += 1;
+        if (nonUltSeq % fx.halfCdEvery === 0) {
+          halfTrig += 1;
+          var coolCount = 0;
+          for (j = 0; j < n; j++) {
+            if (j === pick || list[j].kind === 'ult') { continue; }
+            if (list[j].readyAt > t + EPS) { coolCount += 1; }
+          }
+          if (coolCount > 0) {
+            var keepRatio = 1 - 0.5 / coolCount;
+            for (j = 0; j < n; j++) {
+              if (j === pick || list[j].kind === 'ult') { continue; }
+              if (list[j].readyAt > t + EPS) {
+                list[j].readyAt = t + (list[j].readyAt - t) * keepRatio;
+              }
+            }
+            halfHit += 1;
+            halfCoolSum += coolCount;
+          }
+        }
+      }
+
       cur.readyAt = t + Math.max(0.1, cd);
 
       applyFlatCd(t, pick);
@@ -542,6 +613,9 @@
     }
 
     /* 결과 정리 */
+    if (buffFrom > -Infinity) {
+      buffTime += Math.max(0, Math.min(duration, buffUntil) - buffFrom);
+    }
     var castTotal = 0;
     var skillDamage = 0;
     var rows = [];
@@ -620,6 +694,23 @@
         return { key: s.key, name: s.style.name, count: s.count, color: s.style.color, ult: skillById(s.style.ult) };
       }),
       toggles: built.toggles,
+      /* 파멸 요기범람 — 14회마다 30초간 켜진 피해 +20% 버프가 실제로 몇 번·몇 초 돌았는지 */
+      dmgBuff: fx.dmgBuff > 0 ? {
+        buff: fx.dmgBuff,
+        every: fx.dmgBuffEvery,
+        sec: fx.dmgBuffSec > 0 ? fx.dmgBuffSec : 30,
+        triggers: buffTrig,
+        activeSec: round(buffTime, 1),
+        buffedCasts: buffHitCasts
+      } : null,
+      /* 기만 신식 발동 기록 — 화면·테스트가 「쿨 중인 도술을 줄였는지」 확인할 수 있게 남깁니다 */
+      halfCd: fx.halfCdEvery > 0 ? {
+        every: fx.halfCdEvery,
+        triggers: halfTrig,
+        hits: halfHit,
+        wasted: halfTrig - halfHit,
+        avgCooling: halfHit ? round(halfCoolSum / halfHit, 2) : 0
+      } : null,
       dmgMul: round(built.dmgMul, 3),
       ultDmgMul: round(built.ultDmgMul, 3),
       totalCasts: rows.reduce(function (a, r) { return a + r.casts; }, 0)
