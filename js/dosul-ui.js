@@ -548,6 +548,15 @@
     return out;
   }
 
+  /* 6돌파 옵션 줄의 상태 문구 — k:'aura' 는 「버프가 돌아가는 동안 전체」에 붙는 효과 */
+  function sixOptStateText(o) {
+    if (o.k === 'aura') {
+      return o.on ? '켜짐 · 10초 동안 모든 도술·평타' : '끄면 +' + num(o.d, 0) + '% 없음';
+    }
+    if (o.on) { return o.when ? '켜짐 · 그 상태일 때만' : '켜짐 · 계산 반영'; }
+    return '켜면 +' + num(o.d, 0) + '%';
+  }
+
   /* 6돌파 옵션 카드 — 특별 도술만. 6돌파 미만이면 미리보기(잠김)로 보여 줍니다.
      · 계산 반영: 고정 피해(d6) + 켜 둔 상황 옵션(extra)
      · 표시만: 대상 수·침묵·이속처럼 딜로 환산할 수 없는 효과 */
@@ -566,7 +575,7 @@
       if (o.calc) {
         rows += '<li class="ds-six__li is-opt"><label><input type="checkbox" data-tr6="' + sk.id + ':' + esc(o.id) + '"' +
           (o.on ? ' checked' : '') + '><span>' + esc(o.t) + '</span></label>' +
-          '<em>' + (o.on ? (o.when ? '켜짐 · 그 상태일 때만' : '켜짐 · 계산 반영') : '켜면 +' + num(o.d, 0) + '%') + '</em>' +
+          '<em>' + sixOptStateText(o) + '</em>' +
           (o.n ? '<i>' + esc(o.n) + '</i>' : '') + '</li>';
       } else {
         rows += '<li class="ds-six__li is-text"><span>' + esc(o.t) + '</span><em>표시만</em></li>';
@@ -608,6 +617,7 @@
         if (t.d6) { parts.push('6돌파 피해 +' + num(t.d6, 0) + '%'); }
         if (t.extra) { parts.push('옵션 피해 +' + num(t.extra, 0) + '%'); }
         if (t.extraCond) { parts.push('요기범람 중 +' + num(t.extraCond, 0) + '%'); }
+        if (t.aura) { parts.push('10초 구간 +' + num(t.aura, 0) + '%'); }
       } else {
         parts.push('돌파 0단계');
       }
@@ -1135,13 +1145,27 @@
       '<b>[주술 신식개방]</b>처럼 계열 신식이 열려야 붙는 추가 피해는 신식이 켜졌을 때만 더합니다. ' +
       (r.snipeDmgMul > 1 ? '<b>저격 신식</b>은 도술 1회 = 1처치로 보고 화살촉을 모으며, 화살촉을 쓰는 <b>저격 계열 일반 도술</b>에만 +45%(궁극기와 다른 계열 도술에는 붙지 않음)를, 궁극기는 화살촉 3개 소모로 +75%를 붙입니다. ' : '') +
       (r.dmgBuff ? '<b>파멸 요기범람</b>은 궁극기를 뺀 도술 <b>' + r.dmgBuff.every + '회마다</b>(영력 200) 그 순간부터 <b>' + r.dmgBuff.sec + '초 동안만</b> 피해 +' + num(r.dmgBuff.buff * 100, 0) + '%가 붙고, 버프가 끝나면 다시 빠집니다. ' : '') +
+      (r.valour ? '<b>용맹의 기운</b>은 시전이 끝난 순간부터 <b>' + r.valour.sec + '초 동안</b> 내가 주는 피해(도술·평타)를 ×' + num(r.valour.mul, 3) + '로 올리고, 10초가 지나면 빠집니다 — 공격력 버프는 <b>헌신 0강 +15% → 50강 +20%</b>(강화 레벨에 비례)이고, 사용 순서에서 앞쪽에 두면 뒤에 쓰는 도술이 버프를 실게 됩니다. ' : '') +
       '평타 1회 시간·계수는 내 스펙 조정에서 바꿀 수 있습니다.</p>' +
       (r.dmgBuff ? '<p class="ds-foot">요기범람 — 이번 전투에서 <b>' + r.dmgBuff.triggers + '회</b> 발동, 버프가 돌아간 시간 <b>' +
         num(r.dmgBuff.activeSec, 1) + '초</b> · +' + num(r.dmgBuff.buff * 100, 0) + '% 적용 시전 <b>' + r.dmgBuff.buffedCasts + '회</b>.</p>' : '') +
       (r.halfCd ? '<p class="ds-foot">기만 신식 발동 — 이번 전투에서 <b>' + r.halfCd.triggers + '회</b> 발동, 쿨 중인 도술 평균 <b>' +
         num(r.halfCd.avgCooling, 1) + '개</b> 중 1개를 줄였습니다' +
         (r.halfCd.wasted ? ' (쿨 중인 도술이 없어 ' + r.halfCd.wasted + '회는 그냥 사라졌습니다)' : '') + '.</p>' : '') +
+      (r.valour ? valourFootHtml(r) : '') +
       gaugeFootHtml(r);
+  }
+
+  /* 용맹의 기운 — 10초 버프가 이번 전투에서 어떻게 돌았는지 */
+  function valourFootHtml(r) {
+    var v = r.valour;
+    var src = '헌신 ' + v.lv + '강 +' + num(v.atkRaw * 100, 1) + '%' +
+      (v.heart ? ' × 하트 +30% = +' + num(v.atk * 100, 1) + '%' : '');
+    return '<p class="ds-foot">용맹의 기운 — 이번 전투에서 <b>' + v.triggers + '회</b> 발동, 버프가 돌아간 시간 <b>' +
+      num(v.activeSec, 1) + '초</b> · 버프 중 배수 <b>×' + num(v.mul, 3) + '</b>(' + src +
+      (v.aura ? ' + 6돌파 주는 피해 +' + num(v.aura * 100, 0) + '%' : '') +
+      ')가 붙은 시전 <b>' + v.buffedCasts + '회</b>' +
+      (v.autoSec > 0 ? ' · 그 구간 평타 <b>' + num(v.autoSec, 1) + '초</b>' : '') + '.</p>';
   }
 
   function statsHtml(r) {
@@ -1623,15 +1647,14 @@
         /* 카드를 다시 그리지 않고 이 줄만 고칩니다 — 방금 누른 체크박스가 그대로 남도록 */
         var oDmg = 0;
         var oWhen = '';
-        C.sixOptions(Number(sid)).forEach(function (o) { if (o.id === oid) { oDmg = o.d || 0; oWhen = o.when || ''; } });
+        var oKind = '';
+        C.sixOptions(Number(sid)).forEach(function (o) {
+          if (o.id === oid) { oDmg = o.d || 0; oWhen = o.when || ''; oKind = o.k || ''; }
+        });
         var li = t.closest ? t.closest('.ds-six__li') : null;
         if (li) {
           var em = li.querySelector('em');
-          if (em) {
-            em.textContent = t.checked
-              ? (oWhen ? '켜짐 · 그 상태일 때만' : '켜짐 · 계산 반영')
-              : '켜면 +' + num(oDmg, 0) + '%';
-          }
+          if (em) { em.textContent = sixOptStateText({ k: oKind, d: oDmg, when: oWhen, on: t.checked }); }
         }
         var rowEl = t.closest ? t.closest('.ds-trans') : null;
         if (rowEl) {

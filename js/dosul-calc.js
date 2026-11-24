@@ -102,18 +102,29 @@
     if (!base) { n = 0; }
     var t6 = TRANS6[key] || null;
     var on6 = !!(t6 && n >= 6);
-    var onList = (opts && opts[key]) || [];
+    /* opts[key] 가 아예 없으면 사용자가 이 도술의 6돌파 옵션 줄을 한 번도 건드리지
+       않은 것입니다 — def:true 옵션(용맹의 기운 「자신과 아군이 주는 피해 +20%(10초)」)은
+       그때만 기본 켜짐으로 보고, 한 번이라도 건드리면(arr6) 그 값을 그대로 따릅니다. */
+    var rawOpts = (opts && Object.prototype.hasOwnProperty.call(opts, key)) ? opts[key] : undefined;
+    var touched = Array.isArray(rawOpts);
+    var onList = touched ? rawOpts : [];
     var extra = 0;
     /* when 이 있는 옵션(하늘의 심판 「요기범람 상태일 때 +50%」)은 늘 붙지 않고,
        그 상태가 살아 있는 시전에만 더합니다 */
     var extraCond = 0;
+    /* k:'aura' — 그 도술 자신이 아니라 **버프가 돌아가는 동안의 모든 시전**에
+       곱해지는 옵션입니다(용맹의 기운 6돌파 +20%(10초)). 시뮬레이터가 따로 곱합니다. */
+    var aura = 0;
     var list = (t6 && t6.o ? t6.o : []).map(function (o) {
-      var isOn = !!(o.id && on6 && onList.indexOf(o.id) >= 0);
+      var isOn = !!(o.id && on6 && (onList.indexOf(o.id) >= 0 || (o.def && !touched)));
       var calc = o.k !== 'text' && (o.d || 0) > 0;
       if (isOn && calc) {
-        if (o.when) { extraCond += o.d; } else { extra += o.d; }
+        if (o.k === 'aura') { aura += o.d; }
+        else if (o.when) { extraCond += o.d; }
+        else { extra += o.d; }
       }
-      return { id: o.id || '', t: o.t || '', d: o.d || 0, n: o.n || '', calc: calc, on: isOn, when: o.when || '' };
+      return { id: o.id || '', t: o.t || '', d: o.d || 0, n: o.n || '', k: o.k || '',
+        calc: calc, on: isOn, when: o.when || '', def: !!o.def };
     });
     return {
       has: !!base,
@@ -126,7 +137,8 @@
       has6: !!(t6),
       opts: list,
       extra: extra,
-      extraCond: extraCond
+      extraCond: extraCond,
+      aura: aura
     };
   }
 
@@ -253,7 +265,7 @@
        · dmgBuff     버프형 피해 증가 — 「dmgBuffEvery」회마다 발동해 「dmgBuffSec」초 동안만 붙습니다
          (파멸 요기범람: 영력 200 = 도술 14회마다 → 30초간 피해 +20%) */
     var fx = { ultCd: 0, cd: 0, cdPct: 0, dmg: 0, snipeDmg: 0, ultDmg: 0, resetEvery: 0, ultResetEvery: 0, halfCdEvery: 0,
-      dmgBuff: 0, dmgBuffEvery: 0, dmgBuffSec: 0 };
+      dmgBuff: 0, dmgBuffEvery: 0, dmgBuffSec: 0, heartBuff: 0 };
     var activeToggles = [];
     DATA.styles.forEach(function (st) {
       if (!sinKeys[st.key]) { return; }
@@ -392,6 +404,46 @@
     }
 
     /* ---------------------------------------------------------
+       용맹의 기운(1120060) — 시전이 끝난 순간부터 10초 버프
+       · 기본 : 그 10초 동안 내가 주는 피해 ×1.15 (공격력 +15%)
+         헌신 계열 **강화 레벨**에 따라 0강 +15% → 50강 +20% 로 오릅니다
+       · 헌신 신식 「하트 3개 → 이로운 효과 +30%」가 켜져 있으면
+         그 값에 ×1.3 (0강 0.195 · 50강 0.26)
+       · 6돌파 [돌파 효과] 「자신과 아군이 주는 피해 +20%(10초)」는
+         trans6 의 k:'aura' 옵션이라 같은 10초 구간에 ×1.20 으로 따로 곱합니다
+       두 배수는 곱이라 6돌파 + 하트면 0강 ×1.195 × 1.20 = ×1.434 입니다.
+       버프가 켜진 동안 시전한 **다른 모든 도술(궁극기 포함)과 평타**에 붙고,
+       10초가 지나면 빠졌다가 다음 시전에 다시 켜집니다.
+       --------------------------------------------------------- */
+    var VALOUR = DATA.valour || { id: 1120060, sec: 10, atk: 0.15 };
+    var valour = null;
+    var hasValour = false;
+    for (i = 0; i < entries.length; i++) {
+      if (entries[i].id === VALOUR.id) { hasValour = true; break; }
+    }
+    if (!hasValour && ultEntry && ultEntry.id === VALOUR.id) { hasValour = true; }
+    if (hasValour) {
+      var vMaxLv = enhanceMax();
+      var vLv = clamp(Math.round(Number(enh['sacrifice']) || 0), 0, vMaxLv);
+      var vAtkBase = (VALOUR.atk != null ? VALOUR.atk : 0.15);
+      var vAtkTop = (VALOUR.atk50 != null ? VALOUR.atk50 : 0.20);
+      /* 공격력 버프는 헌신 강화 레벨에 따라 0강 +15% → 50강 +20% (직선 보간) */
+      var vAtkRaw = vAtkBase + (vAtkTop - vAtkBase) * (vMaxLv > 0 ? vLv / vMaxLv : 0);
+      var vHeart = (fx.heartBuff || 0) > 0;
+      var vAtk = vAtkRaw * (1 + (fx.heartBuff || 0));
+      var vInfo = transInfo(VALOUR.id, transCfg[VALOUR.id], tr6Cfg);
+      var vAura = (vInfo.aura || 0) / 100;
+      valour = {
+        id: VALOUR.id,
+        sec: VALOUR.sec > 0 ? VALOUR.sec : 10,
+        atk: vAtk, atkRaw: vAtkRaw, lv: vLv, lvMax: vMaxLv, heart: vHeart,
+        aura: vAura,
+        step: vInfo.step, on6: vInfo.t6on,
+        mul: (1 + vAtk) * (1 + vAura)
+      };
+    }
+
+    /* ---------------------------------------------------------
        신식 게이지 — 2026-11-24 확인값
        · 계열마다 영력·중첩을 쌓아 두고, 켜 둔 토글에 따라
          이번 시전의 피해 배수 / 남은 쿨 감소 / 궁극기 강화가 붙습니다.
@@ -407,7 +459,8 @@
 
     return {
       entries: entries, ult: ultEntry, fx: fx, toggles: activeToggles, sin: sin, gauges: gauges,
-      dmgMul: dmgMul, ultDmgMul: ultDmgMul, snipeDmgMul: snipeDmgMul, order: orderIds
+      dmgMul: dmgMul, ultDmgMul: ultDmgMul, snipeDmgMul: snipeDmgMul, order: orderIds,
+      valour: valour
     };
   }
 
@@ -480,6 +533,15 @@
     var buffHitCasts = 0;
     var buffTime = 0;
     var buffFrom = -Infinity;
+    /* 용맹의 기운 — 시전이 끝난 순간부터 10초 버프 구간
+       (버프 동안 시전한 다른 도술·평타에 valour.mul 이 곱해집니다) */
+    var valour = built.valour || null;
+    var vUntil = -Infinity;
+    var vFrom = -Infinity;
+    var vTrig = 0;
+    var vTime = 0;
+    var vCasts = 0;
+    var vIdle = 0;
     var t = 0;
     var idle = 0;
     var segments = [];
@@ -706,6 +768,11 @@
         var end = Math.min(duration, nextReady === Infinity ? duration : nextReady);
         if (end > t + EPS) {
           idle += end - t;
+          /* 용맹의 기운 버프가 걸린 시간만 따로 세어 평타에도 배수를 붙입니다 */
+          if (valour) {
+            var vOv = Math.min(end, vUntil) - Math.max(t, vFrom);
+            if (vOv > 0) { vIdle += vOv; }
+          }
           segments.push({ t0: t, t1: end, kind: 'auto', name: '평타' });
         }
         t = end;
@@ -727,7 +794,13 @@
          조건부 6돌파 옵션(하늘의 심판 「요기범람일 때 +50%」) */
       var gMul = gaugeMul(t, cur);
       var condMul = (cur.condRatio > 1 && t < buffUntil - EPS) ? cur.condRatio : 1;
-      var castMul = buffMul * gMul * condMul;
+      /* 용맹의 기운 — 버프가 켜져 있는 동안의 시전에만 곱합니다(시작 시점 기준) */
+      var vMul = 1;
+      if (valour && t >= vFrom - EPS && t < vUntil - EPS) {
+        vMul = valour.mul;
+        vCasts += 1;
+      }
+      var castMul = buffMul * gMul * condMul * vMul;
       cur.damage += cur.coeff * castMul;
       if (cur.chain) {
         cur.damage += cur.chain.coeff * castMul;
@@ -782,6 +855,24 @@
           }
           buffUntil = buffStart + (fx.dmgBuffSec > 0 ? fx.dmgBuffSec : 30);
         }
+      }
+
+      /* 용맹의 기운 — 이 시전이 **끝나는 순간**부터 10초 버프가 켜집니다.
+         · 시전한 그 도술에는 붙지 않고, 그 뒤에 쓰는 도술·평타에 붙습니다
+         · 10초가 지나면 자동으로 빠지고, 다음 시전에 다시 켜집니다
+         · 버프 중에 다시 발동하면 끝나는 시각만 10초 더 밀립니다 */
+      if (valour && cur.id === valour.id) {
+        var vStart = Math.min(duration, t + castLen);
+        if (vUntil > vStart + EPS) {
+          /* 아직 버프가 남아 있으면 끝만 10초 더 */
+        } else {
+          if (vFrom > -Infinity) {
+            vTime += Math.max(0, Math.min(duration, vUntil) - vFrom);
+          }
+          vFrom = vStart;
+        }
+        vUntil = vStart + valour.sec;
+        vTrig += 1;
       }
 
       /* 기만 신식(눈물 2개 소모) — 「쿨타임이 돌고 있는 도술 1개」의 남은 쿨을 50% 줄입니다.
@@ -847,6 +938,9 @@
     if (buffFrom > -Infinity) {
       buffTime += Math.max(0, Math.min(duration, buffUntil) - buffFrom);
     }
+    if (vFrom > -Infinity) {
+      vTime += Math.max(0, Math.min(duration, vUntil) - vFrom);
+    }
     var castTotal = 0;
     var skillDamage = 0;
     var rows = [];
@@ -891,7 +985,10 @@
     });
 
     var autoCount = idle / cfg.autoInterval;
-    var autoDamage = autoCount * cfg.autoCoeff;
+    /* 용맹의 기운 버프가 걸린 평타 구간만 배수를 더 받습니다 */
+    var autoBuffedCount = valour ? (vIdle / cfg.autoInterval) : 0;
+    var autoDamage = autoCount * cfg.autoCoeff +
+      autoBuffedCount * cfg.autoCoeff * (valour ? (valour.mul - 1) : 0);
     var totalCoeff = skillDamage + autoDamage;
     var idlePct = duration > 0 ? (idle / duration) * 100 : 0;
     var uptime = 100 - idlePct;
@@ -934,6 +1031,16 @@
         triggers: buffTrig,
         activeSec: round(buffTime, 1),
         buffedCasts: buffHitCasts
+      } : null,
+      /* 용맹의 기운 — 10초 버프가 이번 전투에서 몇 번 · 몇 초 돌았고,
+         그 구간에 시전한 도술이 몇 회인지 */
+      valour: valour ? {
+        id: valour.id, sec: valour.sec,
+        atk: valour.atk, atkRaw: valour.atkRaw, lv: valour.lv, lvMax: valour.lvMax,
+        heart: valour.heart, aura: valour.aura, mul: valour.mul,
+        step: valour.step, on6: valour.on6,
+        triggers: vTrig, activeSec: round(vTime, 1),
+        buffedCasts: vCasts, autoSec: round(vIdle, 2)
       } : null,
       /* 기만 신식 발동 기록 — 화면·테스트가 「쿨 중인 도술을 줄였는지」 확인할 수 있게 남깁니다 */
       halfCd: fx.halfCdEvery > 0 ? {
