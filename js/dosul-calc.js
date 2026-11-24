@@ -104,11 +104,16 @@
     var on6 = !!(t6 && n >= 6);
     var onList = (opts && opts[key]) || [];
     var extra = 0;
+    /* when 이 있는 옵션(하늘의 심판 「요기범람 상태일 때 +50%」)은 늘 붙지 않고,
+       그 상태가 살아 있는 시전에만 더합니다 */
+    var extraCond = 0;
     var list = (t6 && t6.o ? t6.o : []).map(function (o) {
       var isOn = !!(o.id && on6 && onList.indexOf(o.id) >= 0);
       var calc = o.k !== 'text' && (o.d || 0) > 0;
-      if (isOn && calc) { extra += o.d; }
-      return { id: o.id || '', t: o.t || '', d: o.d || 0, n: o.n || '', calc: calc, on: isOn };
+      if (isOn && calc) {
+        if (o.when) { extraCond += o.d; } else { extra += o.d; }
+      }
+      return { id: o.id || '', t: o.t || '', d: o.d || 0, n: o.n || '', calc: calc, on: isOn, when: o.when || '' };
     });
     return {
       has: !!base,
@@ -120,7 +125,8 @@
       t6on: on6,
       has6: !!(t6),
       opts: list,
-      extra: extra
+      extra: extra,
+      extraCond: extraCond
     };
   }
 
@@ -297,6 +303,9 @@
       var cdAfterTrans = Math.max(cdBase * 0.1, cdBase - Math.min(cdBase * 0.9, tr.cdSec));
       var cd = cdAfterTrans * cdMul;
       var trMul = 1 + (tr.dmgPct + tr.d6 + tr.extra) / 100;
+      /* 조건부 돌파 옵션(요기범람 +50%) — 그 상태에서만 곱합니다 */
+      var trMulCond = 1 + (tr.dmgPct + tr.d6 + tr.extra + (tr.extraCond || 0)) / 100;
+      var condRatio = trMul > 0 ? trMulCond / trMul : 1;
       /* 궁극기 = 상시 피해 + 궁극기 피해(화살촉 3개) / 저격 일반 도술 = 상시 피해 × 저격 +45% / 그 밖 = 상시 피해 */
       var styleMul = (sk.st === 'snipe' && sk.k !== 'ult') ? dmgMul * snipeDmgMul : dmgMul;
       var allMul = (1 + enhPct / 100) * trMul * (sk.k === 'ult' ? ultDmgMul : styleMul);
@@ -335,6 +344,7 @@
           hits: Number(chainDef.hits) || 0,
           castPer: chCastPer,
           castLen: chCastPer * uses,
+          condRatio: condRatio,
           est: !!chainDef.est
         };
       }
@@ -349,6 +359,8 @@
         sinCoeff: sinBonus * allMul,
         sinLabel: sinDef ? (sinDef.label || '신식개방') : '',
         sinNote: sinDef ? (sinDef.note || '') : '',
+        condRatio: condRatio,
+        tr6CondPct: tr.extraCond || 0,
         chain: chain,
         chainCast: chain ? chain.castLen : 0,
         chainCoeff: chain ? chain.coeff : 0,
@@ -356,7 +368,7 @@
         enh: enhLv, enhPct: enhPct,
         trans: tr.step, transDmgPct: tr.dmgPct, transCd: tr.cdSec,
         tr6: tr.t6on, tr6Pct: tr.d6, tr6Text: tr.t6, hasTrans: tr.has,
-        tr6Extra: tr.extra, tr6Opts: tr.opts, sp: isSpecial(sk.id), grade: gradeOf(sk.id)
+        tr6Extra: tr.extra, tr6ExtraCond: tr.extraCond || 0, tr6Opts: tr.opts, sp: isSpecial(sk.id), grade: gradeOf(sk.id)
       };
     }
 
@@ -379,8 +391,22 @@
       }
     }
 
+    /* ---------------------------------------------------------
+       신식 게이지 — 2026-11-24 확인값
+       · 계열마다 영력·중첩을 쌓아 두고, 켜 둔 토글에 따라
+         이번 시전의 피해 배수 / 남은 쿨 감소 / 궁극기 강화가 붙습니다.
+       · 정의는 dosul-data.js 의 styles[].gauge (max · perCast · perHit · perKill ·
+         decayPerSec · tiers · stacks · ultReset · ultCdCut · ultBuff)
+       --------------------------------------------------------- */
+    var gauges = [];
+    DATA.styles.forEach(function (st) {
+      if (!sinKeys[st.key] || !st.gauge) { return; }
+      var on = config.toggles && config.toggles[st.key] ? config.toggles[st.key] : [];
+      gauges.push({ style: st.key, name: st.name, def: st.gauge, on: on.slice() });
+    });
+
     return {
-      entries: entries, ult: ultEntry, fx: fx, toggles: activeToggles, sin: sin,
+      entries: entries, ult: ultEntry, fx: fx, toggles: activeToggles, sin: sin, gauges: gauges,
       dmgMul: dmgMul, ultDmgMul: ultDmgMul, snipeDmgMul: snipeDmgMul, order: orderIds
     };
   }
@@ -461,14 +487,203 @@
     var EPS = 1e-7;
     var cdReducePerCast = fx.cd || 0;
 
-    function applyFlatCd(now, exceptIdx) {
-      if (!cdReducePerCast) { return; }
+    function applyFlatCd(now, exceptIdx, sec) {
+      var amt = sec || cdReducePerCast;
+      if (!amt) { return; }
       for (var j = 0; j < n; j++) {
         if (j === exceptIdx) { continue; }
         var e = list[j];
         if (e.readyAt > now) {
-          e.readyAt = Math.max(now, e.readyAt - cdReducePerCast);
+          e.readyAt = Math.max(now, e.readyAt - amt);
         }
+      }
+    }
+
+    /* ---------------------------------------------------------
+       신식 게이지 상태 — 계열별 영력·중첩
+       --------------------------------------------------------- */
+    var gauges = (built.gauges || []).map(function (g) {
+      return {
+        style: g.style, name: g.name, def: g.def, on: g.on || [],
+        v: 0, lastT: 0, stacks: [], until: -Infinity,
+        triggers: 0, cuts: 0, buffCasts: 0, ultBuffed: 0,
+        maxStacks: 0, tierCasts: [0, 0, 0, 0, 0], windowSec: 0
+      };
+    });
+
+    function gOn(g, id) { return !!id && g.on.indexOf(id) >= 0; }
+
+    function gDecay(g, now) {
+      var d = g.def.decayPerSec;
+      if (!d) { return; }
+      var dt = now - g.lastT;
+      if (dt > 0) { g.v = Math.max(0, g.v - d * dt); }
+    }
+
+    /* 살아 있는 척결 중첩 수 (30초 지속) */
+    function liveStacks(g, now) {
+      if (!g.stacks) { return 0; }
+      var keep = [];
+      for (var k = 0; k < g.stacks.length; k++) {
+        if (now - g.stacks[k] <= g.def.stacks.sec + EPS) { keep.push(g.stacks[k]); }
+      }
+      g.stacks = keep;
+      return keep.length;
+    }
+
+    /* 지금 영력이 도달한 단계 (0 = 아직 1단계 전) */
+    function tierIdx(g, now) {
+      var tiers = g.def.tiers;
+      if (!tiers) { return 0; }
+      var v = g.v;
+      if (g.def.decayPerSec) { v = Math.max(0, v - (g.def.decayPerSec * Math.max(0, now - g.lastT))); }
+      var idx = 0;
+      for (var k = 0; k < tiers.length; k++) {
+        if (v >= tiers[k].at - EPS) { idx = k + 1; }
+      }
+      return idx;
+    }
+
+    /* 이번 시전의 피해 배수 — 영력 단계 · 격노/척결 중첩 · 궁극기 형상·구슬·연쇄 */
+    function gaugeMul(now, cur) {
+      var mul = 1;
+      var k, g, d, ti, td, live;
+      for (k = 0; k < gauges.length; k++) {
+        g = gauges[k]; d = g.def;
+        if (d.stack && gOn(g, d.stack.gate)) {
+          /* 연타 — 영력 1당 중첩 1 (적중마다) */
+          live = Math.max(0, Math.floor(g.v + EPS));
+          if (live > 0) {
+            mul *= 1 + Math.min(d.stack.max, d.stack.per * live);
+            if (live > g.maxStacks) { g.maxStacks = live; }
+            g.buffCasts += 1;
+          }
+        }
+        if (d.stacks && gOn(g, d.stacks.gate)) {
+          /* 척살 — 척결 중첩(30초 지속) 1개당 피해 +2% (최대 10중첩 +20%) */
+          live = liveStacks(g, now);
+          if (live > 0) {
+            mul *= 1 + Math.min(d.stacks.dmg * d.stacks.max, d.stacks.dmg * live);
+            if (live > g.maxStacks) { g.maxStacks = live; }
+            g.buffCasts += 1;
+          }
+        }
+        if (d.tiers && gOn(g, d.gate)) {
+          ti = tierIdx(g, now);
+          if (ti > 0) {
+            td = d.tiers[ti - 1];
+            if (td.dmg) {
+              mul *= 1 + td.dmg;
+              if (cur.kind !== 'ult') { g.buffCasts += 1; g.tierCasts[ti - 1] += 1; }
+            }
+          }
+        }
+      }
+      if (cur && cur.kind === 'ult') {
+        for (k = 0; k < gauges.length; k++) {
+          g = gauges[k]; d = g.def;
+          /* 절명 — 형상 3·4·5개 소모 시 궁극기 피해 +55 / 75 / 125% */
+          if (d.ultTiers && gOn(g, d.ultGate)) {
+            var have = Math.min(d.max, Math.floor(g.v + EPS));
+            var best = 0;
+            for (var u = 0; u < d.ultTiers.length; u++) {
+              if (have >= d.ultTiers[u].at) { best = Math.max(best, d.ultTiers[u].dmg); }
+            }
+            if (best) { mul *= 1 + best; g.ultBuffed += 1; }
+          }
+          /* 주술 — 구슬 단계별 궁극기 피해 +30 / 60 / 90% */
+          if (d.tiers && d.tierUltGate && gOn(g, d.tierUltGate)) {
+            ti = tierIdx(g, now);
+            if (ti > 0 && d.tiers[ti - 1].ultDmg) {
+              mul *= 1 + d.tiers[ti - 1].ultDmg;
+              g.ultBuffed += 1;
+            }
+          }
+          /* 기동 — 연쇄 10초 동안 궁극기 피해 +50% */
+          if (d.ultBuff && gOn(g, d.ultBuff.gate) && now < g.until - EPS) {
+            mul *= 1 + d.ultBuff.pct;
+            g.ultBuffed += 1;
+          }
+        }
+      }
+      return mul;
+    }
+
+    /* 시전이 끝난 뒤 게이지가 차고, 최대치 효과가 터집니다 */
+    function gaugeAfterCast(cur, now, castLen, pickIdx) {
+      var tEnd = now + castLen;
+      for (var k = 0; k < gauges.length; k++) {
+        var g = gauges[k];
+        var d = g.def;
+        if (cur.kind === 'ult') {
+          /* 강타 — 영력 100에서 천벌을 쓰면 [강압] */
+          if (d.ultReset && d.ultReset.on === 'ult' && gOn(g, d.ultReset.gate) && g.v >= d.max - EPS) {
+            for (var a = 0; a < n; a++) {
+              if (list[a].kind !== 'ult') { list[a].readyAt = tEnd; }
+            }
+            g.v = 0; g.triggers += 1;
+            segments.push({ t0: tEnd, t1: tEnd, kind: 'mark', name: g.name + ' 강압', style: g.style, color: styleColor(g.style) });
+          }
+          /* 절명 — 궁극기가 형상을 모두 소모합니다 (3개 미만이면 피해 증가 없음) */
+          if (d.ultTiers) { g.v = 0; }
+          continue;
+        }
+        if (d.decayPerSec) { gDecay(g, now); }
+        /* 연타 — 3초 동안 적중이 없으면 격노가 전부 사라집니다 */
+        if (d.idleResetSec && now - g.lastT > d.idleResetSec + EPS) { g.v = 0; }
+        var hits = (cur.hits || 0) + (cur.chain ? cur.chain.hits * cur.chain.uses : 0);
+        var gain = (d.perCast || 0) + (d.perHit || 0) * hits + (d.perKill || 0) * 1;
+        if (gain) { g.v = Math.min(d.max, g.v + gain); }
+        g.lastT = now;
+
+        /* 절명 — 형상이 최대일 때 도술마다 궁극기 남은 쿨 -6초 */
+        if (d.ultCdCut && gOn(g, d.ultCdCut.gate) && ult && g.v >= d.max - EPS) {
+          if (ult.readyAt > tEnd + EPS) {
+            ult.readyAt = Math.max(tEnd, ult.readyAt - d.ultCdCut.sec);
+            g.cuts += 1; g.triggers += 1;
+          }
+        }
+
+        /* 척살 — 척결 중첩: 피해 +2%씩(최대 20%) · 중첩을 얻을 때마다 남은 쿨 -20%(궁극기 -10%) */
+        if (d.stacks && gOn(g, d.stacks.gate) && g.v >= d.max - EPS) {
+          g.v = 0;
+          g.stacks.push(tEnd);
+          g.triggers += 1;
+          var live = liveStacks(g, tEnd);
+          if (live > g.maxStacks) { g.maxStacks = live; }
+          for (var b = 0; b < n; b++) {
+            if (b === pickIdx) { continue; }
+            var e2 = list[b];
+            if (e2.readyAt > tEnd + EPS) {
+              var cutPct = (e2.kind === 'ult') ? d.stacks.ultCdCut : d.stacks.cdCut;
+              e2.readyAt = tEnd + (e2.readyAt - tEnd) * (1 - cutPct);
+            }
+          }
+          g.cuts += 1;
+          segments.push({ t0: tEnd, t1: tEnd, kind: 'mark', name: g.name + ' 척결', style: g.style, color: styleColor(g.style) });
+        }
+
+        /* 주술 — 구슬 단계별로 다른 도술의 남은 쿨 -0.1/-0.2/-0.3초 */
+        if (d.tiers && gOn(g, d.gate)) {
+          var ti = tierIdx(g, tEnd);
+          if (ti > 0 && d.tiers[ti - 1].flatCd) {
+            applyFlatCd(tEnd, pickIdx, d.tiers[ti - 1].flatCd);
+            g.cuts += 1;
+            g.tierCasts[ti - 1] += 1;
+          }
+        }
+
+        /* 기동 — 영력 200에서 궁극기 쿨 초기화 + [연쇄] 10초 */
+        if (d.ultReset && d.ultReset.on === 'max' && gOn(g, d.ultReset.gate) && ult && g.v >= d.max - EPS) {
+          ult.readyAt = tEnd;
+          g.v = 0; g.triggers += 1;
+          if (d.ultBuff) {
+            g.until = tEnd + d.ultBuff.sec;
+            g.windowSec += Math.max(0, Math.min(d.ultBuff.sec, duration - tEnd));
+          }
+          segments.push({ t0: tEnd, t1: tEnd, kind: 'mark', name: g.name + ' 연쇄', style: g.style, color: styleColor(g.style) });
+        }
+        if (g.v > g.maxStacks && !d.stacks) { g.maxStacks = g.v; }
       }
     }
 
@@ -508,11 +723,16 @@
       /* 버프형 피해 증가(파멸 요기범람) — 버프가 살아 있는 시점의 시전에만 붙습니다 */
       var buffMul = (fx.dmgBuff && t < buffUntil - EPS) ? (1 + fx.dmgBuff) : 1;
       if (buffMul !== 1) { buffHitCasts += 1; }
-      cur.damage += cur.coeff * buffMul;
+      /* 신식 게이지 배수(영력 단계 · 격노/척결 중첩 · 궁극기 형상·구슬·연쇄)와
+         조건부 6돌파 옵션(하늘의 심판 「요기범람일 때 +50%」) */
+      var gMul = gaugeMul(t, cur);
+      var condMul = (cur.condRatio > 1 && t < buffUntil - EPS) ? cur.condRatio : 1;
+      var castMul = buffMul * gMul * condMul;
+      cur.damage += cur.coeff * castMul;
       if (cur.chain) {
-        cur.damage += cur.chain.coeff * buffMul;
+        cur.damage += cur.chain.coeff * castMul;
         cur.chainUses += cur.chain.uses;
-        cur.chainDamage += cur.chain.coeff * buffMul;
+        cur.chainDamage += cur.chain.coeff * castMul;
       }
       castSeq += 1;
 
@@ -599,6 +819,10 @@
 
       applyFlatCd(t, pick);
 
+      /* 신식 게이지 — 이 시전으로 영력/중첩이 차고, 최대치 효과가 터집니다
+         (시전이 끝난 시점 기준 · 방금 쓴 도술은 남은 쿨 감소에서 제외) */
+      gaugeAfterCast(cur, t, castLen, pick);
+
       t = t + castLen;
 
       /* 신식 게이지 — 일정 횟수마다 쿨 초기화 */
@@ -642,7 +866,8 @@
           enh: en.enh, enhPct: round(en.enhPct, 1),
           trans: en.trans, transDmgPct: round(en.transDmgPct, 1), transCd: round(en.transCd, 2),
           tr6: en.tr6, tr6Pct: en.tr6Pct, tr6Text: en.tr6Text, hasTrans: en.hasTrans,
-          tr6Extra: round(en.tr6Extra || 0, 1), tr6Opts: en.tr6Opts, sp: en.sp, grade: en.grade,
+          tr6Extra: round(en.tr6Extra || 0, 1), tr6ExtraCond: round(en.tr6ExtraCond || 0, 1),
+          tr6Opts: en.tr6Opts, sp: en.sp, grade: en.grade,
           chain: en.chain ? {
             name: en.chain.name, uses: en.chain.uses, window: en.chain.window, cool: en.chain.cool,
             per: en.chain.per.map(function (v) { return round(v, 1); }),
@@ -721,6 +946,15 @@
       dmgMul: round(built.dmgMul, 3),
       ultDmgMul: round(built.ultDmgMul, 3),
       snipeDmgMul: round(built.snipeDmgMul, 3),
+      /* 신식 게이지 발동 기록 — 계열별 영력·중첩이 어떻게 돌았는지 */
+      gauge: gauges.map(function (g) {
+        return {
+          style: g.style, name: g.name, max: g.def.max,
+          triggers: g.triggers, cuts: g.cuts, buffCasts: g.buffCasts,
+          ultBuffed: g.ultBuffed, maxStacks: g.maxStacks,
+          tierCasts: g.tierCasts.slice(0, 3), windowSec: round(g.windowSec, 1)
+        };
+      }),
       totalCasts: rows.reduce(function (a, r) { return a + r.casts; }, 0)
     };
   }

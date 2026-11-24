@@ -151,7 +151,8 @@
     C.styles().forEach(function (st) {
       if (!active[st.key]) { return; }
       if (!S.toggles[st.key]) {
-        S.toggles[st.key] = st.toggles.map(function (t) { return t.id; });
+        S.toggles[st.key] = st.toggles.filter(function (t) { return !t.defOff; })
+          .map(function (t) { return t.id; });
       }
       /* 나중에 더한 「기본 ON」 토글(저격 연속 조준처럼)은 기존 저장분에도
          한 번만 켭니다 — 사용자가 끄면 그 뒤로는 다시 켜지 않습니다. */
@@ -565,7 +566,7 @@
       if (o.calc) {
         rows += '<li class="ds-six__li is-opt"><label><input type="checkbox" data-tr6="' + sk.id + ':' + esc(o.id) + '"' +
           (o.on ? ' checked' : '') + '><span>' + esc(o.t) + '</span></label>' +
-          '<em>' + (o.on ? '켜짐 · 계산 반영' : '켜면 +' + num(o.d, 0) + '%') + '</em>' +
+          '<em>' + (o.on ? (o.when ? '켜짐 · 그 상태일 때만' : '켜짐 · 계산 반영') : '켜면 +' + num(o.d, 0) + '%') + '</em>' +
           (o.n ? '<i>' + esc(o.n) + '</i>' : '') + '</li>';
       } else {
         rows += '<li class="ds-six__li is-text"><span>' + esc(o.t) + '</span><em>표시만</em></li>';
@@ -606,6 +607,7 @@
         if (t.cdSec > 0) { parts.push('쿨 -' + num(t.cdSec, 2) + '초'); }
         if (t.d6) { parts.push('6돌파 피해 +' + num(t.d6, 0) + '%'); }
         if (t.extra) { parts.push('옵션 피해 +' + num(t.extra, 0) + '%'); }
+        if (t.extraCond) { parts.push('요기범람 중 +' + num(t.extraCond, 0) + '%'); }
       } else {
         parts.push('돌파 0단계');
       }
@@ -1088,6 +1090,36 @@
       '</div>';
   }
 
+  /* 신식 발동 요약 — 계열별 게이지가 이번 전투에서 어떻게 돌았는지 */
+  function gaugeFootHtml(r) {
+    var list = r.gauge || [];
+    return list.map(function (g) {
+      var tc = g.tierCasts || [0, 0, 0];
+      var s = '';
+      if (g.style === 'assassinate') {
+        s = '<b>절명 신식</b> — 검의 형상이 최대(5개)일 때 도술마다 <b>궁극기 남은 쿨 -6초</b>(' + g.cuts + '회), ' +
+          '형상을 소모한 궁극기 <b>' + g.ultBuffed + '회</b>에 형상 수만큼(3·4·5개 → +55 / 75 / 125%) 피해가 붙었습니다.';
+      } else if (g.style === 'combo') {
+        s = '<b>연타 신식</b> — 격노는 <b>적중마다 1중첩</b>(최대 50), 중첩당 피해 +0.4%(최대 +20%)입니다. ' +
+          '이번 전투 최대 <b>' + g.maxStacks + '중첩</b> · 피해 증가가 붙은 시전 <b>' + g.buffCasts + '회</b>.';
+      } else if (g.style === 'smash') {
+        s = '<b>강타 신식</b> — 영력이 33·66·100을 넘을 때 <b>그 시전</b> 피해가 +3% · +7% · +10%(1·2·3단계 ' +
+          tc.join(' · ') + '회)이고, 영력 100에서 천벌을 쓰면 <b>강압</b>으로 도술 쿨이 초기화됩니다(' + g.triggers + '회).';
+      } else if (g.style === 'execution') {
+        s = '<b>척살 신식</b> — 척결은 영력 100마다 1중첩(30초 · 최대 10중첩, 중첩당 피해 +2% · 최대 +20%)이고, ' +
+          '<b>중첩을 얻을 때마다 다른 도술의 남은 쿨이 20%(궁극기 10%) 줄어듭니다</b> — 이번 전투 ' + g.triggers + '회(최대 ' + g.maxStacks + '중첩).';
+      } else if (g.style === 'hex') {
+        s = '<b>주술 신식</b> — 영력은 시전마다 +8, 1초마다 -4라 <b>30·60·90</b>을 넘으면 구슬 1·2·3개가 됩니다. ' +
+          '그때마다 다른 도술의 남은 쿨이 <b>-0.1 / -0.2 / -0.3초</b>(1·2·3단계 ' + tc.join(' · ') + '회)이고, ' +
+          '궁극기는 구슬 단계만큼 <b>+30 / 60 / 90%</b>(' + g.ultBuffed + '회)입니다.';
+      } else if (g.style === 'dash') {
+        s = '<b>기동 신식</b> — 영력 200(도술 20회)마다 <b>궁극기 쿨을 초기화</b>하고 10초 [연쇄]가 켜집니다(' + g.triggers + '회). ' +
+          '연쇄 동안 궁극기 피해 <b>+50%</b> — 이번 전투 연쇄 중 궁극기 ' + g.ultBuffed + '회 · 연쇄가 돌아간 시간 ' + num(g.windowSec, 1) + '초.';
+      }
+      return s ? '<p class="ds-foot">' + s + '</p>' : '';
+    }).join('');
+  }
+
   function footHtml(r) {
     var tip = '';
     if (r.idlePct >= 40) {
@@ -1098,6 +1130,7 @@
       '시전시간은 도깨비지지 공개값(선행 시전 + 동작 시간)이고, 차지 도술은 최대 차지로 계산합니다. ' +
       '<b>계열 강화</b>는 그 계열 도술 계수에, <b>도술 돌파</b>는 그 도술의 계수·쿨타임에만 붙습니다. ' +
       '<b>연계기</b>(월식 · 쌍검 가르기 · 은신 같은 6개)는 1단계 시전시간 + 연계 시전시간을 함께 점유하고 피해도 1단계 + 연계를 더하며, 다음 발동은 연계를 켜도 <b>1단계 쿨타임</b>을 그대로 기다립니다. ' +
+      '<b>신식</b>은 계열마다 <b>영력·중첩(게이지)</b>이 실제로 차는 만큼만 붙습니다 — 적중·시전·처치로 쌓이고, 단계·중첩·지속시간·최대치 효과를 그대로 계산합니다. ' +
       (r.halfCd ? '<b>기만 신식</b>(눈물 2개)은 궁극기를 뺀 도술 <b>' + r.halfCd.every + '회마다</b> 쿨이 돌고 있는 도술 하나의 <b>남은 쿨을 50%</b> 줄이며, 대상이 <b>무작위 1개</b>라 실제 편차가 있습니다 — 계산기는 쿨 중인 k개 도술의 남은 쿨을 (1 - 0.5/k)배로 함께 줄인 <b>평균 기댓값</b>으로 계산합니다. ' : '') +
       '<b>[주술 신식개방]</b>처럼 계열 신식이 열려야 붙는 추가 피해는 신식이 켜졌을 때만 더합니다. ' +
       (r.snipeDmgMul > 1 ? '<b>저격 신식</b>은 도술 1회 = 1처치로 보고 화살촉을 모으며, 화살촉을 쓰는 <b>저격 계열 일반 도술</b>에만 +45%(궁극기와 다른 계열 도술에는 붙지 않음)를, 궁극기는 화살촉 3개 소모로 +75%를 붙입니다. ' : '') +
@@ -1107,7 +1140,8 @@
         num(r.dmgBuff.activeSec, 1) + '초</b> · +' + num(r.dmgBuff.buff * 100, 0) + '% 적용 시전 <b>' + r.dmgBuff.buffedCasts + '회</b>.</p>' : '') +
       (r.halfCd ? '<p class="ds-foot">기만 신식 발동 — 이번 전투에서 <b>' + r.halfCd.triggers + '회</b> 발동, 쿨 중인 도술 평균 <b>' +
         num(r.halfCd.avgCooling, 1) + '개</b> 중 1개를 줄였습니다' +
-        (r.halfCd.wasted ? ' (쿨 중인 도술이 없어 ' + r.halfCd.wasted + '회는 그냥 사라졌습니다)' : '') + '.</p>' : '');
+        (r.halfCd.wasted ? ' (쿨 중인 도술이 없어 ' + r.halfCd.wasted + '회는 그냥 사라졌습니다)' : '') + '.</p>' : '') +
+      gaugeFootHtml(r);
   }
 
   function statsHtml(r) {
@@ -1588,11 +1622,16 @@
         S.opt = null;
         /* 카드를 다시 그리지 않고 이 줄만 고칩니다 — 방금 누른 체크박스가 그대로 남도록 */
         var oDmg = 0;
-        C.sixOptions(Number(sid)).forEach(function (o) { if (o.id === oid) { oDmg = o.d || 0; } });
+        var oWhen = '';
+        C.sixOptions(Number(sid)).forEach(function (o) { if (o.id === oid) { oDmg = o.d || 0; oWhen = o.when || ''; } });
         var li = t.closest ? t.closest('.ds-six__li') : null;
         if (li) {
           var em = li.querySelector('em');
-          if (em) { em.textContent = t.checked ? '켜짐 · 계산 반영' : '켜면 +' + num(oDmg, 0) + '%'; }
+          if (em) {
+            em.textContent = t.checked
+              ? (oWhen ? '켜짐 · 그 상태일 때만' : '켜짐 · 계산 반영')
+              : '켜면 +' + num(oDmg, 0) + '%';
+          }
         }
         var rowEl = t.closest ? t.closest('.ds-trans') : null;
         if (rowEl) {
