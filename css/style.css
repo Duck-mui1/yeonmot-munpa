@@ -3317,8 +3317,7 @@ body.is-locked { overflow: hidden; }
   color: #dff3ec;
 }
 .ds-tune__title {
-  flex: 1;
-  min-width: 0;
+  flex: 0 0 auto;
   font-family: var(--serif);
   font-size: 17px;
   font-weight: 800;
@@ -3327,10 +3326,16 @@ body.is-locked { overflow: hidden; }
 }
 .ds-tune > summary::-webkit-details-marker { display: none; }
 .ds-tune > summary em {
+  flex: 0 1 auto;
+  min-width: 0;
   font-style: normal;
   font-size: 10px;
   font-weight: 500;
   color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
 }
 .ds-tune > summary::after {
   content: "＋";
@@ -3382,6 +3387,84 @@ body.is-locked { overflow: hidden; }
 }
 .ds-field label { display: flex; flex-direction: column; gap: 4px; font-size: 10px; color: var(--muted); }
 .ds-field input[type="range"] { width: 100%; accent-color: #2e8b7a; }
+
+/* ---- ⑥ 무기·장비 도술 피해 — 전체 +% · 계열 +% ---- */
+.ds-sdmg { gap: 7px; }
+.ds-field .ds-sdmg__all {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 9px;
+  border-radius: 10px;
+  border: 1px solid rgba(127, 209, 189, .2);
+  background: rgba(4, 24, 28, .6);
+}
+.ds-sdmg__all > span:first-child { font-size: 10.5px; color: var(--ink-dim); }
+.ds-sdmg__box { display: flex; align-items: center; gap: 3px; }
+.ds-sdmg__all .ds-sdmg__box { flex: 0 0 94px; }
+.ds-sdmg__box input {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  padding: 5px 6px;
+  border-radius: 8px;
+  border: 1px solid rgba(127, 209, 189, .2);
+  background: rgba(3, 20, 23, .85);
+  font-size: 12px;
+  color: #eaf6f1;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.ds-sdmg__box input::placeholder { color: rgba(147, 183, 174, .45); }
+.ds-sdmg__box em { flex: none; font-style: normal; font-size: 9.5px; color: var(--muted); }
+.ds-sdmg__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: 2px;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+.ds-sdmg__head em { font-style: normal; font-size: 9px; color: rgba(147, 183, 174, .6); }
+.ds-sdmg__grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.ds-sdmg__cell {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 5px 6px 6px;
+  border-radius: 10px;
+  border: 1px solid rgba(127, 209, 189, .16);
+  background: rgba(4, 24, 28, .5);
+}
+/* ③ 도술 장착 8칸에 들어 있는 계열 — 테두리를 금빛으로 */
+.ds-sdmg__cell.is-on { border-color: rgba(240, 217, 165, .5); background: rgba(240, 217, 165, .07); }
+.ds-sdmg__name { display: flex; align-items: center; gap: 3px; font-size: 10px; color: var(--ink-dim); }
+.ds-sdmg__name i { flex: none; width: 4px; height: 4px; border-radius: 50%; background: var(--ds-style, #7fd1bd); }
+.ds-sdmg__cell.is-on .ds-sdmg__name { color: #f6e9cd; font-weight: 700; }
+.ds-sdmg__cnt { margin-left: auto; font-style: normal; font-size: 8px; font-weight: 700; color: rgba(240, 217, 165, .95); }
+.ds-sdmg__cell .ds-sdmg__box input { padding: 3px 4px; font-size: 11.5px; }
+.ds-sdmg__cell .ds-sdmg__box { gap: 2px; }
+.ds-sdmg__cell.is-set .ds-sdmg__box input { border-color: rgba(240, 217, 165, .4); color: #ffe9c0; font-weight: 700; }
+.ds-sdmg__reset {
+  flex: none;
+  padding: 0 1px;
+  border: 0;
+  background: transparent;
+  font-size: 8px;
+  line-height: 1.4;
+  color: rgba(147, 183, 174, .62);
+  text-decoration: underline;
+  text-underline-offset: 1px;
+  cursor: pointer;
+}
+.ds-sdmg__reset:hover { color: var(--gold-soft); }
+.ds-sdmg__note { margin: 2px 0 0; font-size: 9px; line-height: 1.55; color: rgba(147, 183, 174, .72); }
+@media (max-width: 380px) {
+  .ds-sdmg__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 .ds-check {
   display: flex !important;
   flex-direction: row !important;

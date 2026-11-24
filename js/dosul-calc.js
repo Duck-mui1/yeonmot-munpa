@@ -292,6 +292,17 @@
     var enh = config.enhance || {};
     var transCfg = config.trans || {};
     var tr6Cfg = config.tr6 || {};
+    /* ---------------------------------------------------------
+       무기·장비 도술 피해 — 2026-11-24 준형 님 요청
+       · 무기 자체에 붙는 「전체 도술 피해 +%」 (allDosulDmgPct)
+       · 무기 추가 옵션의 「특정 계열 도술 피해 +%」 (styleDmgPct[계열])
+       두 값은 **합연산**으로 한 번에 곱합니다:
+         1 + (전체 + 그 계열) / 100
+       대상은 그 계열 도술 전부(일반 도술 · 연계기 · 그 계열 궁극기)이고
+       평타에는 붙지 않습니다.
+       --------------------------------------------------------- */
+    var gearAllPct = Math.max(0, Math.min(500, Number(config.allDosulDmgPct) || 0));
+    var gearStyleCfg = (config.styleDmgPct && typeof config.styleDmgPct === 'object') ? config.styleDmgPct : {};
 
     function makeEntry(id, slot) {
       var sk = SKILL_BY_ID[id];
@@ -320,7 +331,11 @@
       var condRatio = trMul > 0 ? trMulCond / trMul : 1;
       /* 궁극기 = 상시 피해 + 궁극기 피해(화살촉 3개) / 저격 일반 도술 = 상시 피해 × 저격 +45% / 그 밖 = 상시 피해 */
       var styleMul = (sk.st === 'snipe' && sk.k !== 'ult') ? dmgMul * snipeDmgMul : dmgMul;
-      var allMul = (1 + enhPct / 100) * trMul * (sk.k === 'ult' ? ultDmgMul : styleMul);
+      /* 무기·장비 — 전체 +% 와 그 계열 +% 를 더해 이 도술 계수에만 곱합니다(평타 제외) */
+      var gearStylePct = Math.max(0, Math.min(500, Number(gearStyleCfg[sk.st]) || 0));
+      var gearPct = gearAllPct + gearStylePct;
+      var gearMul = 1 + gearPct / 100;
+      var allMul = (1 + enhPct / 100) * trMul * (sk.k === 'ult' ? ultDmgMul : styleMul) * gearMul;
 
       /* 연계기 — 1단계 뒤에 같은 도술을 이어 쓰면 연계 도술이 따로 나갑니다.
          · 시간 : 1단계 시전 + 연계 시전×횟수 (그만큼 평타 칠 시간이 줄어듭니다)
@@ -378,6 +393,7 @@
         chainCoeff: chain ? chain.coeff : 0,
         hits: sk.h + sinHits, charge: sk.ch || 0,
         enh: enhLv, enhPct: enhPct,
+        gearPct: gearPct, gearAllPct: gearAllPct, gearStylePct: gearStylePct,
         trans: tr.step, transDmgPct: tr.dmgPct, transCd: tr.cdSec,
         tr6: tr.t6on, tr6Pct: tr.d6, tr6Text: tr.t6, hasTrans: tr.has,
         tr6Extra: tr.extra, tr6ExtraCond: tr.extraCond || 0, tr6Opts: tr.opts, sp: isSpecial(sk.id), grade: gradeOf(sk.id)
@@ -486,7 +502,9 @@
       enhance: config.enhance || {},
       trans: config.trans || {},
       tr6: config.tr6 || {},
-      chain: config.chain || {}
+      chain: config.chain || {},
+      allDosulDmgPct: config.allDosulDmgPct || 0,
+      styleDmgPct: (config.styleDmgPct && typeof config.styleDmgPct === 'object') ? config.styleDmgPct : {}
     };
     var built = buildEntries(cfg);
     var gap = cfg.gap || 0;
@@ -958,6 +976,8 @@
           coeff: round(en.coeff, 1), damage: round(en.damage, 1),
           occupied: round(en.occupied, 2), hits: en.hits,
           enh: en.enh, enhPct: round(en.enhPct, 1),
+          gearPct: round(en.gearPct || 0, 1), gearAllPct: round(en.gearAllPct || 0, 1),
+          gearStylePct: round(en.gearStylePct || 0, 1),
           trans: en.trans, transDmgPct: round(en.transDmgPct, 1), transCd: round(en.transCd, 2),
           tr6: en.tr6, tr6Pct: en.tr6Pct, tr6Text: en.tr6Text, hasTrans: en.hasTrans,
           tr6Extra: round(en.tr6Extra || 0, 1), tr6ExtraCond: round(en.tr6ExtraCond || 0, 1),
@@ -1053,6 +1073,16 @@
       dmgMul: round(built.dmgMul, 3),
       ultDmgMul: round(built.ultDmgMul, 3),
       snipeDmgMul: round(built.snipeDmgMul, 3),
+      /* 무기·장비 — 화면·테스트가 어떤 +%가 곱해졌는지 확인할 수 있게 남깁니다 */
+      gear: { allPct: round(Math.max(0, Math.min(500, Number(cfg.allDosulDmgPct) || 0)), 1), stylePct: (function () {
+        var out = {};
+        for (var gk in cfg.styleDmgPct) {
+          if (Object.prototype.hasOwnProperty.call(cfg.styleDmgPct, gk)) {
+            out[gk] = round(Math.max(0, Math.min(500, Number(cfg.styleDmgPct[gk]) || 0)), 1);
+          }
+        }
+        return out;
+      })() },
       /* 신식 게이지 발동 기록 — 계열별 영력·중첩이 어떻게 돌았는지 */
       gauge: gauges.map(function (g) {
         return {

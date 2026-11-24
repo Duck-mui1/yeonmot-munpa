@@ -47,6 +47,59 @@
     return fixed.replace(/\.0+$/, '').replace(/(\.\d)0$/, '$1');
   }
 
+  /* 무기·장비 도술 피해 — 0~500% 범위로 안전하게 다듬습니다 */
+  function clampPct(v) {
+    var n = Number(v);
+    if (!isFinite(n) || n < 0) { return 0; }
+    return Math.min(500, Math.round(n * 10) / 10);
+  }
+
+  function cleanStyleDmg(map) {
+    var out = {};
+    if (!map || typeof map !== 'object') { return out; }
+    C.styles().forEach(function (st) {
+      var n = clampPct(map[st.key]);
+      if (n > 0) { out[st.key] = n; }
+    });
+    return out;
+  }
+
+  /* 지금 ③ 도술 장착 8칸에 들어 있는 계열별 개수 — 계열 % 칸 강조에 썰니다 */
+  function slotStyleCounts() {
+    var counts = {};
+    S.slots.forEach(function (id) {
+      var sk = id ? C.skillById(id) : null;
+      if (!sk) { return; }
+      counts[sk.st] = (counts[sk.st] || 0) + 1;
+    });
+    return counts;
+  }
+
+  /* 「쿨감 0% · 도술 +10% · 파멸 +15% · 60초」 — ⑥ 요약 줄 */
+  function styleDmgSummary() {
+    var parts = [];
+    var allPct = clampPct(S.allDosulDmgPct);
+    if (allPct > 0) { parts.push('도술 +' + num(allPct, 1) + '%'); }
+    var styles = [];
+    C.styles().forEach(function (st) {
+      var v = clampPct(S.styleDmgPct && S.styleDmgPct[st.key]);
+      if (v > 0) { styles.push(st.name + ' +' + num(v, 1) + '%'); }
+    });
+    /* 요약 줄은 한 줄이라 계열은 2개까지만 적고 나머지는 「외 N」으로 줄입니다 */
+    parts = parts.concat(styles.slice(0, 2));
+    if (styles.length > 2) { parts.push('외 ' + (styles.length - 2) + '계열'); }
+    return parts.join(' · ');
+  }
+
+  function tuneSumText() {
+    var extra = styleDmgSummary();
+    return '쿨감 ' + num(S.cdReducePct, 0) + '%' + (extra ? ' · ' + extra : '') + ' · ' + S.duration + '초';
+  }
+
+  function updateTuneSum() {
+    if (el.tuneSum) { el.tuneSum.textContent = tuneSumText(); }
+  }
+
   /* 게임 등급 배지 — 일반(영웅) · 특별(전설) */
   function gradeBadge(id, opts) {
     var o = opts || {};
@@ -74,6 +127,9 @@
       castOrder: [],
       duration: 60,
       cdReducePct: 0,
+      /* 무기·장비 — 전체 도술 피해 +% · 계열별 도술 피해 +% (계열 key → %) */
+      allDosulDmgPct: 0,
+      styleDmgPct: {},
       castMode: 'delay',
       chargeFull: true,
       ultFirst: true,
@@ -120,6 +176,9 @@
       base.trans = (base.trans && typeof base.trans === 'object') ? base.trans : {};
       base.tr6 = (base.tr6 && typeof base.tr6 === 'object') ? base.tr6 : {};
       base.chain = (base.chain && typeof base.chain === 'object') ? base.chain : {};
+      /* 무기·장비 도술 피해 — 예전 저장분에는 없으므로 없으면 0 / {} 로 읽습니다 */
+      base.allDosulDmgPct = clampPct(base.allDosulDmgPct);
+      base.styleDmgPct = cleanStyleDmg(base.styleDmgPct);
       base.picker = { slot: -1, style: '', q: '' };
       base.castOrder = C.syncCastOrder(base.slots, base.castOrder, { ultFirst: base.ultFirst !== false });
     } catch (e) { /* 깨진 저장값은 기본값으로 */ }
@@ -135,7 +194,8 @@
         castMode: S.castMode, chargeFull: S.chargeFull, ultFirst: S.ultFirst,
         autoInterval: S.autoInterval, autoCoeff: S.autoCoeff, gap: S.gap,
         toggles: S.toggles, override: S.override,
-        enhance: S.enhance, trans: S.trans, tr6: S.tr6, chain: S.chain, mig: S.mig
+        enhance: S.enhance, trans: S.trans, tr6: S.tr6, chain: S.chain, mig: S.mig,
+        allDosulDmgPct: S.allDosulDmgPct, styleDmgPct: S.styleDmgPct
       };
       global.localStorage.setItem(SAVE_KEY, JSON.stringify(out));
     } catch (e) { /* 저장은 선택 */ }
@@ -186,7 +246,9 @@
       enhance: S.enhance,
       trans: S.trans,
       tr6: S.tr6,
-      chain: S.chain
+      chain: S.chain,
+      allDosulDmgPct: S.allDosulDmgPct,
+      styleDmgPct: S.styleDmgPct
     };
   }
 
@@ -748,7 +810,9 @@
       enhance: S.enhance,
       trans: S.trans,
       tr6: S.tr6,
-      chain: S.chain
+      chain: S.chain,
+      allDosulDmgPct: S.allDosulDmgPct,
+      styleDmgPct: S.styleDmgPct
     };
   }
 
@@ -961,6 +1025,9 @@
     S.trans = cfg.trans && typeof cfg.trans === 'object' ? cfg.trans : {};
     S.tr6 = cfg.tr6 && typeof cfg.tr6 === 'object' ? cfg.tr6 : {};
     S.chain = cfg.chain && typeof cfg.chain === 'object' ? cfg.chain : {};
+    /* 무기·장비 — 공유 조합에 없던(예전) 조합은 0 / {} 으로 읽습니다 */
+    S.allDosulDmgPct = clampPct(cfg.allDosulDmgPct);
+    S.styleDmgPct = cleanStyleDmg(cfg.styleDmgPct);
     /* 사용 순서 — 저장한 조합에 있으면 그대로, 예전 조합이면 장착 순서로 되돌립니다 */
     S.castOrder = Array.isArray(cfg.castOrder)
       ? cfg.castOrder.map(function (v) { return Number(v) || null; }).filter(function (v) { return v && C.skillById(v); })
@@ -1026,12 +1093,35 @@
      내 스펙 조정
      --------------------------------------------------------- */
   function renderTune() {
-    el.tuneSum.textContent = '쿨감 ' + num(S.cdReducePct, 0) + '% · ' + S.duration + '초';
+    el.tuneSum.textContent = tuneSumText();
     renderDurQuick();
 
     var durBtns = DURATIONS.map(function (d) {
       return '<button type="button" class="ds-seg' + (S.duration === d ? ' is-on' : '') + '" data-duration="' + d + '">' +
         esc(DUR_LABEL[d] || (d + '초')) + '</button>';
+    }).join('');
+
+    /* 무기·장비 도술 피해 — 전체 1칸 + 계열 12칸(3열 · 좁은 화면 2열).
+       ③ 도술 장착 8칸에 들어 있는 계열은 테두리로 강조합니다. */
+    var allPct = clampPct(S.allDosulDmgPct);
+    var counts = slotStyleCounts();
+    var styleCells = C.styles().map(function (st) {
+      var v = clampPct(S.styleDmgPct && S.styleDmgPct[st.key]);
+      var cnt = counts[st.key] || 0;
+      return '<div class="ds-sdmg__cell' + (cnt > 0 ? ' is-on' : '') + (v > 0 ? ' is-set' : '') + '"' +
+        ' data-sdmg-cell="' + esc(st.key) + '" style="--ds-style:' + esc(st.color) + '">' +
+        '<span class="ds-sdmg__name"><i></i>' + esc(st.name) +
+        (cnt > 0 ? '<em class="ds-sdmg__cnt" title="③ 도술 장착 8칸에 ' + cnt + '개">' + cnt + '</em>' : '') +
+        '</span>' +
+        '<span class="ds-sdmg__box">' +
+        '<input type="number" min="0" max="500" step="0.1" inputmode="decimal" placeholder="0"' +
+        ' value="' + (v > 0 ? num(v, 1) : '') + '" data-sdmg="' + esc(st.key) + '"' +
+        ' aria-label="' + esc(st.name) + ' 계열 도술 피해 (%)">' +
+        '<em>%</em>' +
+        '<button type="button" class="ds-sdmg__reset" data-sdmg-reset="' + esc(st.key) + '"' +
+        ' aria-label="' + esc(st.name) + ' 계열 도술 피해 초기화">초기화</button>' +
+        '</span>' +
+        '</div>';
     }).join('');
 
     var rows = S.slots.map(function (id, i) {
@@ -1061,6 +1151,21 @@
       '    <span class="ds-field__label">전체 재사용 대기시간 감소 <b id="ds-cd-pct">' + num(S.cdReducePct, 0) + '%</b></span>',
       '    <input type="range" min="0" max="50" step="1" value="' + S.cdReducePct + '" id="ds-cd-range">',
       '  </label>',
+      /* 무기·장비 도술 피해 — 무기 자체의 「전체 도술 피해」 + 추가 옵션의 「계열 도술 피해」 */
+      '  <div class="ds-field ds-sdmg" id="ds-sdmg">',
+      '    <span class="ds-field__label">무기·장비 도술 피해 <em>평타에는 붙지 않습니다</em></span>',
+      '    <label class="ds-sdmg__all">',
+      '      <span>전체 도술 피해</span>',
+      '      <span class="ds-sdmg__box">',
+      '        <input type="number" min="0" max="500" step="0.1" inputmode="decimal" placeholder="0"' +
+        ' value="' + (allPct > 0 ? num(allPct, 1) : '') + '" data-sdmg-all aria-label="전체 도술 피해 (%)">',
+      '        <em>%</em>',
+      '      </span>',
+      '    </label>',
+      '    <div class="ds-sdmg__head">계열별 도술 피해 <em>무기 추가 옵션 · 최대 2~3개 계열</em></div>',
+      '    <div class="ds-sdmg__grid">' + styleCells + '</div>',
+      '    <p class="ds-sdmg__note">③ 도술 장착 8칸에 넣은 계열은 <b>테두리</b>로 표시합니다. 전체 +%와 계열 +%를 <b>더해서</b> 그 계열 도술(일반 · 연계기 · 궁극기) 계수에 한 번 곱하고, <b>평타에는 붙지 않습니다</b>.</p>',
+      '  </div>',
       '  <div class="ds-field ds-field--row">',
       '    <label>평타 1회 시간<input type="number" min="0.3" max="3" step="0.05" value="' + num(S.autoInterval, 2) + '" data-auto="interval"></label>',
       '    <label>평타 1회 계수(%)<input type="number" min="0" max="800" step="5" value="' + num(S.autoCoeff, 0) + '" data-auto="coeff"></label>',
@@ -1139,6 +1244,7 @@
     return tip + '<p class="ds-foot">계산 기준 — 쿨타임은 <b>시전을 시작한 순간</b>부터 흐르고, 시전 중에는 다른 도술을 쓸 수 없습니다. ' +
       '시전시간은 도깨비지지 공개값(선행 시전 + 동작 시간)이고, 차지 도술은 최대 차지로 계산합니다. ' +
       '<b>계열 강화</b>는 그 계열 도술 계수에, <b>도술 돌파</b>는 그 도술의 계수·쿨타임에만 붙습니다. ' +
+      '<b>무기·장비 도술 피해</b>는 전체 +%와 계열 +%를 <b>더해서</b>(예: 전체 +10% · 파멸 +15% → 파멸 도술 ×1.25) 그 계열 도술(일반·연계기·궁극기) 계수에만 곱하고 <b>평타에는 붙지 않습니다</b>. ' +
       '<b>연계기</b>(월식 · 쌍검 가르기 · 은신 같은 6개)는 1단계 시전시간 + 연계 시전시간을 함께 점유하고 피해도 1단계 + 연계를 더하며, 다음 발동은 연계를 켜도 <b>1단계 쿨타임</b>을 그대로 기다립니다. ' +
       '<b>신식</b>은 계열마다 <b>영력·중첩(게이지)</b>이 실제로 차는 만큼만 붙습니다 — 적중·시전·처치로 쌓이고, 단계·중첩·지속시간·최대치 효과를 그대로 계산합니다. ' +
       (r.halfCd ? '<b>기만 신식</b>(눈물 2개)은 궁극기를 뺀 도술 <b>' + r.halfCd.every + '회마다</b> 쿨이 돌고 있는 도술 하나의 <b>남은 쿨을 50%</b> 줄이며, 대상이 <b>무작위 1개</b>라 실제 편차가 있습니다 — 계산기는 쿨 중인 k개 도술의 남은 쿨을 (1 - 0.5/k)배로 함께 줄인 <b>평균 기댓값</b>으로 계산합니다. ' : '') +
@@ -1460,6 +1566,22 @@
         }
         return;
       }
+      var sdRes = t.closest('[data-sdmg-reset]');
+      if (sdRes) {
+        /* 계열 도술 피해 한 칸 초기화 — 그 칸만 0으로 */
+        var rk = sdRes.getAttribute('data-sdmg-reset');
+        if (S.styleDmgPct) { delete S.styleDmgPct[rk]; }
+        var rcell = sdRes.closest('[data-sdmg-cell]');
+        if (rcell) {
+          rcell.classList.remove('is-set');
+          var rin = rcell.querySelector('[data-sdmg]');
+          if (rin) { rin.value = ''; }
+        }
+        S.opt = null;
+        updateTuneSum();
+        recomputeSoon();
+        return;
+      }
       var act = t.closest('[data-act]');
       if (act) {
         var a = act.getAttribute('data-act');
@@ -1576,8 +1698,30 @@
         S.cdReducePct = Number(t.value);
         var lab = document.getElementById('ds-cd-pct');
         if (lab) { lab.textContent = num(S.cdReducePct, 0) + '%'; }
-        el.tuneSum.textContent = '쿨감 ' + num(S.cdReducePct, 0) + '% · ' + S.duration + '초';
+        updateTuneSum();
         S.opt = null;
+        recomputeSoon();
+        return;
+      }
+      if (t.hasAttribute && t.hasAttribute('data-sdmg-all')) {
+        S.allDosulDmgPct = t.value === '' ? 0 : clampPct(t.value);
+        S.opt = null;
+        updateTuneSum();
+        recomputeSoon();
+        return;
+      }
+      var sdKey = t.getAttribute && t.getAttribute('data-sdmg');
+      if (sdKey) {
+        if (!S.styleDmgPct) { S.styleDmgPct = {}; }
+        if (t.value === '') { delete S.styleDmgPct[sdKey]; }
+        else {
+          var sv = clampPct(t.value);
+          if (sv > 0) { S.styleDmgPct[sdKey] = sv; } else { delete S.styleDmgPct[sdKey]; }
+        }
+        var sdCell = t.closest ? t.closest('[data-sdmg-cell]') : null;
+        if (sdCell) { sdCell.classList.toggle('is-set', !!S.styleDmgPct[sdKey]); }
+        S.opt = null;
+        updateTuneSum();
         recomputeSoon();
         return;
       }
