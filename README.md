@@ -9,7 +9,7 @@
 
 | 파일 | 내용 |
 | --- | --- |
-| `index.html` | 로그인·가입 화면과 5개 탭(홈 · 문파채팅 · 문파앨범 · 문파원 · 내정보)의 뼈대 |
+| `index.html` | 로그인·가입 화면과 6개 탭(홈 · 문파채팅 · 문파앨범 · 도술 · 문파원 · 내정보)의 뼈대 |
 | `css/style.css` | 연못 · 연꽃 · 물결 · 반딧불 색과 질감을 담은 스타일 |
 | `js/db.js` | **Supabase 연결 계층** — 프로젝트 주소·공개 키, RPC 호출, 실시간 구독, 사진 축소 |
 | `js/app.js` | 화면 렌더링, 로그인 흐름, 채팅 · 앨범 · 출석 · 문주 도구 |
@@ -17,6 +17,9 @@
 | `js/art.js` | 홈 배너와 체험 앨범 장면을 그리는 자체 제작 SVG 일러스트 |
 | `js/gyeongdan.js` | **🍡 경단만들기 미니게임** — Canvas 2D 원형 물리(중력 · 충돌 · 마찰 · 굴림 · 머지)와 11단계 경단 그림(도감 원본 그림 PNG), 절구공이, 진행 저장 |
 | `assets/gyeongdan/tier-1.png` ~ `tier-11.png` | 경단 11단계 그림 — 보내 주신 「도깨비의 세계」 고화질 1~11단계 시트에서 한 알씩 오려낸 **372~406px 정사각 배경 투명 PNG**(바닥 흰색은 바깥에서만 지우고 안쪽 흰 털·구름은 살렸습니다). 그림이 없으면 코드의 Canvas 그림으로 대신 그립니다 |
+| `js/dosul-data.js` | **⚔️ 도술 계산기 데이터** — 12계열 · 도술 106개(일반 94 + 궁극기 12)의 쿨타임 · 시전시간 · 계수 · 신식 효과 (도깨비지지 kkaebi.gg 공개값, 문파청·도깨비허브·덱깨비와 교차 확인) |
+| `js/dosul-calc.js` | **⚔️ 계산 엔진** — 이벤트 단위 시뮬레이션(평타 빈 시간 · 도술 가동률 · DPS · 도술별 기여 · 타임라인)과 순서 추천 |
+| `js/dosul-ui.js` | **⚔️ 계산기 화면** — 8칸 · 신식 자동 활성 · 프리셋 · 내 스펙 조정 · 📌 문파 공유 조합 |
 | `js/vendor/supabase.js` | 실시간 구독용 `supabase-js` 2.58.0 (UMD, MIT). 저장소에 함께 두어 오프라인에서도 열립니다 |
 | `supabase/schema.sql` | Supabase에 한 번 실행하는 설치본 (테이블 · RPC · 권한 · Realtime) |
 | `supabase/migration-v2.sql` | 이미 설치해 쓰는 DB용 **v2 마이그레이션** — 프로필 그림 + 공략 (여러 번 실행해도 안전) |
@@ -27,6 +30,7 @@
 | `supabase/migration-edit-posts.sql` | 이미 설치해 쓰는 DB용 **모든 글 수정 마이그레이션** — 공지·일정·쿠폰·공략·앨범 글 고치기 (자리비움 제외, 여러 번 실행해도 안전) |
 | `supabase/migration-clan-contents.sql` | 이미 설치해 쓰는 DB용 **'일정 → 문파컨텐츠 · 매주 반복' 마이그레이션** — `repeat_weekly`·`repeat_weekdays` 칸과 두 RPC 파라미터 (여러 번 실행해도 안전) |
 | `supabase/migration-gyeongdan.sql` | 이미 설치해 쓰는 DB용 **'🍡 경단만들기 문파 랭킹' 마이그레이션** — `private.gyeongdan_scores` 표와 `submit_gyeongdan_score` · `list_gyeongdan_ranking` (여러 번 실행해도 안전) |
+| `supabase/migration-dosul.sql` | 이미 설치해 쓰는 DB용 **'⚔️ 도술 계산기 문파 공유 조합' 마이그레이션** — `private.dosul_builds` 표와 `save_dosul_build` · `list_dosul_builds` · `delete_dosul_build` (여러 번 실행해도 안전) |
 | `manifest.json` | PWA 설치 정보(이름, 아이콘, 테마 색) |
 | `sw.js` | 오프라인에서도 열리도록 파일을 기억하는 서비스 워커 |
 | `icons/` | 앱 아이콘(PNG)과 파비콘(SVG) |

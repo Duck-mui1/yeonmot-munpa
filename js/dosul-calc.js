@@ -1,0 +1,429 @@
+/* =========================================================
+   ⚔️ 도술 효율 · 평타 빈 시간 계산기 — 시뮬레이션 엔진
+   ---------------------------------------------------------
+   도술마다 「쿨타임」과 「시전(동작) 시간」이 있습니다.
+   자동 사냥은 쿨이 돌아온 도술을 슬롯 순서대로 쓰고,
+   쓸 도술이 하나도 없을 때 기본 공격(평타)을 칩니다.
+
+   이 엔진은 그 규칙을 그대로 따라가며
+     ① 도술을 쓰지 못해 평타를 치는 시간(초·%)
+     ② 도술 가동률
+     ③ 도술별 발동 횟수 · 기여 피해 · 차지 시간
+     ④ 초반 시전 타임라인
+   을 계산합니다. 시간은 이벤트(쿨이 돌아오는 순간) 단위로
+   정확히 나눠 계산하므로 0.05초 눈금 오차가 없습니다.
+   ========================================================= */
+(function (global) {
+  'use strict';
+
+  var DATA = global.YM_DOSUL_DATA || { styles: [], skills: [], presets: [] };
+
+  var STYLE_BY_KEY = {};
+  var SKILL_BY_ID = {};
+  DATA.styles.forEach(function (s) { STYLE_BY_KEY[s.key] = s; });
+  DATA.skills.forEach(function (s) { SKILL_BY_ID[s.id] = s; });
+
+  /* 공개 자료에 시전 시간이 없는 도술(은신·최후의 저항)은 0.5초로 둡니다. */
+  var FALLBACK_CAST = 0.5;
+
+  var KIND_LABEL = { attack: '공격', buff: '강화', heal: '회복', move: '이동', ult: '궁극기' };
+
+  function clone(o) {
+    var r = {};
+    for (var k in o) { if (Object.prototype.hasOwnProperty.call(o, k)) { r[k] = o[k]; } }
+    return r;
+  }
+
+  function round(n, d) {
+    var p = Math.pow(10, d || 0);
+    return Math.round(n * p) / p;
+  }
+
+  function styleOf(key) { return STYLE_BY_KEY[key] || null; }
+  function styleName(key) { var s = STYLE_BY_KEY[key]; return s ? s.name : key; }
+  function styleColor(key) { var s = STYLE_BY_KEY[key]; return s ? s.color : '#7fd1bd'; }
+  function skillById(id) { return SKILL_BY_ID[id] || null; }
+  function allSkills() { return DATA.skills.slice(); }
+  function presets() { return DATA.presets.slice(); }
+  function styles() { return DATA.styles.slice(); }
+
+  /* 신식 판정: 기본 1~5칸에 같은 계열 3개 이상 */
+  function styleCounts(slots) {
+    var counts = {};
+    for (var i = 0; i < 5; i++) {
+      var id = slots[i];
+      var sk = id ? SKILL_BY_ID[id] : null;
+      if (!sk) { continue; }
+      counts[sk.st] = (counts[sk.st] || 0) + 1;
+    }
+    return counts;
+  }
+
+  function sinStyles(slots) {
+    var counts = styleCounts(slots);
+    var out = [];
+    for (var k in counts) {
+      if (Object.prototype.hasOwnProperty.call(counts, k) && counts[k] >= 3) {
+        out.push({ key: k, count: counts[k], style: STYLE_BY_KEY[k] });
+      }
+    }
+    out.sort(function (a, b) { return b.count - a.count; });
+    return out;
+  }
+
+  /* 슬롯(도술 id 배열 8칸) → 시뮬레이션용 항목 */
+  function buildEntries(config) {
+    var entries = [];
+    var cdPct = Math.max(0, Math.min(60, config.cdReducePct || 0)) / 100;
+    var castMode = config.castMode === 'motion' ? 'motion' : 'delay';
+    var scale = config.castScale > 0 ? config.castScale : 1;
+    var chargeFull = config.chargeFull !== false;
+    var sin = sinStyles(config.slots);
+    var sinKeys = {};
+    sin.forEach(function (s) { sinKeys[s.key] = true; });
+
+    /* 신식 토글 → 효과 모으기 */
+    var fx = { ultCd: 0, cd: 0, cdPct: 0, dmg: 0, ultDmg: 0, resetEvery: 0, ultResetEvery: 0, halfCdEvery: 0 };
+    var activeToggles = [];
+    DATA.styles.forEach(function (st) {
+      if (!sinKeys[st.key]) { return; }
+      var on = config.toggles && config.toggles[st.key] ? config.toggles[st.key] : [];
+      st.toggles.forEach(function (t) {
+        if (on.indexOf(t.id) < 0) { return; }
+        activeToggles.push({ style: st.key, label: t.label, fx: t.fx });
+        for (var k in t.fx) {
+          if (Object.prototype.hasOwnProperty.call(t.fx, k)) {
+            fx[k] = (fx[k] || 0) + t.fx[k];
+          }
+        }
+      });
+    });
+
+    var dmgMul = 1 + fx.dmg;
+    var ultDmgMul = 1 + fx.dmg + fx.ultDmg;
+    var cdMul = (1 - cdPct) * (1 - fx.cdPct);
+
+    var ov = config.override || {};
+
+    function makeEntry(id, slot) {
+      var sk = SKILL_BY_ID[id];
+      if (!sk) { return null; }
+      var o = ov[id] || {};
+      var rawCast = o.ct > 0 ? o.ct : sk.ct;
+      var est = false;
+      if (castMode === 'motion' && sk.mv && !(o.ct > 0)) { rawCast = sk.mv; }
+      if (!rawCast) { rawCast = FALLBACK_CAST; est = true; }
+      var ct = rawCast;
+      if (chargeFull && sk.ch) { ct += sk.ch; }
+      var cdBase = o.cd > 0 ? o.cd : sk.cd;
+      var coeffBase = o.c > 0 ? o.c : sk.c;
+      var cd = cdBase * cdMul;
+      return {
+        id: sk.id, slot: slot, name: sk.n, style: sk.st, kind: sk.k,
+        cdBase: cdBase, cd: cd,
+        cast: ct * scale, castBase: ct, est: est,
+        coeff: coeffBase * (sk.k === 'ult' ? ultDmgMul : dmgMul),
+        hits: sk.h, charge: sk.ch || 0
+      };
+    }
+
+    var i;
+    for (i = 0; i < 8; i++) {
+      var id = config.slots[i];
+      if (!id) { continue; }
+      var e = makeEntry(id, i);
+      if (e) { entries.push(e); }
+    }
+
+    /* 신식 활성 → 궁극기 자동 장착(맨 뒤 순번) */
+    var ultEntry = null;
+    if (sin.length && config.useUlt !== false) {
+      var ultId = sin[0].style.ult;
+      ultEntry = makeEntry(ultId, 99);
+      if (ultEntry) {
+        ultEntry.kind = 'ult';
+        ultEntry.cd = Math.max(1, ultEntry.cd - fx.ultCd);
+        ultEntry.ultFirst = config.ultFirst !== false;
+      }
+    }
+
+    return {
+      entries: entries, ult: ultEntry, fx: fx, toggles: activeToggles, sin: sin,
+      dmgMul: dmgMul, ultDmgMul: ultDmgMul
+    };
+  }
+
+  /* ---------------------------------------------------------
+     시뮬레이션
+     --------------------------------------------------------- */
+  function simulate(config) {
+    var cfg = {
+      slots: config.slots || [],
+      duration: config.duration || 60,
+      cdReducePct: config.cdReducePct || 0,
+      castMode: config.castMode || 'delay',
+      castScale: config.castScale || 1,
+      chargeFull: config.chargeFull !== false,
+      autoInterval: config.autoInterval > 0 ? config.autoInterval : 1,
+      gap: config.gap > 0 ? config.gap : 0,
+      autoCoeff: config.autoCoeff >= 0 ? config.autoCoeff : 100,
+      ultFirst: config.ultFirst !== false,
+      useUlt: config.useUlt !== false,
+      toggles: config.toggles || {},
+      override: config.override || {}
+    };
+    var built = buildEntries(cfg);
+    var gap = cfg.gap || 0;
+    var list = built.entries.slice();
+    if (built.ult) { list.push(built.ult); }
+    var duration = cfg.duration;
+
+    if (!list.length) {
+      return {
+        ok: false, reason: 'empty',
+        message: '도술을 1개 이상 넣어 주세요.'
+      };
+    }
+
+    var n = list.length;
+    var i;
+    for (i = 0; i < n; i++) {
+      list[i].order = i;
+      list[i].readyAt = 0;
+      list[i].casts = 0;
+      list[i].done = 0;
+      list[i].occupied = 0;
+      list[i].damage = 0;
+    }
+    var ult = built.ult;
+    if (ult) { ult.order = cfg.ultFirst ? -1 : 900; }
+
+    var fx = built.fx;
+    var castsSinceReset = 0;
+    var castsSinceUltReset = 0;
+    var castSeq = 0;
+    var t = 0;
+    var idle = 0;
+    var segments = [];
+    var guard = 0;
+    var EPS = 1e-7;
+    var cdReducePerCast = fx.cd || 0;
+
+    function applyFlatCd(now, exceptIdx) {
+      if (!cdReducePerCast) { return; }
+      for (var j = 0; j < n; j++) {
+        if (j === exceptIdx) { continue; }
+        var e = list[j];
+        if (e.readyAt > now) {
+          e.readyAt = Math.max(now, e.readyAt - cdReducePerCast);
+        }
+      }
+    }
+
+    while (t < duration - EPS && guard++ < 20000) {
+      /* 쓸 수 있는 도술 고르기 — 슬롯 순서(우선순위)대로 */
+      var pick = -1;
+      var pickOrder = Infinity;
+      var nextReady = Infinity;
+      for (i = 0; i < n; i++) {
+        var e = list[i];
+        if (e.readyAt <= t + EPS) {
+          if (e.order < pickOrder) { pickOrder = e.order; pick = i; }
+        } else if (e.readyAt < nextReady) {
+          nextReady = e.readyAt;
+        }
+      }
+
+      if (pick < 0) {
+        /* 쿨이 모두 비었다 → 평타 구간 */
+        var end = Math.min(duration, nextReady === Infinity ? duration : nextReady);
+        if (end > t + EPS) {
+          idle += end - t;
+          segments.push({ t0: t, t1: end, kind: 'auto', name: '평타' });
+        }
+        t = end;
+        continue;
+      }
+
+      var cur = list[pick];
+      var castLen = cur.cast + gap;
+      if (t + castLen > duration) { castLen = duration - t; }
+      if (castLen <= EPS) { break; }
+
+      cur.casts += 1;
+      cur.occupied += castLen;
+      cur.damage += cur.coeff;
+      castSeq += 1;
+
+      segments.push({
+        t0: t, t1: t + castLen, kind: 'cast', name: cur.name,
+        style: cur.style, color: styleColor(cur.style),
+        isUlt: cur.kind === 'ult', slot: cur.id === (ult ? ult.id : -1) ? 'R' : (cur.slot + 1)
+      });
+
+      /* 쿨타임은 「시전을 시작한 순간」부터 흐릅니다 */
+      var cd = cur.cd;
+      if (fx.halfCdEvery && castSeq % fx.halfCdEvery === 0) { cd = cd * 0.5; }
+      cur.readyAt = t + Math.max(0.1, cd);
+
+      applyFlatCd(t, pick);
+
+      t = t + castLen;
+
+      /* 신식 게이지 — 일정 횟수마다 쿨 초기화 */
+      if (cur.kind !== 'ult') {
+        castsSinceReset += 1;
+        castsSinceUltReset += 1;
+        if (fx.resetEvery && castsSinceReset >= fx.resetEvery) {
+          castsSinceReset = 0;
+          for (i = 0; i < n; i++) {
+            if (list[i].kind !== 'ult') { list[i].readyAt = t; }
+          }
+          segments.push({ t0: t, t1: t, kind: 'mark', name: '요기/강압', style: cur.style, color: styleColor(cur.style) });
+        }
+        if (fx.ultResetEvery && ult && castsSinceUltReset >= fx.ultResetEvery) {
+          castsSinceUltReset = 0;
+          ult.readyAt = t;
+        }
+      }
+    }
+
+    /* 결과 정리 */
+    var castTotal = 0;
+    var skillDamage = 0;
+    var rows = [];
+    for (i = 0; i < n; i++) {
+      var en = list[i];
+      castTotal += en.occupied;
+      skillDamage += en.damage;
+      if (en.casts > 0 || en.kind === 'ult') {
+        rows.push({
+          id: en.id, name: en.name, style: en.style, styleName: styleName(en.style),
+          color: styleColor(en.style), kind: en.kind,
+          slot: en.kind === 'ult' ? 'R' : (en.slot + 1),
+          casts: en.casts, cdBase: round(en.cdBase, 2), cd: round(en.cd, 2),
+          cast: round(en.cast, 2), est: en.est,
+          coeff: round(en.coeff, 1), damage: round(en.damage, 1),
+          occupied: round(en.occupied, 2), hits: en.hits
+        });
+      }
+    }
+    rows.sort(function (a, b) {
+      if (a.kind === 'ult' && b.kind !== 'ult') { return -1; }
+      if (b.kind === 'ult' && a.kind !== 'ult') { return 1; }
+      return String(a.slot).localeCompare(String(b.slot));
+    });
+
+    var autoCount = idle / cfg.autoInterval;
+    var autoDamage = autoCount * cfg.autoCoeff;
+    var totalCoeff = skillDamage + autoDamage;
+    var idlePct = duration > 0 ? (idle / duration) * 100 : 0;
+    var uptime = 100 - idlePct;
+
+    rows.forEach(function (r) {
+      r.share = totalCoeff > 0 ? round((r.damage / totalCoeff) * 100, 1) : 0;
+      r.deals = r.coeff > 0;
+    });
+
+    return {
+      ok: true,
+      duration: duration,
+      idle: round(idle, 2),
+      idlePct: round(idlePct, 1),
+      uptime: round(uptime, 1),
+      castTotal: round(castTotal, 2),
+      autoCount: round(autoCount, 1),
+      autoInterval: cfg.autoInterval,
+      gap: gap,
+      autoCoeffBase: cfg.autoCoeff,
+      autoDamage: round(autoDamage, 1),
+      skillDamage: round(skillDamage, 1),
+      totalCoeff: round(totalCoeff, 1),
+      dps: round(duration > 0 ? totalCoeff / duration : 0, 1),
+      autoShare: totalCoeff > 0 ? round((autoDamage / totalCoeff) * 100, 1) : 0,
+      rows: rows,
+      segments: segments,
+      sin: built.sin.map(function (s) {
+        return { key: s.key, name: s.style.name, count: s.count, color: s.style.color, ult: skillById(s.style.ult) };
+      }),
+      toggles: built.toggles,
+      dmgMul: round(built.dmgMul, 3),
+      ultDmgMul: round(built.ultDmgMul, 3),
+      totalCasts: rows.reduce(function (a, r) { return a + r.casts; }, 0)
+    };
+  }
+
+  /* ---------------------------------------------------------
+     평타 빈 시간을 줄이는 순서 찾기 (지역 탐색)
+     지금 순서 → 두 칸 맞바꾸기 / 한 칸 옮기기를 모두 해 보고
+     초당 피해(DPS)가 늘어나는 쪽으로 계속 고칩니다.
+     --------------------------------------------------------- */
+  function optimize(config, rounds) {
+    var base = simulate(config);
+    if (!base.ok) { return base; }
+    var maxRound = rounds || 4;
+    var best = config.slots.slice(0, 8);
+    var bestRes = base;
+    var pass;
+    for (pass = 0; pass < maxRound; pass++) {
+      var improved = false;
+      var cand = [];
+      var a, b;
+      for (a = 0; a < 8; a++) {
+        for (b = a + 1; b < 8; b++) {
+          if (!best[a] && !best[b]) { continue; }
+          var sw = best.slice();
+          var tmp = sw[a]; sw[a] = sw[b]; sw[b] = tmp;
+          cand.push(sw);
+        }
+      }
+      for (a = 0; a < 8; a++) {
+        for (b = 0; b < 8; b++) {
+          if (a === b) { continue; }
+          var mv = best.slice();
+          var v = mv[a];
+          mv.splice(a, 1);
+          mv.splice(b, 0, v);
+          cand.push(mv);
+        }
+      }
+      for (var i = 0; i < cand.length; i++) {
+        var cfg = clone(config);
+        cfg.slots = cand[i];
+        var res = simulate(cfg);
+        if (!res.ok) { continue; }
+        if (res.dps > bestRes.dps + 0.05) {
+          bestRes = res;
+          best = cand[i];
+          improved = true;
+        }
+      }
+      if (!improved) { break; }
+    }
+    return {
+      ok: true,
+      before: base,
+      after: bestRes,
+      slots: best,
+      changed: best.join(',') !== config.slots.slice(0, 8).join(','),
+      gainDps: round(bestRes.dps - base.dps, 1),
+      gainIdle: round(base.idle - bestRes.idle, 2)
+    };
+  }
+
+  global.YM_DOSUL = {
+    data: DATA,
+    styles: styles,
+    allSkills: allSkills,
+    skillById: skillById,
+    styleOf: styleOf,
+    styleName: styleName,
+    styleColor: styleColor,
+    presets: presets,
+    styleCounts: styleCounts,
+    sinStyles: sinStyles,
+    kindLabel: function (k) { return KIND_LABEL[k] || k; },
+    simulate: simulate,
+    optimize: optimize
+  };
+})(window);

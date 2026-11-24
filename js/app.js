@@ -1210,6 +1210,26 @@
     });
   }
 
+  /** ⚔️ 도술 탭 — 계산기 화면을 그립니다 (한 번만 뼈대를 만들고 이후엔 값만 다시 계산) */
+  function renderDosul() {
+    var D = window.YM_DOSUL_UI;
+    if (!D) {
+      var body = $('#dosul-body');
+      if (body) { body.innerHTML = '<p class="ds-empty">도술 계산기를 불러오지 못했어요. 새로고침해 주세요.</p>'; }
+      return;
+    }
+    D.mount({
+      live: isLive(),
+      nickname: isLive() ? myNick() : '',
+      api: isLive() ? {
+        list: function () { return DB.listDosulBuilds(40); },
+        save: function (build) { return DB.saveDosulBuild(build); },
+        remove: function (id) { return DB.deleteDosulBuild(id); }
+      } : null,
+      toast: toast
+    });
+  }
+
   function switchTab(tab, silent) {
     S.tab = tab;
     $$('.tab').forEach(function (btn) {
@@ -1230,6 +1250,7 @@
       window.requestAnimationFrame(function () { scrollChat(false); });
       if (isLive() && !silent) { refreshChat(); }
     }
+    if (tab === 'dosul') { renderDosul(); }
     if (!silent) {
       if (tab === 'home') { renderHome(); }
       if (tab === 'members') { refreshMembers(); }

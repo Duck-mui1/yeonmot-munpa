@@ -563,6 +563,34 @@
       });
     },
 
+    /* --- ⚔️ 도술 계산기 · 문파 공유 조합 ---
+     *  마이그레이션(supabase/migration-dosul.sql) 전에는 PGRST202 가 올라옵니다.
+     *  화면은 그때 이 기기(localStorage)에만 저장하고 '아직 준비되지 않았어요' 라고 알려 줍니다.
+     */
+    saveDosulBuild: function (build) {
+      return withToken(function (t) {
+        return rpc('save_dosul_build', {
+          p_token: t,
+          p_title: String((build && build.title) || '').slice(0, 40),
+          p_memo: String((build && build.memo) || '').slice(0, 200),
+          p_slots: (build && build.slots) || [],
+          p_config: (build && build.config) || {},
+          p_idle_pct: Number((build && build.idlePct) || 0),
+          p_dps: Number((build && build.dps) || 0)
+        });
+      });
+    },
+    listDosulBuilds: function (limit) {
+      return withToken(function (t) {
+        return rpc('list_dosul_builds', { p_token: t, p_limit: limit || 40 });
+      });
+    },
+    deleteDosulBuild: function (buildId) {
+      return withToken(function (t) {
+        return rpc('delete_dosul_build', { p_token: t, p_build_id: buildId });
+      });
+    },
+
     /* --- 관리자(문주) --- */
     admin: {
       getSettings: function () {
