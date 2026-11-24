@@ -3294,7 +3294,7 @@ body.is-locked { overflow: hidden; }
 .ds-tune__caption { margin: 0 0 2px; font-size: 9.5px; color: rgba(147, 183, 174, .75); }
 .ds-tune__row {
   display: grid;
-  grid-template-columns: 1fr 52px 48px 52px;
+  grid-template-columns: 1fr 46px 44px 48px auto;
   gap: 5px;
   align-items: center;
 }
@@ -3498,6 +3498,55 @@ body.is-locked { overflow: hidden; }
   border-color: rgba(127, 209, 189, .25);
 }
 .ds-slot__meta .ds-gr { margin-right: 3px; font-size: 7.5px; }
+/* ---- 연계 배지 — 한 도술을 두 번 이어 쓰는 연계기 ---- */
+.ds-cb {
+  display: inline-block;
+  flex: none;
+  margin-left: 3px;
+  padding: 0 4px;
+  border-radius: 999px;
+  font-style: normal;
+  font-size: 8px;
+  font-weight: 800;
+  line-height: 1.5;
+  vertical-align: 1px;
+  color: #2a1d06;
+  background: linear-gradient(150deg, #ffd9a3, #f0a85e);
+  border: 1px solid rgba(255, 214, 160, .8);
+}
+.ds-slot__name .ds-cb, .ds-tbl__row .c-name b .ds-cb { font-size: 7.5px; margin-left: 4px; }
+.ds-pk__name .ds-cb { margin: 0 0 0 1px; }
+.ds-tune__name .ds-cb { font-size: 7.5px; }
+.ds-tbl__row .c-name b .ds-cb { font-size: 7.5px; }
+.ds-cb2 {
+  margin-left: 2px;
+  font-style: normal;
+  font-size: 9px;
+  font-weight: 800;
+  color: #f0a85e;
+}
+.ds-tbl__row .c-chain {
+  grid-column: 1 / -1;
+  margin-top: -1px;
+  font-size: 8.5px;
+  line-height: 1.5;
+  color: #f0a85e;
+  font-variant-numeric: tabular-nums;
+  white-space: normal;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+.ds-tbl__row .c-chain b { font-weight: 800; }
+.ds-tbl__row .c-sin { color: #9fd8ff; }
+.ds-check--chain {
+  flex-direction: row !important;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  font-size: 9px !important;
+  color: #f0d9a5 !important;
+}
+.ds-tl__seg.is-chain { box-shadow: inset 0 0 0 1px rgba(240, 168, 94, .85); }
 .ds-pk__name .ds-gr { margin: 0 0 0 1px; }
 .ds-trans__top .ds-gr { margin: 0 2px 0 0 !important; }
 

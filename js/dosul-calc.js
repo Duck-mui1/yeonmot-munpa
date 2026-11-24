@@ -124,11 +124,20 @@
     };
   }
 
-  function styleOf(key) { return STYLE_BY_KEY[key] || null; }
-  function styleName(key) { var s = STYLE_BY_KEY[key]; return s ? s.name : key; }
+  function styleOf(key) { return STYLE_BY_KEY[key] || null; }  function styleName(key) { var s = STYLE_BY_KEY[key]; return s ? s.name : key; }
   function styleColor(key) { var s = STYLE_BY_KEY[key]; return s ? s.color : '#7fd1bd'; }
   function skillById(id) { return SKILL_BY_ID[id] || null; }
   function allSkills() { return DATA.skills.slice(); }
+  /* 연계기가 있는 도술 목록 (106개 중 6개) · 그 도술의 연계 정보 */
+  function chainSkills() { return DATA.skills.filter(function (s) { return !!s.chain; }); }
+  function chainOf(id) {
+    var sk = SKILL_BY_ID[id];
+    return (sk && sk.chain) ? sk.chain : null;
+  }
+  function chainOn(config, id) {
+    if (!chainOf(id)) { return false; }
+    return !(config && config.chain && config.chain[id] === false);
+  }
   function presets() { return DATA.presets.slice(); }
   function styles() { return DATA.styles.slice(); }
 
@@ -215,12 +224,59 @@
       var cdAfterTrans = Math.max(cdBase * 0.1, cdBase - Math.min(cdBase * 0.9, tr.cdSec));
       var cd = cdAfterTrans * cdMul;
       var trMul = 1 + (tr.dmgPct + tr.d6 + tr.extra) / 100;
+      var allMul = (1 + enhPct / 100) * trMul * (sk.k === 'ult' ? ultDmgMul : dmgMul);
+
+      /* 연계기 — 1단계 뒤에 같은 도술을 이어 쓰면 연계 도술이 따로 나갑니다.
+         · 시간 : 1단계 시전 + 연계 시전×횟수 (그만큼 평타 칠 시간이 줄어듭니다)
+         · 피해 : 1단계 계수 + 연계 계수×횟수 (강화·돌파·신식 배수가 똑같이 붙습니다)
+         · 토글 : 「내 스펙 조정」에서 도술별로 끄면 1단계만 계산합니다 */
+      /* [OO 신식개방] 조건부 — 그 계열 신식이 열렸을 때만 붙는 추가 피해.
+         106개 중 황천의 부름(주술) 하나입니다. 시전은 그대로, 피해만 더합니다. */
+      var sinBonus = 0;
+      var sinHits = 0;
+      var sinDef = sk.sin || null;
+      if (sinDef && sinKeys[sinDef.style]) {
+        sinBonus = (sinDef.c || 0) * ((o.c > 0 && sk.c > 0) ? o.c / sk.c : 1);
+        sinHits = sinDef.h || 0;
+      }
+
+      var chain = null;
+      var chainDef = sk.chain || null;
+      if (chainDef && !(config.chain && config.chain[sk.id] === false)) {
+        var ratio = (o.c > 0 && sk.c > 0) ? o.c / sk.c : 1;
+        var per = (chainDef.per || []).map(function (v) { return v * ratio; });
+        var perSum = 0;
+        for (var pi = 0; pi < per.length; pi++) { perSum += per[pi]; }
+        var uses = Math.max(1, Math.round(Number(chainDef.uses) || 1));
+        var chCastPer = (chainDef.cast != null ? chainDef.cast : ct) * scale;
+        chain = {
+          name: chainDef.name || '연계',
+          uses: uses,
+          window: Number(chainDef.window) || 0,
+          cool: Number(chainDef.cool) || 0,
+          per: per,
+          coeff: perSum * allMul,
+          ratio: ratio,
+          hits: Number(chainDef.hits) || 0,
+          castPer: chCastPer,
+          castLen: chCastPer * uses,
+          est: !!chainDef.est
+        };
+      }
+
       return {
         id: sk.id, slot: slot, name: sk.n, style: sk.st, kind: sk.k,
         cdBase: cdBase, cd: cd,
         cast: ct * scale, castBase: ct, est: est,
-        coeff: coeffBase * (1 + enhPct / 100) * trMul * (sk.k === 'ult' ? ultDmgMul : dmgMul),
-        hits: sk.h, charge: sk.ch || 0,
+        coeff: (coeffBase + sinBonus) * allMul,
+        sinOn: sinBonus > 0,
+        sinCoeff: sinBonus * allMul,
+        sinLabel: sinDef ? (sinDef.label || '신식개방') : '',
+        sinNote: sinDef ? (sinDef.note || '') : '',
+        chain: chain,
+        chainCast: chain ? chain.castLen : 0,
+        chainCoeff: chain ? chain.coeff : 0,
+        hits: sk.h + sinHits, charge: sk.ch || 0,
         enh: enhLv, enhPct: enhPct,
         trans: tr.step, transDmgPct: tr.dmgPct, transCd: tr.cdSec,
         tr6: tr.t6on, tr6Pct: tr.d6, tr6Text: tr.t6, hasTrans: tr.has,
@@ -274,7 +330,8 @@
       override: config.override || {},
       enhance: config.enhance || {},
       trans: config.trans || {},
-      tr6: config.tr6 || {}
+      tr6: config.tr6 || {},
+      chain: config.chain || {}
     };
     var built = buildEntries(cfg);
     var gap = cfg.gap || 0;
@@ -298,11 +355,16 @@
       list[i].done = 0;
       list[i].occupied = 0;
       list[i].damage = 0;
+      list[i].chainUses = 0;
+      list[i].chainOcc = 0;
+      list[i].chainDamage = 0;
     }
     var ult = built.ult;
     if (ult) { ult.order = cfg.ultFirst ? -1 : 900; }
 
     var fx = built.fx;
+    /* 전체 쿨감 + 신식 쿨감 — 연계 뒤 「이어 쓰기 재사용 대기시간」에도 같이 붙습니다 */
+    var cdMul = (1 - Math.max(0, Math.min(60, cfg.cdReducePct || 0)) / 100) * (1 - (fx.cdPct || 0));
     var castsSinceReset = 0;
     var castsSinceUltReset = 0;
     var castSeq = 0;
@@ -350,23 +412,49 @@
       }
 
       var cur = list[pick];
-      var castLen = cur.cast + gap;
+      /* 연계기가 켜져 있으면 1단계 + 연계 시전 시간을 한 번에 점유합니다 */
+      var castLen = cur.cast + (cur.chain ? cur.chainCast : 0) + gap;
       if (t + castLen > duration) { castLen = duration - t; }
       if (castLen <= EPS) { break; }
 
       cur.casts += 1;
       cur.occupied += castLen;
       cur.damage += cur.coeff;
+      if (cur.chain) {
+        cur.damage += cur.chain.coeff;
+        cur.chainUses += cur.chain.uses;
+        cur.chainDamage += cur.chain.coeff;
+      }
       castSeq += 1;
 
+      var mainLen = Math.min(cur.cast, castLen);
+      var slotName = cur.id === (ult ? ult.id : -1) ? 'R' : (cur.slot + 1);
       segments.push({
-        t0: t, t1: t + castLen, kind: 'cast', name: cur.name, id: cur.id,
+        t0: t, t1: t + mainLen, kind: 'cast', name: cur.name, id: cur.id,
         style: cur.style, color: styleColor(cur.style),
-        isUlt: cur.kind === 'ult', slot: cur.id === (ult ? ult.id : -1) ? 'R' : (cur.slot + 1)
+        isUlt: cur.kind === 'ult', slot: slotName
       });
+      if (cur.chain && castLen - mainLen > EPS) {
+        var chLen = castLen - mainLen;
+        cur.chainOcc += chLen;
+        segments.push({
+          t0: t + mainLen, t1: t + mainLen + chLen, kind: 'cast', chain: true,
+          name: cur.name + ' · ' + cur.chain.name, id: cur.id,
+          style: cur.style, color: styleColor(cur.style),
+          isUlt: cur.kind === 'ult', slot: slotName
+        });
+      }
 
-      /* 쿨타임은 「시전을 시작한 순간」부터 흐릅니다 */
+      /* 쿨타임은 「시전을 시작한 순간」부터 흐릅니다.
+         연계기(이어 쓰기 1회)는 게임의 「이어 쓰기 재사용 대기시간」을 씁니다
+         — 묵직한 주먹 1단계 9초 / 2단계 5초처럼 2단계 쿨이 더 짧습니다.
+         궁극기(재사용 여러 번)는 그 값이 재사용 사이 간격(0.4초)이라
+         1단계 쿨타임(30초)을 그대로 씁니다. */
       var cd = cur.cd;
+      if (cur.chain && cur.chain.uses === 1 && cur.chain.cool >= 1) {
+        cd = cur.chain.cool * cdMul;
+        cur.chainCdUsed = cd;
+      }
       if (fx.halfCdEvery && castSeq % fx.halfCdEvery === 0) { cd = cd * 0.5; }
       cur.readyAt = t + Math.max(0.1, cd);
 
@@ -412,7 +500,21 @@
           enh: en.enh, enhPct: round(en.enhPct, 1),
           trans: en.trans, transDmgPct: round(en.transDmgPct, 1), transCd: round(en.transCd, 2),
           tr6: en.tr6, tr6Pct: en.tr6Pct, tr6Text: en.tr6Text, hasTrans: en.hasTrans,
-          tr6Extra: round(en.tr6Extra || 0, 1), tr6Opts: en.tr6Opts, sp: en.sp, grade: en.grade
+          tr6Extra: round(en.tr6Extra || 0, 1), tr6Opts: en.tr6Opts, sp: en.sp, grade: en.grade,
+          chain: en.chain ? {
+            name: en.chain.name, uses: en.chain.uses, window: en.chain.window, cool: en.chain.cool,
+            per: en.chain.per.map(function (v) { return round(v, 1); }),
+            coeff: round(en.chain.coeff, 1), hits: en.chain.hits,
+            castPer: round(en.chain.castPer, 2), castLen: round(en.chain.castLen, 2),
+            est: en.chain.est
+          } : null,
+          sinOn: !!en.sinOn, sinCoeff: round(en.sinCoeff || 0, 1),
+          sinLabel: en.sinLabel || '', sinNote: en.sinNote || '',
+          chainCdUsed: round(en.chainCdUsed || 0, 2),
+          chainUses: en.chainUses, chainOcc: round(en.chainOcc, 2),
+          chainDamage: round(en.chainDamage, 1),
+          castAll: round(en.cast + (en.chain ? en.chain.castLen : 0), 2),
+          hitsAll: en.chain ? (en.hits + en.chain.hits * en.chain.uses) : en.hits
         });
       }
     }
@@ -430,7 +532,9 @@
 
     rows.forEach(function (r) {
       r.share = totalCoeff > 0 ? round((r.damage / totalCoeff) * 100, 1) : 0;
-      r.deals = r.coeff > 0;
+      /* 연계가 켜진 도술은 1단계 계수가 0이어도(은신) 연계 피해로 딜을 합니다 */
+      r.deals = (r.coeff + (r.chain ? r.chain.coeff : 0)) > 0;
+      r.coeffAll = round(r.coeff + (r.chain ? r.chain.coeff : 0), 1);
     });
 
     return {
@@ -531,6 +635,9 @@
     special: SPECIAL,
     styles: styles,
     allSkills: allSkills,
+    chainSkills: chainSkills,
+    chainOf: chainOf,
+    chainOn: chainOn,
     skillById: skillById,
     styleOf: styleOf,
     styleName: styleName,

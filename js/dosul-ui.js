@@ -52,6 +52,15 @@
     return '<em class="' + cls + '">' + esc(g) + '</em>';
   }
 
+  /* 연계 배지 — 한 도술을 두 번(이상) 이어 쓰는 연계기 */
+  function chainBadge(id, opts) {
+    var ch = C.chainOf(id);
+    if (!ch) { return ''; }
+    var o = opts || {};
+    var title = ch.name + ' · ' + ch.uses + '회 이어 쓰기 · ' + num(ch.window, 1) + '초 안에';
+    return '<em class="ds-cb' + (o.cls ? ' ' + o.cls : '') + '" title="' + esc(title) + '">연계</em>';
+  }
+
   function defaults() {
     return {
       slots: [null, null, null, null, null, null, null, null],
@@ -68,6 +77,7 @@
       enhance: {},
       trans: {},
       tr6: {},
+      chain: {},
       picker: { slot: -1, style: '', q: '' }
     };
   }
@@ -94,6 +104,7 @@
       base.enhance = (base.enhance && typeof base.enhance === 'object') ? base.enhance : {};
       base.trans = (base.trans && typeof base.trans === 'object') ? base.trans : {};
       base.tr6 = (base.tr6 && typeof base.tr6 === 'object') ? base.tr6 : {};
+      base.chain = (base.chain && typeof base.chain === 'object') ? base.chain : {};
       base.picker = { slot: -1, style: '', q: '' };
     } catch (e) { /* 깨진 저장값은 기본값으로 */ }
     /* 저장된 신식 토글 중 지금 활성 계열이 아닌 것은 그대로 두되 화면에는 활성만 보입니다 */
@@ -107,7 +118,7 @@
         castMode: S.castMode, chargeFull: S.chargeFull, ultFirst: S.ultFirst,
         autoInterval: S.autoInterval, autoCoeff: S.autoCoeff, gap: S.gap,
         toggles: S.toggles, override: S.override,
-        enhance: S.enhance, trans: S.trans, tr6: S.tr6
+        enhance: S.enhance, trans: S.trans, tr6: S.tr6, chain: S.chain
       };
       global.localStorage.setItem(SAVE_KEY, JSON.stringify(out));
     } catch (e) { /* 저장은 선택 */ }
@@ -142,7 +153,8 @@
       override: S.override,
       enhance: S.enhance,
       trans: S.trans,
-      tr6: S.tr6
+      tr6: S.tr6,
+      chain: S.chain
     };
   }
 
@@ -295,7 +307,7 @@
         '<span class="ds-slot__no">' + (i + 1) + '</span>' +
         '</span>' +
         '<span class="ds-slot__body">' +
-        '<span class="ds-slot__name">' + esc(sk.n) + '</span>' +
+        '<span class="ds-slot__name">' + esc(sk.n) + chainBadge(sk.id) + '</span>' +
         '<span class="ds-slot__meta">' + gradeBadge(sk.id, { specialOnly: true }) +
         esc(C.styleName(sk.st)) + ' · ' + num(sk.cd) + '초 · ' + num(sk.ct, 2) + '초</span>' +
         '</span>' +
@@ -626,7 +638,8 @@
       override: S.override,
       enhance: S.enhance,
       trans: S.trans,
-      tr6: S.tr6
+      tr6: S.tr6,
+      chain: S.chain
     };
   }
 
@@ -838,6 +851,7 @@
     S.enhance = cfg.enhance && typeof cfg.enhance === 'object' ? cfg.enhance : {};
     S.trans = cfg.trans && typeof cfg.trans === 'object' ? cfg.trans : {};
     S.tr6 = cfg.tr6 && typeof cfg.tr6 === 'object' ? cfg.tr6 : {};
+    S.chain = cfg.chain && typeof cfg.chain === 'object' ? cfg.chain : {};
     S.opt = null;
     renderSlots();
     renderSin();
@@ -894,11 +908,13 @@
       var cdv = o.cd > 0 ? o.cd : sk.cd;
       var ctv = o.ct > 0 ? o.ct : sk.ct;
       var cv = o.c > 0 ? o.c : sk.c;
-      return '<div class="ds-tune__row" data-tune-row="' + id + '">' +
-        '<span class="ds-tune__name">' + ico(sk.id, 'ds-ico--tune', 16) + (i + 1) + '. ' + esc(sk.n) + '</span>' +
+      return '<div class="ds-tune__row' + (sk.chain ? ' has-chain' : '') + '" data-tune-row="' + id + '">' +
+        '<span class="ds-tune__name">' + ico(sk.id, 'ds-ico--tune', 16) + (i + 1) + '. ' + esc(sk.n) + chainBadge(sk.id) + '</span>' +
         '<label>쿨<input type="number" min="0.5" max="180" step="0.5" data-ov="cd" data-id="' + id + '" value="' + num(cdv, 1) + '"></label>' +
         '<label>시전<input type="number" min="0" max="8" step="0.01" data-ov="ct" data-id="' + id + '" value="' + num(ctv, 2) + '"></label>' +
         '<label>계수<input type="number" min="0" max="4000" step="1" data-ov="c" data-id="' + id + '" value="' + num(cv, 0) + '"></label>' +
+        (sk.chain ? '<label class="ds-check ds-check--chain"><input type="checkbox" data-chain="' + id + '"' +
+          (C.chainOn(S, id) ? ' checked' : '') + '><span>연계</span></label>' : '') +
         '</div>';
     }).join('');
 
@@ -930,6 +946,7 @@
       '  </div>',
       '</div>',
       rows ? '<div class="ds-tune__rows"><p class="ds-tune__caption">도술별 값 직접 바꾸기 — 각성·장비 보정처럼 강화·돌파로 설명되지 않는 값만</p>' + rows +
+        '<p class="ds-tune__caption"><b>연계</b> — 한 도술을 정해진 시간 안에 한 번 더 쓰는 연계기(월식 · 쌍검 가르기 · 은신 등 6개)를 계산에 넣습니다. 게임의 2단계 쿨(이어 쓰기 재사용 대기시간)이 1단계보다 짧아서, 연계를 쓰면 그 도술의 대기시간도 2단계 쿨을 씁니다. 체크를 풀면 1단계만 셈합니다.</p>' +
         '<button type="button" class="ds-link" data-act="reset-ov">값 되돌리기</button></div>' : ''
     ].join('\n');
   }
@@ -959,6 +976,8 @@
     return tip + '<p class="ds-foot">계산 기준 — 쿨타임은 <b>시전을 시작한 순간</b>부터 흐르고, 시전 중에는 다른 도술을 쓸 수 없습니다. ' +
       '시전시간은 도깨비지지 공개값(선행 시전 + 동작 시간)이고, 차지 도술은 최대 차지로 계산합니다. ' +
       '<b>계열 강화</b>는 그 계열 도술 계수에, <b>도술 돌파</b>는 그 도술의 계수·쿨타임에만 붙습니다. ' +
+      '<b>연계기</b>(월식 · 쌍검 가르기 · 은신 같은 6개)는 1단계 시전시간 + 연계 시전시간을 함께 점유하고 피해도 1단계 + 연계를 더하며, 다음 발동은 게임의 <b>2단계 쿨(이어 쓰기 재사용 대기시간)</b>을 기다립니다. ' +
+      '<b>[주술 신식개방]</b>처럼 계열 신식이 열려야 붙는 추가 피해는 신식이 켜졌을 때만 더합니다. ' +
       '평타 1회 시간·계수는 내 스펙 조정에서 바꿀 수 있습니다.</p>';
   }
 
@@ -980,12 +999,19 @@
       var isUlt = x.kind === 'ult';
       return '<div class="ds-tbl__row' + (isUlt ? ' is-ult' : '') + '">' +
         '<span class="c-name">' + ico(x.id, 'ds-ico--row', 20) +
-        '<b>' + esc(x.name) + '</b>' +
+        '<b>' + esc(x.name) + chainBadge(x.id) + '</b>' +
         '<small>' + (isUlt ? 'R' : x.slot + '번') + ' · ' + esc(x.styleName) + ' ' + num(x.cd) + '초 · ' +
-        '시전 ' + num(x.occupied, 1) + '초' + (x.est ? ' · 추정' : '') +
+        '시전 ' + num(x.castAll, 2) + '초' + (x.est ? ' · 추정' : '') +
+        (x.sinOn ? ' · 신식 +' + num(x.sinCoeff, 0) + '%' : '') +
         (x.enh ? ' · Lv' + x.enh : '') + (x.trans ? ' · ' + x.trans + '돌파' : '') + '</small></span>' +
         '<span class="c-num">' + x.casts + '회</span>' +
         '<span class="c-pct">' + (x.deals ? num(x.share, 1) + '%' : '–') + '</span>' +
+        (x.chain ? '<span class="c-chain">연계 <b>' + esc(x.chain.name) + '</b> ' + x.chain.uses + '회 · +' +
+          num(x.chain.castLen, 2) + '초 · ' + num(x.chain.coeff, 0) + '% (1단계와 합 ' +
+          num(x.coeff + x.chain.coeff, 0) + '%)' +
+          (x.chainCdUsed ? ' · 연계 뒤 쿨 ' + num(x.chainCdUsed, 1) + '초' : '') + '</span>' : '') +
+        (x.sinOn ? '<span class="c-chain c-sin">' + esc(x.sinLabel) + ' 신식 +' +
+          num(x.sinCoeff, 0) + '% (합 ' + num(x.coeff, 0) + '%)</span>' : '') +
         '<span class="c-bar"><i style="width:' + Math.max(2, (x.share / maxShare) * 100).toFixed(1) + '%;background:' + x.color + '"></i></span>' +
         '</div>';
     }).join('');
@@ -1007,12 +1033,12 @@
       var t0 = Math.min(s.t0, span);
       var t1 = Math.min(s.t1, span);
       if (t1 - t0 <= 0.0001) { return; }
-      segs.push({ t0: t0, t1: t1, kind: s.kind, name: s.name, id: s.id, color: s.color, isUlt: s.isUlt });
+      segs.push({ t0: t0, t1: t1, kind: s.kind, name: s.name, id: s.id, color: s.color, isUlt: s.isUlt, chain: s.chain });
     });
     var legend = [];
     var seen = {};
     segs.forEach(function (s) {
-      if (s.kind !== 'cast') { return; }
+      if (s.kind !== 'cast' || s.chain) { return; }
       var key = s.name;
       if (seen[key]) { return; }
       seen[key] = true;
@@ -1025,6 +1051,7 @@
       var cls = s.kind === 'auto' ? 'ds-tl__seg is-auto' : 'ds-tl__seg';
       var bg = s.kind === 'auto' ? '' : 'background:' + s.color + ';';
       if (s.isUlt) { cls += ' is-ult'; }
+      if (s.chain) { cls += ' is-chain'; }
       return '<i class="' + cls + '" style="flex:' + w.toFixed(3) + ' 0 0;' + bg + '" title="' +
         num(s.t0, 2) + '~' + num(s.t1, 2) + '초 · ' + esc(s.name) + '"></i>';
     }).join('');
@@ -1162,8 +1189,9 @@
       return '<button type="button" class="ds-pk' + (on ? ' is-used' : '') + (sk.k === 'ult' ? ' is-ult' : '') + '" data-pick="' + sk.id + '" style="--ds-style:' + C.styleColor(sk.st) + '">' +
         ico(sk.id, 'ds-ico--pk', 36, true) +
         '<span class="ds-pk__body">' +
-        '<span class="ds-pk__name">' + esc(sk.n) + '<em>' + esc(C.kindLabel(sk.k)) + '</em>' + gradeBadge(sk.id) + '</span>' +
-        '<span class="ds-pk__meta">' + esc(C.styleName(sk.st)) + ' · ' + num(sk.cd) + '초 · 시전 ' + num(sk.ct, 2) + '초 · ' + num(sk.c, 0) + '%</span>' +
+        '<span class="ds-pk__name">' + esc(sk.n) + '<em>' + esc(C.kindLabel(sk.k)) + '</em>' + gradeBadge(sk.id) + chainBadge(sk.id) + '</span>' +
+        '<span class="ds-pk__meta">' + esc(C.styleName(sk.st)) + ' · ' + num(sk.cd) + '초 · 시전 ' + num(sk.ct, 2) + '초 · ' + num(sk.c, 0) + '%' +
+        (sk.chain ? ' · 연계 ' + esc(sk.chain.name) + ' ' + num(sk.chain.per[0], 0) + '% · 쿨 ' + num(sk.chain.cool, 1) + '초' : '') + '</span>' +
         '</span>' +
         '</button>';
     }).join('');
@@ -1377,6 +1405,14 @@
     el.root.addEventListener('change', function (e) {
       var t = e.target;
       if (!t) { return; }
+      var chId = t.getAttribute && t.getAttribute('data-chain');
+      if (chId) {
+        if (t.checked) { delete S.chain[chId]; } else { S.chain[chId] = false; }
+        S.opt = null;
+        renderSlots();
+        recompute();
+        return;
+      }
       var tr6 = t.getAttribute && t.getAttribute('data-tr6');
       if (tr6) {
         var sep = tr6.indexOf(':');
