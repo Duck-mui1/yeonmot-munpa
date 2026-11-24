@@ -246,7 +246,7 @@
        · dmg         상시 피해 증가(배수에 바로 넣음)
        · dmgBuff     버프형 피해 증가 — 「dmgBuffEvery」회마다 발동해 「dmgBuffSec」초 동안만 붙습니다
          (파멸 요기범람: 영력 200 = 도술 14회마다 → 30초간 피해 +20%) */
-    var fx = { ultCd: 0, cd: 0, cdPct: 0, dmg: 0, ultDmg: 0, resetEvery: 0, ultResetEvery: 0, halfCdEvery: 0,
+    var fx = { ultCd: 0, cd: 0, cdPct: 0, dmg: 0, snipeDmg: 0, ultDmg: 0, resetEvery: 0, ultResetEvery: 0, halfCdEvery: 0,
       dmgBuff: 0, dmgBuffEvery: 0, dmgBuffSec: 0 };
     var activeToggles = [];
     DATA.styles.forEach(function (st) {
@@ -265,6 +265,9 @@
 
     var dmgMul = 1 + fx.dmg;
     var ultDmgMul = 1 + fx.dmg + fx.ultDmg;
+    /* 저격 신식 — 「궁극기 외 저격 도술」이 화살촉 1개를 소모할 때만 피해 +45%.
+       같은 방에 같이 넣은 다른 계열 도술에는 붙지 않습니다(화면의 「저격 계열 도술」 문구 그대로). */
+    var snipeDmgMul = 1 + fx.snipeDmg;
     var cdMul = (1 - cdPct) * (1 - fx.cdPct);
 
     var ov = config.override || {};
@@ -294,7 +297,9 @@
       var cdAfterTrans = Math.max(cdBase * 0.1, cdBase - Math.min(cdBase * 0.9, tr.cdSec));
       var cd = cdAfterTrans * cdMul;
       var trMul = 1 + (tr.dmgPct + tr.d6 + tr.extra) / 100;
-      var allMul = (1 + enhPct / 100) * trMul * (sk.k === 'ult' ? ultDmgMul : dmgMul);
+      /* 궁극기 = 상시 피해 + 궁극기 피해(화살촉 3개) / 저격 일반 도술 = 상시 피해 × 저격 +45% / 그 밖 = 상시 피해 */
+      var styleMul = (sk.st === 'snipe' && sk.k !== 'ult') ? dmgMul * snipeDmgMul : dmgMul;
+      var allMul = (1 + enhPct / 100) * trMul * (sk.k === 'ult' ? ultDmgMul : styleMul);
 
       /* 연계기 — 1단계 뒤에 같은 도술을 이어 쓰면 연계 도술이 따로 나갑니다.
          · 시간 : 1단계 시전 + 연계 시전×횟수 (그만큼 평타 칠 시간이 줄어듭니다)
@@ -376,7 +381,7 @@
 
     return {
       entries: entries, ult: ultEntry, fx: fx, toggles: activeToggles, sin: sin,
-      dmgMul: dmgMul, ultDmgMul: ultDmgMul, order: orderIds
+      dmgMul: dmgMul, ultDmgMul: ultDmgMul, snipeDmgMul: snipeDmgMul, order: orderIds
     };
   }
 
@@ -715,6 +720,7 @@
       } : null,
       dmgMul: round(built.dmgMul, 3),
       ultDmgMul: round(built.ultDmgMul, 3),
+      snipeDmgMul: round(built.snipeDmgMul, 3),
       totalCasts: rows.reduce(function (a, r) { return a + r.casts; }, 0)
     };
   }

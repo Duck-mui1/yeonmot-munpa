@@ -2947,6 +2947,10 @@ body.is-locked { overflow: hidden; }
 .ds-subhead b { font-family: var(--serif); font-size: 13px; letter-spacing: .02em; color: #dff3ec; }
 .ds-subhead span { font-size: 9px; color: var(--muted); }
 .ds-hint { font-size: 9.5px; color: var(--muted); }
+/* 결과 상단 1분 · 2분 · 5분 빠른 전환 */
+.ds-dur-quick { flex: none; margin-left: auto; gap: 4px; }
+.ds-dur-quick .ds-seg { flex: none; padding: 4px 9px; font-size: 10px; border-radius: 8px; }
+.ds-dur-quick__note { margin-top: -3px; }
 .ds-link {
   padding: 2px 0;
   border: 0;

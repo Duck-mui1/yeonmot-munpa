@@ -19,7 +19,13 @@
   var timer = null;
 
   var SLOT_NAMES = ['1번', '2번', '3번', '4번', '5번', '6번', '7번', '8번'];
-  var DURATIONS = [30, 60, 120];
+  /* 전투 시간 — 300초(5분)는 기만처럼 편차가 큰 신식을 평균으로 보고
+     60초 쿨 궁극기가 여러 번 돌아가는지 확인할 때 씁니다 */
+  var DURATIONS = [30, 60, 120, 300];
+  var DUR_LABEL = { 30: '30초', 60: '60초', 120: '120초', 300: '300초 (5분)' };
+  /* 결과 상단 빠른 전환 — 설정을 열지 않고 1분 · 2분 · 5분 평균을 봅니다 */
+  var QUICK_DURATIONS = [60, 120, 300];
+  var QUICK_LABEL = { 60: '1분', 120: '2분', 300: '5분' };
 
   /* 도술 아이콘 — js/dosul-icons.js 가 없으면 빈 문자열(아이콘 없이 동작) */
   var ICONS = global.YM_DOSUL_ICONS || null;
@@ -80,6 +86,8 @@
       trans: {},
       tr6: {},
       chain: {},
+      /* 나중에 더한 기본 ON 신식 토글을 기존 저장분에도 한 번만 켜기 위한 표시 */
+      mig: {},
       picker: { slot: -1, style: '', q: '' }
     };
   }
@@ -127,7 +135,7 @@
         castMode: S.castMode, chargeFull: S.chargeFull, ultFirst: S.ultFirst,
         autoInterval: S.autoInterval, autoCoeff: S.autoCoeff, gap: S.gap,
         toggles: S.toggles, override: S.override,
-        enhance: S.enhance, trans: S.trans, tr6: S.tr6, chain: S.chain
+        enhance: S.enhance, trans: S.trans, tr6: S.tr6, chain: S.chain, mig: S.mig
       };
       global.localStorage.setItem(SAVE_KEY, JSON.stringify(out));
     } catch (e) { /* 저장은 선택 */ }
@@ -139,11 +147,19 @@
     var sin = C.sinStyles(S.slots);
     var active = {};
     sin.forEach(function (s) { active[s.key] = true; });
+    if (!S.mig) { S.mig = {}; }
     C.styles().forEach(function (st) {
       if (!active[st.key]) { return; }
       if (!S.toggles[st.key]) {
         S.toggles[st.key] = st.toggles.map(function (t) { return t.id; });
       }
+      /* 나중에 더한 「기본 ON」 토글(저격 연속 조준처럼)은 기존 저장분에도
+         한 번만 켭니다 — 사용자가 끄면 그 뒤로는 다시 켜지 않습니다. */
+      st.toggles.forEach(function (t) {
+        if (!t.defOn || S.mig[t.id]) { return; }
+        S.mig[t.id] = 1;
+        if (S.toggles[st.key].indexOf(t.id) < 0) { S.toggles[st.key].push(t.id); }
+      });
     });
   }
 
@@ -232,7 +248,10 @@
       '</details>',
 
       '<section class="ds-sec ds-sec--result" id="ds-result-sec">',
-      '  <div class="ds-sec__head"><span class="ds-sec__num">7</span><h3>계산 결과</h3><span class="ds-hint">8칸 · 사용 순서 · 강화 · 돌파가 바로 반영</span></div>',
+      '  <div class="ds-sec__head"><span class="ds-sec__num">7</span><h3>계산 결과</h3>',
+      '    <div class="ds-segs ds-dur-quick" id="ds-dur-quick" role="group" aria-label="전투 시간 빠른 전환"></div>',
+      '  </div>',
+      '  <p class="ds-sec__sub ds-dur-quick__note">전투 시간 <b>1분(60초) · 2분(120초) · 5분(300초)</b> — 5분으로 보면 기만처럼 편차가 큰 신식의 평균과 60초 쿨 궁극기의 여러 번 발동을 한눈에 볼 수 있습니다.</p>',
       '  <div class="ds-result" id="ds-result"></div>',
       '</section>',
 
@@ -276,6 +295,7 @@
     el.tuneSum = $('#ds-tune-sum');
     el.tuneBody = $('#ds-tune-body');
     el.result = $('#ds-result');
+    el.durQuick = $('#ds-dur-quick');
     el.shared = $('#ds-shared-list');
     el.sharedHint = $('#ds-shared-hint');
     el.shareBox = $('#ds-share');
@@ -973,14 +993,33 @@
     });
   }
 
+  /* 결과 상단의 1분 · 2분 · 5분 빠른 전환 */
+  function renderDurQuick() {
+    if (!el.durQuick) { return; }
+    el.durQuick.innerHTML = QUICK_DURATIONS.map(function (d) {
+      var on = S.duration === d;
+      return '<button type="button" class="ds-seg' + (on ? ' is-on' : '') + '" data-quick-duration="' + d + '" title="' + d + '초" aria-label="' + d + '초" aria-pressed="' + (on ? 'true' : 'false') + '">' +
+        esc(QUICK_LABEL[d] || (d + '초')) + '</button>';
+    }).join('');
+  }
+
+  function setDuration(d) {
+    S.duration = Number(d) || 60;
+    S.opt = null;
+    renderTune();
+    recompute();
+  }
+
   /* ---------------------------------------------------------
      내 스펙 조정
      --------------------------------------------------------- */
   function renderTune() {
     el.tuneSum.textContent = '쿨감 ' + num(S.cdReducePct, 0) + '% · ' + S.duration + '초';
+    renderDurQuick();
 
     var durBtns = DURATIONS.map(function (d) {
-      return '<button type="button" class="ds-seg' + (S.duration === d ? ' is-on' : '') + '" data-duration="' + d + '">' + d + '초</button>';
+      return '<button type="button" class="ds-seg' + (S.duration === d ? ' is-on' : '') + '" data-duration="' + d + '">' +
+        esc(DUR_LABEL[d] || (d + '초')) + '</button>';
     }).join('');
 
     var rows = S.slots.map(function (id, i) {
@@ -1061,6 +1100,7 @@
       '<b>연계기</b>(월식 · 쌍검 가르기 · 은신 같은 6개)는 1단계 시전시간 + 연계 시전시간을 함께 점유하고 피해도 1단계 + 연계를 더하며, 다음 발동은 연계를 켜도 <b>1단계 쿨타임</b>을 그대로 기다립니다. ' +
       (r.halfCd ? '<b>기만 신식</b>(눈물 2개)은 궁극기를 뺀 도술 <b>' + r.halfCd.every + '회마다</b> 쿨이 돌고 있는 도술 하나의 <b>남은 쿨을 50%</b> 줄이며, 대상이 <b>무작위 1개</b>라 실제 편차가 있습니다 — 계산기는 쿨 중인 k개 도술의 남은 쿨을 (1 - 0.5/k)배로 함께 줄인 <b>평균 기댓값</b>으로 계산합니다. ' : '') +
       '<b>[주술 신식개방]</b>처럼 계열 신식이 열려야 붙는 추가 피해는 신식이 켜졌을 때만 더합니다. ' +
+      (r.snipeDmgMul > 1 ? '<b>저격 신식</b>은 도술 1회 = 1처치로 보고 화살촉을 모으며, 화살촉을 쓰는 <b>저격 계열 일반 도술</b>에만 +45%(궁극기와 다른 계열 도술에는 붙지 않음)를, 궁극기는 화살촉 3개 소모로 +75%를 붙입니다. ' : '') +
       (r.dmgBuff ? '<b>파멸 요기범람</b>은 궁극기를 뺀 도술 <b>' + r.dmgBuff.every + '회마다</b>(영력 200) 그 순간부터 <b>' + r.dmgBuff.sec + '초 동안만</b> 피해 +' + num(r.dmgBuff.buff * 100, 0) + '%가 붙고, 버프가 끝나면 다시 빠집니다. ' : '') +
       '평타 1회 시간·계수는 내 스펙 조정에서 바꿀 수 있습니다.</p>' +
       (r.dmgBuff ? '<p class="ds-foot">요기범람 — 이번 전투에서 <b>' + r.dmgBuff.triggers + '회</b> 발동, 버프가 돌아간 시간 <b>' +
@@ -1449,9 +1489,12 @@
       }
       var seg = t.closest('[data-duration]');
       if (seg) {
-        S.duration = Number(seg.getAttribute('data-duration'));
-        S.opt = null;
-        renderTune(); recompute();
+        setDuration(seg.getAttribute('data-duration'));
+        return;
+      }
+      var qseg = t.closest('[data-quick-duration]');
+      if (qseg) {
+        setDuration(qseg.getAttribute('data-quick-duration'));
         return;
       }
       var cm = t.closest('[data-castmode]');
