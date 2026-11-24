@@ -3331,11 +3331,13 @@ body.is-locked { overflow: hidden; }
   font-style: normal;
   font-size: 10px;
   font-weight: 500;
+  line-height: 1.35;
   color: var(--muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   text-align: right;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
 }
 .ds-tune > summary::after {
   content: "＋";
