@@ -54,6 +54,8 @@
       gap: 0,
       toggles: {},
       override: {},
+      enhance: {},
+      trans: {},
       picker: { slot: -1, style: '', q: '' }
     };
   }
@@ -77,6 +79,8 @@
         base.slots = defaults().slots;
       }
       base.slots = base.slots.map(function (v) { return v && C.skillById(v) ? v : null; });
+      base.enhance = (base.enhance && typeof base.enhance === 'object') ? base.enhance : {};
+      base.trans = (base.trans && typeof base.trans === 'object') ? base.trans : {};
       base.picker = { slot: -1, style: '', q: '' };
     } catch (e) { /* 깨진 저장값은 기본값으로 */ }
     /* 저장된 신식 토글 중 지금 활성 계열이 아닌 것은 그대로 두되 화면에는 활성만 보입니다 */
@@ -89,7 +93,8 @@
         slots: S.slots, duration: S.duration, cdReducePct: S.cdReducePct,
         castMode: S.castMode, chargeFull: S.chargeFull, ultFirst: S.ultFirst,
         autoInterval: S.autoInterval, autoCoeff: S.autoCoeff, gap: S.gap,
-        toggles: S.toggles, override: S.override
+        toggles: S.toggles, override: S.override,
+        enhance: S.enhance, trans: S.trans
       };
       global.localStorage.setItem(SAVE_KEY, JSON.stringify(out));
     } catch (e) { /* 저장은 선택 */ }
@@ -121,7 +126,9 @@
       autoCoeff: S.autoCoeff,
       gap: S.gap,
       toggles: S.toggles,
-      override: S.override
+      override: S.override,
+      enhance: S.enhance,
+      trans: S.trans
     };
   }
 
@@ -146,28 +153,40 @@
       '  아래 8칸을 채우면 <b>평타 치는 빈 시간</b>과 <b>초당 피해</b>를 바로 계산합니다.</p>',
       '</div>',
 
-      '<section class="ds-sec">',
-      '  <div class="ds-sec__head"><h3>인기 프리셋</h3><button type="button" class="ds-link" data-act="clear">전부 비우기</button></div>',
+      '<section class="ds-sec ds-sec--gold">',
+      '  <div class="ds-sec__head"><span class="ds-sec__num">1</span><h3>인기 프리셋</h3><button type="button" class="ds-link" data-act="clear">전부 비우기</button></div>',
+      '  <p class="ds-sec__sub">실제 공략에서 쓰는 조합 — 누르면 8칸이 한 번에 채워집니다.</p>',
       '  <div class="ds-presets" id="ds-presets"></div>',
       '</section>',
 
-      '<section class="ds-sec ds-shared" id="ds-shared">',
-      '  <div class="ds-sec__head"><h3>📌 문파 공유 조합</h3><span class="ds-hint" id="ds-shared-hint">눌러서 불러오기</span></div>',
+      '<section class="ds-sec ds-sec--rose ds-shared" id="ds-shared">',
+      '  <div class="ds-sec__head"><span class="ds-sec__num">2</span><h3>문파 공유 조합</h3><span class="ds-hint" id="ds-shared-hint">눌러서 불러오기</span></div>',
+      '  <p class="ds-sec__sub">문파원이 올린 조합을 눌러 그대로 불러옵니다. 강화·돌파 설정까지 함께 저장됩니다.</p>',
       '  <div class="ds-shared__list" id="ds-shared-list"></div>',
       '</section>',
 
-      '<section class="ds-sec">',
-      '  <div class="ds-sec__head"><h3>도술 8칸</h3><span class="ds-hint">칸을 누르면 도술을 고릅니다</span></div>',
+      '<section class="ds-sec" id="ds-slots-sec">',
+      '  <div class="ds-sec__head"><span class="ds-sec__num">3</span><h3>도술 8칸</h3><span class="ds-hint">칸을 누르면 도술을 고릅니다</span></div>',
       '  <div class="ds-slots" id="ds-slots"></div>',
+      '  <div class="ds-subhead"><b>신식 · 궁극기</b><span>같은 계열 3개면 자동으로 열립니다</span></div>',
       '  <div class="ds-sin" id="ds-sin"></div>',
       '</section>',
 
-      '<details class="ds-tune" id="ds-tune">',
-      '  <summary><span>내 스펙 조정</span><em id="ds-tune-sum">쿨감 0% · 60초</em></summary>',
+      '<section class="ds-sec ds-sec--gold" id="ds-enhance-sec">',
+      '  <div class="ds-sec__head"><span class="ds-sec__num">4</span><h3>강화 · 돌파</h3><span class="ds-hint" id="ds-enh-sum"></span></div>',
+      '  <p class="ds-sec__sub">강화는 <b>계열 단위</b>(Lv50 · 피해 +75%), 돌파는 <b>도술 하나씩</b>(10단계 · 단계마다 피해 +3% · 쿨 -1.5%). 6돌파에서는 <b>[돌파 효과]</b>가 열립니다.</p>',
+      '  <div class="ds-enh-wrap" id="ds-enhance"></div>',
+      '</section>',
+
+      '<details class="ds-sec ds-tune" id="ds-tune">',
+      '  <summary><span class="ds-sec__num">5</span><span class="ds-tune__title">내 스펙 조정</span><em id="ds-tune-sum">쿨감 0% · 60초</em></summary>',
       '  <div class="ds-tune__body" id="ds-tune-body"></div>',
       '</details>',
 
-      '<section class="ds-result" id="ds-result"></section>',
+      '<section class="ds-sec ds-sec--result" id="ds-result-sec">',
+      '  <div class="ds-sec__head"><span class="ds-sec__num">6</span><h3>계산 결과</h3><span class="ds-hint">8칸 · 강화 · 돌파가 바로 반영</span></div>',
+      '  <div class="ds-result" id="ds-result"></div>',
+      '</section>',
 
       '<p class="ds-credit">' + esc((global.YM_DOSUL_ICONS && global.YM_DOSUL_ICONS.credit) ||
         '도술 아이콘의 저작권은 「도깨비의 세계」에 있으며, 권리자 요청 시 즉시 삭제될 수 있습니다.') + '</p>',
@@ -202,6 +221,8 @@
     el.presets = $('#ds-presets');
     el.slots = $('#ds-slots');
     el.sin = $('#ds-sin');
+    el.enhance = $('#ds-enhance');
+    el.enhSum = $('#ds-enh-sum');
     el.tuneSum = $('#ds-tune-sum');
     el.tuneBody = $('#ds-tune-body');
     el.result = $('#ds-result');
@@ -313,6 +334,196 @@
   }
 
   /* ---------------------------------------------------------
+     강화 · 돌파
+     · 강화(계열 강화)는 계열(스타일) 하나에 Lv1~50 — 그 계열 도술 모두에 붙습니다.
+     · 돌파는 도술 하나씩 0~10단계 — 그 도술에만 붙습니다.
+     수치는 도깨비지지(kkaebi.gg) 도술 상세 확인값이고, 공개값이 없는
+     도술(궁극기 등)은 슬라이더 대신 안내를 보여 주고 직접 수정으로 넘깁니다.
+     --------------------------------------------------------- */
+  function equippedStyles() {
+    var out = [];
+    var seen = {};
+    S.slots.forEach(function (id) {
+      var sk = id ? C.skillById(id) : null;
+      if (!sk || seen[sk.st]) { return; }
+      seen[sk.st] = true;
+      out.push(sk.st);
+    });
+    var sin = C.sinStyles(S.slots);
+    if (sin.length) {
+      var key = sin[0].style.key;
+      if (!seen[key]) { seen[key] = true; out.push(key); }
+    }
+    return out;
+  }
+
+  function enhLevelOf(key) {
+    return Math.max(0, Math.round(Number(S.enhance[key]) || 0));
+  }
+
+  function enhPctText(key) {
+    var pct = C.enhanceBonus(enhLevelOf(key), null);
+    return '+' + num(pct, 1) + '%';
+  }
+
+  /* "파멸 19강 · 헌신 9강 · 돌파 3개" — 공유 창·요약에 쓰는 한 줄 */
+  function enhSummaryText() {
+    var parts = [];
+    equippedStyles().forEach(function (key) {
+      var lv = enhLevelOf(key);
+      if (lv > 0) { parts.push(C.styleName(key) + ' ' + lv + '강'); }
+    });
+    var trOn = transTargets().filter(function (t) {
+      return (Number(S.trans[t.sk.id]) || 0) > 0;
+    }).length;
+    if (trOn) { parts.push('돌파 ' + trOn + '개'); }
+    return parts.join(' · ');
+  }
+
+  function enhStyleRow(key) {
+    var st = C.styleOf(key);
+    if (!st) { return ''; }
+    var lv = enhLevelOf(key);
+    var maxLv = C.enhanceMax();
+    var count = S.slots.filter(function (id) {
+      var sk = id ? C.skillById(id) : null;
+      return sk && sk.st === key;
+    }).length;
+    var steps = [0, 9, 19, 29];
+    if (maxLv >= 50) { steps.push(50); }
+    var chips = steps.map(function (n) {
+      return '<button type="button" class="ds-enh__chip' + (lv === n ? ' is-on' : '') + '"' +
+        ' data-enh-set="' + esc(key) + ':' + n + '">' + (n === 0 ? '0' : n + '강') + '</button>';
+    }).join('');
+    return '<div class="ds-enh" data-enh-row="' + esc(key) + '" style="--ds-style:' + st.color + '">' +
+      '<div class="ds-enh__top">' +
+      '<span class="ds-enh__name"><i></i>' + esc(st.name) + '<em>' + count + '개 장착</em></span>' +
+      '<span class="ds-enh__val" data-enh-val="' + esc(key) + '">Lv <b>' + lv + '</b> · 피해 <b>' + enhPctText(key) + '</b></span>' +
+      '</div>' +
+      '<input type="range" min="0" max="' + maxLv + '" step="1" value="' + lv + '"' +
+      ' data-enh="' + esc(key) + '" aria-label="' + esc(st.name) + ' 계열 강화 레벨">' +
+      '<div class="ds-enh__chips">' + chips + '</div>' +
+      '</div>';
+  }
+
+  function transTargets() {
+    var out = [];
+    S.slots.forEach(function (id, i) {
+      var sk = id ? C.skillById(id) : null;
+      if (sk) { out.push({ sk: sk, label: (i + 1) + '번' }); }
+    });
+    var sin = C.sinStyles(S.slots);
+    if (sin.length) {
+      var ult = C.skillById(sin[0].style.ult);
+      if (ult) { out.push({ sk: ult, label: 'R' }); }
+    }
+    return out;
+  }
+
+  function transRow(sk, label) {
+    var st = C.styleOf(sk.st);
+    var step = Math.max(0, Math.round(Number(S.trans[sk.id]) || 0));
+    var t = C.transInfo(sk.id, step);
+    var enhPct = C.enhanceBonus(enhLevelOf(sk.st), sk.id);
+    var meta = [];
+    if (enhPct > 0) { meta.push('강화 +' + num(enhPct, 1) + '%'); }
+    if (t.has) {
+      if (t.step > 0) {
+        if (t.dmgPct > 0) { meta.push('피해 +' + num(t.dmgPct, 1) + '%'); }
+        if (t.cdSec > 0) { meta.push('쿨 -' + num(t.cdSec, 2) + '초'); }
+        if (t.d6) { meta.push('6돌파 피해 +' + num(t.d6, 0) + '%'); }
+      } else {
+        meta.push('돌파 0단계');
+      }
+    }
+    var control = t.has
+      ? '<input type="range" min="0" max="10" step="1" value="' + t.step + '"' +
+        ' data-trans="' + sk.id + '" aria-label="' + esc(sk.n) + ' 돌파 단계">'
+      : '<p class="ds-trans__none">공개된 돌파 수치가 없습니다 — 「내 스펙 조정」에서 직접 넣어 주세요.</p>';
+    var six = (t.has && t.t6)
+      ? '<p class="ds-trans__six' + (t.t6on ? ' is-on' : '') + '">⑥ 6돌파 · ' + esc(t.t6) + '</p>'
+      : '';
+    return '<div class="ds-trans' + (t.has ? '' : ' is-none') + '" data-trans-row="' + sk.id + '" style="--ds-style:' + (st ? st.color : '#7fd1bd') + '">' +
+      '<div class="ds-trans__top">' +
+      ico(sk.id, 'ds-ico--tune', 18) +
+      '<span class="ds-trans__name"><b>' + esc(sk.n) + '</b><em>' + esc(label) + ' · ' + esc(C.styleName(sk.st)) + '</em></span>' +
+      '<span class="ds-trans__step" data-trans-val="' + sk.id + '">' + (t.has ? t.step + '돌파' : '–') + '</span>' +
+      '</div>' +
+      control +
+      (meta.length ? '<p class="ds-trans__meta">' + meta.join(' · ') + '</p>' : '') +
+      six +
+      '</div>';
+  }
+
+  function renderEnhance() {
+    if (!el.enhance) { return; }
+    var styles = equippedStyles();
+    var targets = transTargets();
+    var enhOn = styles.filter(function (k) { return enhLevelOf(k) > 0; }).length;
+    var trOn = targets.filter(function (t) {
+      var info = C.transInfo(t.sk.id, S.trans[t.sk.id]);
+      return info.step > 0;
+    }).length;
+    if (el.enhSum) {
+      el.enhSum.textContent = targets.length
+        ? ('강화 ' + enhOn + '계열 · 돌파 ' + trOn + '개')
+        : '8칸을 먼저 채워 주세요';
+    }
+    if (!targets.length) {
+      el.enhance.innerHTML = '<p class="ds-enh__empty">8칸에 도술을 넣으면 계열 강화와 도술별 돌파를 여기서 맞출 수 있습니다.</p>';
+      return;
+    }
+    var styleHtml = styles.map(enhStyleRow).join('');
+    var transHtml = targets.map(function (t) { return transRow(t.sk, t.label); }).join('');
+    el.enhance.innerHTML =
+      '<p class="ds-enh__label">계열 강화 <em>계열 하나를 올리면 그 계열 도술이 모두 함께 오릅니다</em></p>' +
+      '<div class="ds-enh__styles">' + styleHtml + '</div>' +
+      '<p class="ds-enh__label">도술 돌파 <em>도술 하나씩 · 6돌파에 [돌파 효과]</em></p>' +
+      '<div class="ds-trans__list">' + transHtml + '</div>' +
+      '<div class="ds-enh__foot">' +
+      '<span>깨비지지 확인값 (2026-11-24)</span>' +
+      '<button type="button" class="ds-link" data-act="trans-reset">돌파 모두 0으로</button>' +
+      '</div>';
+  }
+
+  /* 슬라이더를 끌 때 — 다시 그리지 않고 숫자만 바꿔 즉시 반영 */
+  function updateEnhReadout() {
+    if (!el.enhance) { return; }
+    var vals = el.enhance.querySelectorAll('[data-enh-val]');
+    for (var i = 0; i < vals.length; i++) {
+      var key = vals[i].getAttribute('data-enh-val');
+      vals[i].innerHTML = 'Lv <b>' + enhLevelOf(key) + '</b> · 피해 <b>' + enhPctText(key) + '</b>';
+    }
+    var steps = el.enhance.querySelectorAll('[data-trans-val]');
+    for (var j = 0; j < steps.length; j++) {
+      var id = Number(steps[j].getAttribute('data-trans-val'));
+      var info = C.transInfo(id, S.trans[id]);
+      steps[j].textContent = info.has ? info.step + '돌파' : '–';
+      var row = steps[j].closest ? steps[j].closest('.ds-trans') : null;
+      var meta = row ? row.querySelector('.ds-trans__meta') : null;
+      if (meta && info.has) {
+        var enhPct = C.enhanceBonus(enhLevelOf((C.skillById(id) || {}).st), id);
+        var parts = [];
+        if (enhPct > 0) { parts.push('강화 +' + num(enhPct, 1) + '%'); }
+        if (info.step > 0) {
+          if (info.dmgPct > 0) { parts.push('피해 +' + num(info.dmgPct, 1) + '%'); }
+          if (info.cdSec > 0) { parts.push('쿨 -' + num(info.cdSec, 2) + '초'); }
+          if (info.d6) { parts.push('6돌파 피해 +' + num(info.d6, 0) + '%'); }
+        } else {
+          parts.push('돌파 0단계');
+        }
+        meta.textContent = parts.join(' · ');
+        var six = row ? row.querySelector('.ds-trans__six') : null;
+        if (six) { six.classList.toggle('is-on', !!info.t6on); }
+      }
+    }
+    var targets = transTargets();
+    var enhOn = equippedStyles().filter(function (k) { return enhLevelOf(k) > 0; }).length;
+    var trOn = targets.filter(function (t) { return (Number(S.trans[t.sk.id]) || 0) > 0; }).length;
+    if (el.enhSum) { el.enhSum.textContent = '강화 ' + enhOn + '계열 · 돌파 ' + trOn + '개'; }
+  }
+
+  /* ---------------------------------------------------------
      📌 문파 공유 조합 — 저장 · 목록 · 불러오기 · 삭제
      · 로그인(실제 모드)이면 문파 서버(Supabase)에 저장합니다.
      · 마이그레이션 전(PGRST202)이거나 체험 모드면 이 기기에만 저장합니다.
@@ -340,7 +551,9 @@
       autoCoeff: S.autoCoeff,
       gap: S.gap,
       toggles: S.toggles,
-      override: S.override
+      override: S.override,
+      enhance: S.enhance,
+      trans: S.trans
     };
   }
 
@@ -444,7 +657,8 @@
     if (el.shareName) { el.shareName.value = buildTitle(); }
     if (el.shareMemo) { el.shareMemo.value = ''; }
     if (el.shareSum) {
-      el.shareSum.textContent = '8칸 · 평타 빈 시간 ' + num(r.idlePct, 1) + '% (' + num(r.idle, 1) + '초) · DPS ' + num(r.dps, 1) + '%/초';
+      el.shareSum.textContent = '8칸 · 평타 빈 시간 ' + num(r.idlePct, 1) + '% (' + num(r.idle, 1) + '초) · DPS ' + num(r.dps, 1) + '%/초' +
+        (enhSummaryText() ? ' · ' + enhSummaryText() : '');
     }
     if (el.shareNote) {
       el.shareNote.textContent = API.live
@@ -548,9 +762,12 @@
     S.gap = Number(cfg.gap) || 0;
     S.toggles = cfg.toggles && typeof cfg.toggles === 'object' ? cfg.toggles : {};
     S.override = cfg.override && typeof cfg.override === 'object' ? cfg.override : {};
+    S.enhance = cfg.enhance && typeof cfg.enhance === 'object' ? cfg.enhance : {};
+    S.trans = cfg.trans && typeof cfg.trans === 'object' ? cfg.trans : {};
     S.opt = null;
     renderSlots();
     renderSin();
+    renderEnhance();
     renderTune();
     recompute();
     if (el.root && el.root.scrollIntoView) { el.root.scrollTop = 0; }
@@ -638,7 +855,7 @@
       '    </div>',
       '  </div>',
       '</div>',
-      rows ? '<div class="ds-tune__rows"><p class="ds-tune__caption">도술별 값 바꾸기 — 돌파·각성·쿨감을 반영할 때</p>' + rows +
+      rows ? '<div class="ds-tune__rows"><p class="ds-tune__caption">도술별 값 직접 바꾸기 — 각성·장비 보정처럼 강화·돌파로 설명되지 않는 값만</p>' + rows +
         '<button type="button" class="ds-link" data-act="reset-ov">값 되돌리기</button></div>' : ''
     ].join('\n');
   }
@@ -667,6 +884,7 @@
     }
     return tip + '<p class="ds-foot">계산 기준 — 쿨타임은 <b>시전을 시작한 순간</b>부터 흐르고, 시전 중에는 다른 도술을 쓸 수 없습니다. ' +
       '시전시간은 도깨비지지 공개값(선행 시전 + 동작 시간)이고, 차지 도술은 최대 차지로 계산합니다. ' +
+      '<b>계열 강화</b>는 그 계열 도술 계수에, <b>도술 돌파</b>는 그 도술의 계수·쿨타임에만 붙습니다. ' +
       '평타 1회 시간·계수는 내 스펙 조정에서 바꿀 수 있습니다.</p>';
   }
 
@@ -690,7 +908,8 @@
         '<span class="c-name">' + ico(x.id, 'ds-ico--row', 20) +
         '<b>' + esc(x.name) + '</b>' +
         '<small>' + (isUlt ? 'R' : x.slot + '번') + ' · ' + esc(x.styleName) + ' ' + num(x.cd) + '초 · ' +
-        '시전 ' + num(x.occupied, 1) + '초' + (x.est ? ' · 추정' : '') + '</small></span>' +
+        '시전 ' + num(x.occupied, 1) + '초' + (x.est ? ' · 추정' : '') +
+        (x.enh ? ' · Lv' + x.enh : '') + (x.trans ? ' · ' + x.trans + '돌파' : '') + '</small></span>' +
         '<span class="c-num">' + x.casts + '회</span>' +
         '<span class="c-pct">' + (x.deals ? num(x.share, 1) + '%' : '–') + '</span>' +
         '<span class="c-bar"><i style="width:' + Math.max(2, (x.share / maxShare) * 100).toFixed(1) + '%;background:' + x.color + '"></i></span>' +
@@ -891,6 +1110,7 @@
     closePicker();
     renderSlots();
     renderSin();
+    renderEnhance();
     renderTune();
     recompute();
   }
@@ -905,6 +1125,7 @@
     S.opt = null;
     renderSlots();
     renderSin();
+    renderEnhance();
     renderTune();
     recompute();
   }
@@ -925,7 +1146,7 @@
         if (p) {
           S.slots = p.slots.slice(0, 8);
           S.opt = null;
-          renderPresets(); renderSlots(); renderSin(); renderTune(); recompute();
+          renderPresets(); renderSlots(); renderSin(); renderEnhance(); renderTune(); recompute();
         }
         return;
       }
@@ -935,12 +1156,16 @@
         if (a === 'clear') {
           S.slots = [null, null, null, null, null, null, null, null];
           S.opt = null;
-          renderPresets(); renderSlots(); renderSin(); renderTune(); recompute();
+          renderPresets(); renderSlots(); renderSin(); renderEnhance(); renderTune(); recompute();
         } else if (a === 'picker-close') {
           closePicker();
         } else if (a === 'reset-ov') {
           S.override = {};
           renderTune(); recompute();
+        } else if (a === 'trans-reset') {
+          S.trans = {};
+          S.opt = null;
+          renderEnhance(); recompute();
         } else if (a === 'optimize') {
           S.opt = C.optimize(config());
           renderResult();
@@ -957,7 +1182,7 @@
           if (S.opt && S.opt.ok) {
             S.slots = S.opt.slots.slice(0, 8);
             S.opt = null;
-            renderSlots(); renderSin(); renderTune(); recompute();
+            renderSlots(); renderSin(); renderEnhance(); renderTune(); recompute();
           }
         }
         return;
@@ -965,6 +1190,14 @@
       var mv = t.closest('[data-mv]');
       if (mv) {
         moveSlot(Number(mv.getAttribute('data-slot')), mv.getAttribute('data-mv') === 'up' ? -1 : 1);
+        return;
+      }
+      var enhSet = t.closest('[data-enh-set]');
+      if (enhSet) {
+        var parts2 = enhSet.getAttribute('data-enh-set').split(':');
+        S.enhance[parts2[0]] = Number(parts2[1]) || 0;
+        S.opt = null;
+        renderEnhance(); recompute();
         return;
       }
       var slot = t.closest('[data-slot]');
@@ -1038,6 +1271,22 @@
         recomputeSoon();
         return;
       }
+      var enhKey = t.getAttribute && t.getAttribute('data-enh');
+      if (enhKey) {
+        S.enhance[enhKey] = Math.max(0, Math.round(Number(t.value) || 0));
+        S.opt = null;
+        updateEnhReadout();
+        recomputeSoon();
+        return;
+      }
+      var trKey = t.getAttribute && t.getAttribute('data-trans');
+      if (trKey) {
+        S.trans[Number(trKey)] = Math.max(0, Math.min(10, Math.round(Number(t.value) || 0)));
+        S.opt = null;
+        updateEnhReadout();
+        recomputeSoon();
+        return;
+      }
       var auto = t.getAttribute && t.getAttribute('data-auto');
       if (auto) {
         var av = Number(t.value);
@@ -1075,6 +1324,11 @@
         if (opt === 'ultFirst') { S.ultFirst = t.checked; }
         S.opt = null;
         recompute();
+        return;
+      }
+      if (t.getAttribute && (t.getAttribute('data-enh') || t.getAttribute('data-trans'))) {
+        renderEnhance();
+        recompute();
       }
     });
 
@@ -1098,6 +1352,7 @@
     renderPresets();
     renderSlots();
     renderSin();
+    renderEnhance();
     renderTune();
     renderResult();
   }

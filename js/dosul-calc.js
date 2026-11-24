@@ -39,6 +39,50 @@
     return Math.round(n * p) / p;
   }
 
+  /* ---------------------------------------------------------
+     강화(계열 레벨) · 돌파(도술 단계) — 2026-11-24 도깨비지지 확인값
+     · 강화는 계열 단위: 표시 계수 = 기본 계수 × (1 + 강화 보너스)
+     · 돌파는 도술 단위: 단계마다 계수 +3%, 쿨타임 -1.5%(그 도술만)
+       6돌파부터 [돌파 효과]가 붙어 계수가 더 오릅니다.
+     --------------------------------------------------------- */
+  var ENH = DATA.enhance || { max: 50, bonus: [], alt: {} };
+  var TRANS = DATA.trans || {};
+  var TRANS6 = DATA.trans6 || {};
+
+  function clamp(n, lo, hi) { return Math.max(lo, Math.min(hi, n)); }
+
+  /* 계열 강화 Lv(0~50) → 피해 계수 보너스(%) */
+  function enhanceBonus(level, id) {
+    var n = Math.round(Number(level) || 0);
+    if (n <= 0) { return 0; }
+    var max = ENH.max || 50;
+    n = clamp(n, 0, max);
+    var v = (ENH.bonus || [])[n - 1];
+    if (!v) { return 0; }
+    var scale = ENH.alt && ENH.alt[id];
+    return scale ? v * scale : v;
+  }
+
+  function enhanceMax() { return ENH.max || 50; }
+
+  /* 도술 돌파 정보 — 없으면(null) 계산에 넣지 않고 화면에서 안내합니다 */
+  function transInfo(id, step) {
+    var has = Object.prototype.hasOwnProperty.call(TRANS, String(id));
+    var base = has ? TRANS[String(id)] : null;
+    var n = clamp(Math.round(Number(step) || 0), 0, 10);
+    if (!base) { n = 0; }
+    var t6 = TRANS6[String(id)] || null;
+    return {
+      has: !!base,
+      step: n,
+      dmgPct: base ? base.d * n : 0,
+      cdSec: base ? base.c * n : 0,
+      d6: (t6 && n >= 6) ? (t6.d || 0) : 0,
+      t6: t6 ? t6.t : '',
+      t6on: !!(t6 && n >= 6)
+    };
+  }
+
   function styleOf(key) { return STYLE_BY_KEY[key] || null; }
   function styleName(key) { var s = STYLE_BY_KEY[key]; return s ? s.name : key; }
   function styleColor(key) { var s = STYLE_BY_KEY[key]; return s ? s.color : '#7fd1bd'; }
@@ -104,6 +148,8 @@
     var cdMul = (1 - cdPct) * (1 - fx.cdPct);
 
     var ov = config.override || {};
+    var enh = config.enhance || {};
+    var transCfg = config.trans || {};
 
     function makeEntry(id, slot) {
       var sk = SKILL_BY_ID[id];
@@ -117,13 +163,25 @@
       if (chargeFull && sk.ch) { ct += sk.ch; }
       var cdBase = o.cd > 0 ? o.cd : sk.cd;
       var coeffBase = o.c > 0 ? o.c : sk.c;
-      var cd = cdBase * cdMul;
+
+      /* 강화는 그 도술의 계열 레벨을 따릅니다 */
+      var enhLv = Math.round(Number(enh[sk.st]) || 0);
+      var enhPct = enhanceBonus(enhLv, sk.id);
+      var tr = transInfo(sk.id, transCfg[id]);
+
+      /* 돌파: 쿨타임은 그 도술만 줄고(최대 기본의 90%), 계수는 단계 누적 + 6돌파 효과 */
+      var cdAfterTrans = Math.max(cdBase * 0.1, cdBase - Math.min(cdBase * 0.9, tr.cdSec));
+      var cd = cdAfterTrans * cdMul;
+      var trMul = 1 + (tr.dmgPct + tr.d6) / 100;
       return {
         id: sk.id, slot: slot, name: sk.n, style: sk.st, kind: sk.k,
         cdBase: cdBase, cd: cd,
         cast: ct * scale, castBase: ct, est: est,
-        coeff: coeffBase * (sk.k === 'ult' ? ultDmgMul : dmgMul),
-        hits: sk.h, charge: sk.ch || 0
+        coeff: coeffBase * (1 + enhPct / 100) * trMul * (sk.k === 'ult' ? ultDmgMul : dmgMul),
+        hits: sk.h, charge: sk.ch || 0,
+        enh: enhLv, enhPct: enhPct,
+        trans: tr.step, transDmgPct: tr.dmgPct, transCd: tr.cdSec,
+        tr6: tr.t6on, tr6Pct: tr.d6, tr6Text: tr.t6, hasTrans: tr.has
       };
     }
 
@@ -170,7 +228,9 @@
       ultFirst: config.ultFirst !== false,
       useUlt: config.useUlt !== false,
       toggles: config.toggles || {},
-      override: config.override || {}
+      override: config.override || {},
+      enhance: config.enhance || {},
+      trans: config.trans || {}
     };
     var built = buildEntries(cfg);
     var gap = cfg.gap || 0;
@@ -304,7 +364,10 @@
           casts: en.casts, cdBase: round(en.cdBase, 2), cd: round(en.cd, 2),
           cast: round(en.cast, 2), est: en.est,
           coeff: round(en.coeff, 1), damage: round(en.damage, 1),
-          occupied: round(en.occupied, 2), hits: en.hits
+          occupied: round(en.occupied, 2), hits: en.hits,
+          enh: en.enh, enhPct: round(en.enhPct, 1),
+          trans: en.trans, transDmgPct: round(en.transDmgPct, 1), transCd: round(en.transCd, 2),
+          tr6: en.tr6, tr6Pct: en.tr6Pct, tr6Text: en.tr6Text, hasTrans: en.hasTrans
         });
       }
     }
@@ -413,6 +476,9 @@
 
   global.YM_DOSUL = {
     data: DATA,
+    enhanceBonus: enhanceBonus,
+    enhanceMax: enhanceMax,
+    transInfo: transInfo,
     styles: styles,
     allSkills: allSkills,
     skillById: skillById,
