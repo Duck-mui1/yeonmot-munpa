@@ -946,7 +946,7 @@
       '  </div>',
       '</div>',
       rows ? '<div class="ds-tune__rows"><p class="ds-tune__caption">도술별 값 직접 바꾸기 — 각성·장비 보정처럼 강화·돌파로 설명되지 않는 값만</p>' + rows +
-        '<p class="ds-tune__caption"><b>연계</b> — 한 도술을 정해진 시간 안에 한 번 더 쓰는 연계기(월식 · 쌍검 가르기 · 은신 등 6개)를 계산에 넣습니다. 게임의 2단계 쿨(이어 쓰기 재사용 대기시간)이 1단계보다 짧아서, 연계를 쓰면 그 도술의 대기시간도 2단계 쿨을 씁니다. 체크를 풀면 1단계만 셈합니다.</p>' +
+        '<p class="ds-tune__caption"><b>연계</b> — 한 도술을 정해진 시간 안에 한 번 더 쓰는 연계기(월식 · 쌍검 가르기 · 은신 등 6개)를 계산에 넣습니다. 1단계를 써야 2단계가 나가므로 다음 발동 대기시간은 연계를 켜도 <b>1단계 쿨타임</b> 그대로입니다. 체크를 풀면 1단계만 셈합니다.</p>' +
         '<button type="button" class="ds-link" data-act="reset-ov">값 되돌리기</button></div>' : ''
     ].join('\n');
   }
@@ -976,7 +976,7 @@
     return tip + '<p class="ds-foot">계산 기준 — 쿨타임은 <b>시전을 시작한 순간</b>부터 흐르고, 시전 중에는 다른 도술을 쓸 수 없습니다. ' +
       '시전시간은 도깨비지지 공개값(선행 시전 + 동작 시간)이고, 차지 도술은 최대 차지로 계산합니다. ' +
       '<b>계열 강화</b>는 그 계열 도술 계수에, <b>도술 돌파</b>는 그 도술의 계수·쿨타임에만 붙습니다. ' +
-      '<b>연계기</b>(월식 · 쌍검 가르기 · 은신 같은 6개)는 1단계 시전시간 + 연계 시전시간을 함께 점유하고 피해도 1단계 + 연계를 더하며, 다음 발동은 게임의 <b>2단계 쿨(이어 쓰기 재사용 대기시간)</b>을 기다립니다. ' +
+      '<b>연계기</b>(월식 · 쌍검 가르기 · 은신 같은 6개)는 1단계 시전시간 + 연계 시전시간을 함께 점유하고 피해도 1단계 + 연계를 더하며, 다음 발동은 연계를 켜도 <b>1단계 쿨타임</b>을 그대로 기다립니다. ' +
       '<b>[주술 신식개방]</b>처럼 계열 신식이 열려야 붙는 추가 피해는 신식이 켜졌을 때만 더합니다. ' +
       '평타 1회 시간·계수는 내 스펙 조정에서 바꿀 수 있습니다.</p>';
   }
@@ -1009,7 +1009,7 @@
         (x.chain ? '<span class="c-chain">연계 <b>' + esc(x.chain.name) + '</b> ' + x.chain.uses + '회 · +' +
           num(x.chain.castLen, 2) + '초 · ' + num(x.chain.coeff, 0) + '% (1단계와 합 ' +
           num(x.coeff + x.chain.coeff, 0) + '%)' +
-          (x.chainCdUsed ? ' · 연계 뒤 쿨 ' + num(x.chainCdUsed, 1) + '초' : '') + '</span>' : '') +
+          ' · 1단계 쿨 ' + num(x.cd) + '초 유지</span>' : '') +
         (x.sinOn ? '<span class="c-chain c-sin">' + esc(x.sinLabel) + ' 신식 +' +
           num(x.sinCoeff, 0) + '% (합 ' + num(x.coeff, 0) + '%)</span>' : '') +
         '<span class="c-bar"><i style="width:' + Math.max(2, (x.share / maxShare) * 100).toFixed(1) + '%;background:' + x.color + '"></i></span>' +
@@ -1078,31 +1078,47 @@
       '</div>';
   }
 
+  var OPT_MODES = [
+    { key: 'idle', label: '⏱️ 평타 빈 시간 최소화 순서', short: '평타 빈 시간 최소화' },
+    { key: 'dps', label: '🔥 DPS 최대화 순서', short: 'DPS 최대화' }
+  ];
+
+  function optButtons(current) {
+    return '<div class="ds-opt__acts ds-opt__acts--row">' + OPT_MODES.map(function (m) {
+      var on = current === m.key;
+      return '<button type="button" class="ds-btn' + (m.key === 'dps' ? ' ds-btn--accent' : '') +
+        (on ? ' is-on' : '') + '" data-act="optimize" data-mode="' + m.key + '">' +
+        (on ? '다시 계산 — ' : '') + m.label + '</button>';
+    }).join('') + '</div>';
+  }
+
   function optHtml(r) {
     var o = S.opt;
     if (!o || !o.ok) {
       return '<div class="ds-opt">' +
-        '<button type="button" class="ds-btn ds-btn--accent" data-act="optimize">평타 빈 시간 줄이는 순서 추천</button>' +
-        '<p class="ds-opt__note">8칸의 두 칸 맞바꾸기·한 칸 옮기기를 <b>모두 계산</b>해 초당 피해가 가장 높은 순서를 찾습니다. ' +
-        '평타 빈 시간은 8칸의 <b>쿨타임 총량</b>이 크게 정하고, 순서는 그 시간에 <b>더 센 도술을 먼저</b> 넣는 쪽으로 맞춥니다.</p>' +
+        optButtons(null) +
+        '<p class="ds-opt__note">8칸의 두 칸 맞바꾸기·한 칸 옮기기를 <b>모두 계산</b>해 <b>순서만</b> 다시 짭니다(8칸 구성은 그대로). ' +
+        '⏱️는 <b>평타 빈 시간(초)</b>이 가장 적은 순서(동률이면 DPS 높은 쪽), 🔥는 <b>초당 피해(DPS)</b>가 가장 높은 순서(동률이면 평타 빈 시간 적은 쪽)를 찾습니다.</p>' +
         '</div>';
     }
+    var mode = o.mode === 'idle' ? OPT_MODES[0] : OPT_MODES[1];
     var names = o.slots.map(function (id, i) {
       var sk = id ? C.skillById(id) : null;
       return sk ? (i + 1) + '.' + sk.n : '';
     }).filter(Boolean).join(' › ');
-    var sameKey = o.after.totalCoeff + '|' + o.after.idle;
+    var sameKey = mode.key + '|' + o.after.totalCoeff + '|' + o.after.idle;
+    var gain = o.mode === 'idle'
+      ? (o.gainIdle > 0.05 ? '평타 빈 시간 -' + num(o.gainIdle, 1) + '초' : '평타 빈 시간은 이미 최소')
+      : (o.gainDps > 0.05 ? 'DPS +' + num(o.gainDps, 1) : 'DPS 는 이미 최대');
     return '<div class="ds-opt ds-opt--done">' +
-      '<p class="ds-opt__head">추천 순서 <em>' + (o.changed ? '바꾸면 더 셉니다' : '지금 순서가 이미 좋습니다') + '</em></p>' +
+      '<p class="ds-opt__head">' + mode.label + ' <em>' + (o.changed ? gain : '지금 순서가 이미 좋습니다') + '</em></p>' +
       '<p class="ds-opt__order">' + esc(names) + '</p>' +
       '<div class="ds-opt__diff">' +
       '<span>평타 빈 시간 ' + num(o.before.idle, 1) + '초 → <b>' + num(o.after.idle, 1) + '초</b></span>' +
       '<span>DPS ' + num(o.before.dps, 1) + ' → <b>' + num(o.after.dps, 1) + '</b></span>' +
       '</div>' +
-      '<div class="ds-opt__acts">' +
-      (o.changed ? '<button type="button" class="ds-btn ds-btn--accent" data-act="apply-opt" data-key="' + esc(sameKey) + '">이 순서로 바꾸기</button>' : '') +
-      '<button type="button" class="ds-btn" data-act="optimize">다시 계산</button>' +
-      '</div>' +
+      (o.changed ? '<div class="ds-opt__acts"><button type="button" class="ds-btn ds-btn--accent" data-act="apply-opt" data-key="' + esc(sameKey) + '">이 순서로 바꾸기</button></div>' : '') +
+      optButtons(mode.key) +
       '</div>';
   }
 
@@ -1191,7 +1207,7 @@
         '<span class="ds-pk__body">' +
         '<span class="ds-pk__name">' + esc(sk.n) + '<em>' + esc(C.kindLabel(sk.k)) + '</em>' + gradeBadge(sk.id) + chainBadge(sk.id) + '</span>' +
         '<span class="ds-pk__meta">' + esc(C.styleName(sk.st)) + ' · ' + num(sk.cd) + '초 · 시전 ' + num(sk.ct, 2) + '초 · ' + num(sk.c, 0) + '%' +
-        (sk.chain ? ' · 연계 ' + esc(sk.chain.name) + ' ' + num(sk.chain.per[0], 0) + '% · 쿨 ' + num(sk.chain.cool, 1) + '초' : '') + '</span>' +
+        (sk.chain ? ' · 연계 ' + esc(sk.chain.name) + ' ' + num(sk.chain.per[0], 0) + '%' : '') + '</span>' +
         '</span>' +
         '</button>';
     }).join('');
@@ -1270,7 +1286,7 @@
           S.opt = null;
           renderEnhance(); recompute();
         } else if (a === 'optimize') {
-          S.opt = C.optimize(config());
+          S.opt = C.optimize(config(), act.getAttribute('data-mode') || 'dps');
           renderResult();
         } else if (a === 'shared-more') {
           SH.expanded = !SH.expanded;

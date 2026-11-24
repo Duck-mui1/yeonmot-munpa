@@ -363,8 +363,6 @@
     if (ult) { ult.order = cfg.ultFirst ? -1 : 900; }
 
     var fx = built.fx;
-    /* 전체 쿨감 + 신식 쿨감 — 연계 뒤 「이어 쓰기 재사용 대기시간」에도 같이 붙습니다 */
-    var cdMul = (1 - Math.max(0, Math.min(60, cfg.cdReducePct || 0)) / 100) * (1 - (fx.cdPct || 0));
     var castsSinceReset = 0;
     var castsSinceUltReset = 0;
     var castSeq = 0;
@@ -446,15 +444,11 @@
       }
 
       /* 쿨타임은 「시전을 시작한 순간」부터 흐릅니다.
-         연계기(이어 쓰기 1회)는 게임의 「이어 쓰기 재사용 대기시간」을 씁니다
-         — 묵직한 주먹 1단계 9초 / 2단계 5초처럼 2단계 쿨이 더 짧습니다.
-         궁극기(재사용 여러 번)는 그 값이 재사용 사이 간격(0.4초)이라
-         1단계 쿨타임(30초)을 그대로 씁니다. */
+         연계를 써도 쿨타임은 1단계 기준 그대로입니다(쿨감·돌파 반영).
+         1단계를 써야 2단계가 나가는 구조라 2단계 쿨(5~6초)은
+         다음 발동의 대기시간이 아닙니다 — 은신 25초 · 묵직한 주먹 9초 ·
+         쌍검 가르기 10초 · 월식 12초를 그대로 기다립니다. */
       var cd = cur.cd;
-      if (cur.chain && cur.chain.uses === 1 && cur.chain.cool >= 1) {
-        cd = cur.chain.cool * cdMul;
-        cur.chainCdUsed = cd;
-      }
       if (fx.halfCdEvery && castSeq % fx.halfCdEvery === 0) { cd = cd * 0.5; }
       cur.readyAt = t + Math.max(0.1, cd);
 
@@ -510,7 +504,6 @@
           } : null,
           sinOn: !!en.sinOn, sinCoeff: round(en.sinCoeff || 0, 1),
           sinLabel: en.sinLabel || '', sinNote: en.sinNote || '',
-          chainCdUsed: round(en.chainCdUsed || 0, 2),
           chainUses: en.chainUses, chainOcc: round(en.chainOcc, 2),
           chainDamage: round(en.chainDamage, 1),
           castAll: round(en.cast + (en.chain ? en.chain.castLen : 0), 2),
@@ -566,11 +559,24 @@
   }
 
   /* ---------------------------------------------------------
-     평타 빈 시간을 줄이는 순서 찾기 (지역 탐색)
-     지금 순서 → 두 칸 맞바꾸기 / 한 칸 옮기기를 모두 해 보고
-     초당 피해(DPS)가 늘어나는 쪽으로 계속 고칩니다.
+     순서 추천 — 두 칸 맞바꾸기 / 한 칸 옮기기를 모두 해 보고
+       · mode 'idle' : 평타 빈 시간(초)이 가장 적은 순서 (동률이면 DPS 높은 쪽)
+       · mode 'dps'  : 초당 피해(DPS)가 가장 높은 순서 (동률이면 평타 빈 시간 적은 쪽)
+     좋아지지 않을 때까지 여러 바퀴(라운드) 돌립니다. 8칸 구성은 그대로 두고 순서만 바꿉니다.
      --------------------------------------------------------- */
-  function optimize(config, rounds) {
+  function betterThan(mode, cand, best) {
+    if (mode === 'idle') {
+      if (cand.idle < best.idle - 0.01) { return true; }
+      if (cand.idle > best.idle + 0.01) { return false; }
+      return cand.dps > best.dps + 0.05;
+    }
+    if (cand.dps > best.dps + 0.05) { return true; }
+    if (cand.dps < best.dps - 0.05) { return false; }
+    return cand.idle < best.idle - 0.01;
+  }
+
+  function optimize(config, mode, rounds) {
+    mode = mode === 'idle' ? 'idle' : 'dps';
     var base = simulate(config);
     if (!base.ok) { return base; }
     var maxRound = rounds || 4;
@@ -604,7 +610,7 @@
         cfg.slots = cand[i];
         var res = simulate(cfg);
         if (!res.ok) { continue; }
-        if (res.dps > bestRes.dps + 0.05) {
+        if (betterThan(mode, res, bestRes)) {
           bestRes = res;
           best = cand[i];
           improved = true;
@@ -614,6 +620,7 @@
     }
     return {
       ok: true,
+      mode: mode,
       before: base,
       after: bestRes,
       slots: best,
