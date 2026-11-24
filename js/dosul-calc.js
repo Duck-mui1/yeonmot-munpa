@@ -537,23 +537,25 @@
       var cd = cur.cd;
 
       /* 파멸 신식(요기범람) — 궁극기를 제외한 도술을 쓸 때마다 영력 15.
-         14회(= 영력 200)가 된 순간부터 30초 동안 피해 +20% 버프가 켜집니다.
+         14회(= 영력 200)가 된 순간에 요기범람이 켜져 30초 동안 피해 +20%가 붙습니다.
          (14회 쿨 초기화 토글과 별개로, 피해 +20% 토글만 켜도 14회마다 발동합니다.
-          14회째에 시전한 도술은 영력을 채운 도술이라 버프 없이 들어갑니다.) */
+          영력은 그 도술을 쓴 뒤에 차므로, 14회째 도술이 끝난 시점부터 30초를 세고
+          그 도술 자체에는 +20%가 붙지 않습니다.) */
       if (cur.kind !== 'ult' && fx.dmgBuffEvery > 0) {
         castsSinceBuff += 1;
         if (castsSinceBuff >= fx.dmgBuffEvery) {
           castsSinceBuff = 0;
           buffTrig += 1;
-          if (buffUntil > t + EPS) {
+          var buffStart = Math.min(duration, t + castLen);
+          if (buffUntil > buffStart + EPS) {
             /* 아직 버프가 남아 있으면 끝만 30초 더 */
           } else {
             if (buffFrom > -Infinity) {
               buffTime += Math.max(0, Math.min(duration, buffUntil) - buffFrom);
             }
-            buffFrom = t;
+            buffFrom = buffStart;
           }
-          buffUntil = t + (fx.dmgBuffSec > 0 ? fx.dmgBuffSec : 30);
+          buffUntil = buffStart + (fx.dmgBuffSec > 0 ? fx.dmgBuffSec : 30);
         }
       }
 
