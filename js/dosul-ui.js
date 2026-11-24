@@ -41,6 +41,17 @@
     return fixed.replace(/\.0+$/, '').replace(/(\.\d)0$/, '$1');
   }
 
+  /* 게임 등급 배지 — 일반(영웅) · 특별(전설) */
+  function gradeBadge(id, opts) {
+    var o = opts || {};
+    var g = C.gradeOf(id);
+    if (!g) { return ''; }
+    if (o.specialOnly && g !== '특별') { return ''; }
+    var sp = g === '특별';
+    var cls = 'ds-gr ' + (sp ? 'ds-gr--sp' : 'ds-gr--nm') + (o.cls ? ' ' + o.cls : '');
+    return '<em class="' + cls + '">' + esc(g) + '</em>';
+  }
+
   function defaults() {
     return {
       slots: [null, null, null, null, null, null, null, null],
@@ -56,6 +67,7 @@
       override: {},
       enhance: {},
       trans: {},
+      tr6: {},
       picker: { slot: -1, style: '', q: '' }
     };
   }
@@ -81,6 +93,7 @@
       base.slots = base.slots.map(function (v) { return v && C.skillById(v) ? v : null; });
       base.enhance = (base.enhance && typeof base.enhance === 'object') ? base.enhance : {};
       base.trans = (base.trans && typeof base.trans === 'object') ? base.trans : {};
+      base.tr6 = (base.tr6 && typeof base.tr6 === 'object') ? base.tr6 : {};
       base.picker = { slot: -1, style: '', q: '' };
     } catch (e) { /* 깨진 저장값은 기본값으로 */ }
     /* 저장된 신식 토글 중 지금 활성 계열이 아닌 것은 그대로 두되 화면에는 활성만 보입니다 */
@@ -94,7 +107,7 @@
         castMode: S.castMode, chargeFull: S.chargeFull, ultFirst: S.ultFirst,
         autoInterval: S.autoInterval, autoCoeff: S.autoCoeff, gap: S.gap,
         toggles: S.toggles, override: S.override,
-        enhance: S.enhance, trans: S.trans
+        enhance: S.enhance, trans: S.trans, tr6: S.tr6
       };
       global.localStorage.setItem(SAVE_KEY, JSON.stringify(out));
     } catch (e) { /* 저장은 선택 */ }
@@ -128,7 +141,8 @@
       toggles: S.toggles,
       override: S.override,
       enhance: S.enhance,
-      trans: S.trans
+      trans: S.trans,
+      tr6: S.tr6
     };
   }
 
@@ -174,7 +188,7 @@
 
       '<section class="ds-sec ds-sec--gold" id="ds-enhance-sec">',
       '  <div class="ds-sec__head"><span class="ds-sec__num">4</span><h3>강화 · 돌파</h3><span class="ds-hint" id="ds-enh-sum"></span></div>',
-      '  <p class="ds-sec__sub">강화는 <b>계열 단위</b>(Lv50 · 피해 +75%), 돌파는 <b>도술 하나씩</b>(10단계 · 단계마다 피해 +3% · 쿨 -1.5%). 6돌파에서는 <b>[돌파 효과]</b>가 열립니다.</p>',
+      '  <p class="ds-sec__sub">강화는 <b>계열 단위</b>(Lv50 · 피해 +75%), 돌파는 <b>도술 하나씩</b>(10단계 · 단계마다 피해 +3% · 쿨 -1.5%). <b>특별</b> 도술 17개만 6돌파에서 <b>[돌파 효과]</b>가 열립니다.</p>',
       '  <div class="ds-enh-wrap" id="ds-enhance"></div>',
       '</section>',
 
@@ -282,7 +296,8 @@
         '</span>' +
         '<span class="ds-slot__body">' +
         '<span class="ds-slot__name">' + esc(sk.n) + '</span>' +
-        '<span class="ds-slot__meta">' + esc(C.styleName(sk.st)) + ' · ' + num(sk.cd) + '초 · ' + num(sk.ct, 2) + '초</span>' +
+        '<span class="ds-slot__meta">' + gradeBadge(sk.id, { specialOnly: true }) +
+        esc(C.styleName(sk.st)) + ' · ' + num(sk.cd) + '초 · ' + num(sk.ct, 2) + '초</span>' +
         '</span>' +
         '</button>' +
         '<span class="ds-slot__move">' +
@@ -377,6 +392,10 @@
       return (Number(S.trans[t.sk.id]) || 0) > 0;
     }).length;
     if (trOn) { parts.push('돌파 ' + trOn + '개'); }
+    var sixOn = transTargets().filter(function (t) {
+      return C.transInfo(t.sk.id, S.trans[t.sk.id], S.tr6).t6on;
+    }).length;
+    if (sixOn) { parts.push('특별 6돌파 ' + sixOn + '개'); }
     return parts.join(' · ');
   }
 
@@ -420,38 +439,92 @@
     return out;
   }
 
+  /* 6돌파 옵션 카드 — 특별 도술만. 6돌파 미만이면 미리보기(잠김)로 보여 줍니다.
+     · 계산 반영: 고정 피해(d6) + 켜 둔 상황 옵션(extra)
+     · 표시만: 대상 수·침묵·이속처럼 딜로 환산할 수 없는 효과 */
+  function sixBlockHtml(sk, t) {
+    if (!t || !t.has6) {
+      if (sk.k === 'ult') { return ''; }
+      return '<p class="ds-six ds-six--none">' + esc(C.special.normalLabel) +
+        ' 도술 · 6돌파 효과 없음 (단계마다 피해 +3% · 쿨 -1.5%)</p>';
+    }
+    var on = t.t6on;
+    var rows = '';
+    if (t.d6) {
+      rows += '<li class="ds-six__li is-calc"><span>피해량 +' + num(t.d6, 0) + '%</span><em>계산 반영</em></li>';
+    }
+    t.opts.forEach(function (o) {
+      if (o.calc) {
+        rows += '<li class="ds-six__li is-opt"><label><input type="checkbox" data-tr6="' + sk.id + ':' + esc(o.id) + '"' +
+          (o.on ? ' checked' : '') + '><span>' + esc(o.t) + '</span></label>' +
+          '<em>' + (o.on ? '켜짐 · 계산 반영' : '켜면 +' + num(o.d, 0) + '%') + '</em>' +
+          (o.n ? '<i>' + esc(o.n) + '</i>' : '') + '</li>';
+      } else {
+        rows += '<li class="ds-six__li is-text"><span>' + esc(o.t) + '</span><em>표시만</em></li>';
+      }
+    });
+    if (!rows) {
+      rows = '<li class="ds-six__li is-text"><span>' + esc(t.t6) + '</span><em>표시만</em></li>';
+    }
+    /* 6돌파 미만 — 줄을 다 펼치지 않고 한 줄로만 미리 보여 줍니다 */
+    if (!on) {
+      var pre = [];
+      if (t.d6) { pre.push('피해량 +' + num(t.d6, 0) + '%'); }
+      t.opts.forEach(function (o) { pre.push(o.t); });
+      if (!pre.length && t.t6) { pre.push(t.t6); }
+      return '<div class="ds-six ds-six--pre is-locked" data-six="' + sk.id + '">' +
+        '<p class="ds-six__head"><b>6돌파 옵션</b><em>6돌파로 올리면 열림</em></p>' +
+        '<p class="ds-six__preview">' + esc(pre.join(' · ')) + '</p>' +
+        '</div>';
+    }
+    var foot = t.step > 6
+      ? t.step + '돌파 — 이 효과는 7~10돌파에서도 그대로이고, 단계마다 피해 +3% · 쿨 -1.5%만 더 붙습니다.'
+      : '7~10돌파에서도 이 효과는 그대로 유지됩니다.';
+    return '<div class="ds-six is-on" data-six="' + sk.id + '">' +
+      '<p class="ds-six__head"><b>6돌파 옵션</b><em>적용 중</em></p>' +
+      '<ul class="ds-six__list">' + rows + '</ul>' +
+      '<p class="ds-six__foot">' + foot + '</p>' +
+      '</div>';
+  }
+
+  function transMetaText(id, t) {
+    var sk = C.skillById(id);
+    var enhPct = C.enhanceBonus(enhLevelOf(sk ? sk.st : ''), id);
+    var parts = [];
+    if (enhPct > 0) { parts.push('강화 +' + num(enhPct, 1) + '%'); }
+    if (t.has) {
+      if (t.step > 0) {
+        if (t.dmgPct > 0) { parts.push('피해 +' + num(t.dmgPct, 1) + '%'); }
+        if (t.cdSec > 0) { parts.push('쿨 -' + num(t.cdSec, 2) + '초'); }
+        if (t.d6) { parts.push('6돌파 피해 +' + num(t.d6, 0) + '%'); }
+        if (t.extra) { parts.push('옵션 피해 +' + num(t.extra, 0) + '%'); }
+      } else {
+        parts.push('돌파 0단계');
+      }
+    }
+    return parts.join(' · ');
+  }
+
   function transRow(sk, label) {
     var st = C.styleOf(sk.st);
     var step = Math.max(0, Math.round(Number(S.trans[sk.id]) || 0));
-    var t = C.transInfo(sk.id, step);
-    var enhPct = C.enhanceBonus(enhLevelOf(sk.st), sk.id);
-    var meta = [];
-    if (enhPct > 0) { meta.push('강화 +' + num(enhPct, 1) + '%'); }
-    if (t.has) {
-      if (t.step > 0) {
-        if (t.dmgPct > 0) { meta.push('피해 +' + num(t.dmgPct, 1) + '%'); }
-        if (t.cdSec > 0) { meta.push('쿨 -' + num(t.cdSec, 2) + '초'); }
-        if (t.d6) { meta.push('6돌파 피해 +' + num(t.d6, 0) + '%'); }
-      } else {
-        meta.push('돌파 0단계');
-      }
-    }
+    var t = C.transInfo(sk.id, step, S.tr6);
+    var meta = transMetaText(sk.id, t);
     var control = t.has
       ? '<input type="range" min="0" max="10" step="1" value="' + t.step + '"' +
         ' data-trans="' + sk.id + '" aria-label="' + esc(sk.n) + ' 돌파 단계">'
       : '<p class="ds-trans__none">공개된 돌파 수치가 없습니다 — 「내 스펙 조정」에서 직접 넣어 주세요.</p>';
-    var six = (t.has && t.t6)
-      ? '<p class="ds-trans__six' + (t.t6on ? ' is-on' : '') + '">⑥ 6돌파 · ' + esc(t.t6) + '</p>'
-      : '';
-    return '<div class="ds-trans' + (t.has ? '' : ' is-none') + '" data-trans-row="' + sk.id + '" style="--ds-style:' + (st ? st.color : '#7fd1bd') + '">' +
+    return '<div class="ds-trans' + (t.has ? '' : ' is-none') + (C.isSpecial(sk.id) ? ' is-sp' : '') +
+      '" data-trans-row="' + sk.id + '" style="--ds-style:' + (st ? st.color : '#7fd1bd') + '">' +
       '<div class="ds-trans__top">' +
       ico(sk.id, 'ds-ico--tune', 18) +
       '<span class="ds-trans__name"><b>' + esc(sk.n) + '</b><em>' + esc(label) + ' · ' + esc(C.styleName(sk.st)) + '</em></span>' +
+      gradeBadge(sk.id) +
       '<span class="ds-trans__step" data-trans-val="' + sk.id + '">' + (t.has ? t.step + '돌파' : '–') + '</span>' +
       '</div>' +
       control +
-      (meta.length ? '<p class="ds-trans__meta">' + meta.join(' · ') + '</p>' : '') +
-      six +
+      (meta ? '<p class="ds-trans__meta">' + meta + '</p>' : '') +
+      sixBlockHtml(sk, t) +
       '</div>';
   }
 
@@ -478,10 +551,12 @@
     el.enhance.innerHTML =
       '<p class="ds-enh__label">계열 강화 <em>계열 하나를 올리면 그 계열 도술이 모두 함께 오릅니다</em></p>' +
       '<div class="ds-enh__styles">' + styleHtml + '</div>' +
-      '<p class="ds-enh__label">도술 돌파 <em>도술 하나씩 · 6돌파에 [돌파 효과]</em></p>' +
+      '<p class="ds-enh__label">도술 돌파 <em>도술 하나씩 · 특별은 6돌파에 [돌파 효과]</em></p>' +
+      '<p class="ds-enh__grade">등급 배지 <b class="ds-gr ds-gr--nm">일반</b> (도감 표기 영웅) · ' +
+      '<b class="ds-gr ds-gr--sp">특별</b> (도감 표기 전설) — ' + esc(C.special.note6) + '</p>' +
       '<div class="ds-trans__list">' + transHtml + '</div>' +
       '<div class="ds-enh__foot">' +
-      '<span>깨비지지 확인값 (2026-11-24)</span>' +
+      '<span>도깨비지지 확인값 (2026-11-24)</span>' +
       '<button type="button" class="ds-link" data-act="trans-reset">돌파 모두 0으로</button>' +
       '</div>';
   }
@@ -497,24 +572,21 @@
     var steps = el.enhance.querySelectorAll('[data-trans-val]');
     for (var j = 0; j < steps.length; j++) {
       var id = Number(steps[j].getAttribute('data-trans-val'));
-      var info = C.transInfo(id, S.trans[id]);
+      var sk = C.skillById(id);
+      var info = C.transInfo(id, S.trans[id], S.tr6);
       steps[j].textContent = info.has ? info.step + '돌파' : '–';
       var row = steps[j].closest ? steps[j].closest('.ds-trans') : null;
       var meta = row ? row.querySelector('.ds-trans__meta') : null;
       if (meta && info.has) {
-        var enhPct = C.enhanceBonus(enhLevelOf((C.skillById(id) || {}).st), id);
-        var parts = [];
-        if (enhPct > 0) { parts.push('강화 +' + num(enhPct, 1) + '%'); }
-        if (info.step > 0) {
-          if (info.dmgPct > 0) { parts.push('피해 +' + num(info.dmgPct, 1) + '%'); }
-          if (info.cdSec > 0) { parts.push('쿨 -' + num(info.cdSec, 2) + '초'); }
-          if (info.d6) { parts.push('6돌파 피해 +' + num(info.d6, 0) + '%'); }
-        } else {
-          parts.push('돌파 0단계');
-        }
-        meta.textContent = parts.join(' · ');
-        var six = row ? row.querySelector('.ds-trans__six') : null;
-        if (six) { six.classList.toggle('is-on', !!info.t6on); }
+        meta.textContent = transMetaText(id, info);
+      }
+      var box = row ? row.querySelector('.ds-six') : null;
+      if (box && sk) {
+        var wrap = document.createElement('div');
+        wrap.innerHTML = sixBlockHtml(sk, info);
+        var fresh = wrap.firstChild;
+        if (fresh) { box.parentNode.replaceChild(fresh, box); }
+        else { box.parentNode.removeChild(box); }
       }
     }
     var targets = transTargets();
@@ -553,7 +625,8 @@
       toggles: S.toggles,
       override: S.override,
       enhance: S.enhance,
-      trans: S.trans
+      trans: S.trans,
+      tr6: S.tr6
     };
   }
 
@@ -764,6 +837,7 @@
     S.override = cfg.override && typeof cfg.override === 'object' ? cfg.override : {};
     S.enhance = cfg.enhance && typeof cfg.enhance === 'object' ? cfg.enhance : {};
     S.trans = cfg.trans && typeof cfg.trans === 'object' ? cfg.trans : {};
+    S.tr6 = cfg.tr6 && typeof cfg.tr6 === 'object' ? cfg.tr6 : {};
     S.opt = null;
     renderSlots();
     renderSin();
@@ -1088,7 +1162,7 @@
       return '<button type="button" class="ds-pk' + (on ? ' is-used' : '') + (sk.k === 'ult' ? ' is-ult' : '') + '" data-pick="' + sk.id + '" style="--ds-style:' + C.styleColor(sk.st) + '">' +
         ico(sk.id, 'ds-ico--pk', 36, true) +
         '<span class="ds-pk__body">' +
-        '<span class="ds-pk__name">' + esc(sk.n) + '<em>' + esc(C.kindLabel(sk.k)) + '</em></span>' +
+        '<span class="ds-pk__name">' + esc(sk.n) + '<em>' + esc(C.kindLabel(sk.k)) + '</em>' + gradeBadge(sk.id) + '</span>' +
         '<span class="ds-pk__meta">' + esc(C.styleName(sk.st)) + ' · ' + num(sk.cd) + '초 · 시전 ' + num(sk.ct, 2) + '초 · ' + num(sk.c, 0) + '%</span>' +
         '</span>' +
         '</button>';
@@ -1164,6 +1238,7 @@
           renderTune(); recompute();
         } else if (a === 'trans-reset') {
           S.trans = {};
+          S.tr6 = {};
           S.opt = null;
           renderEnhance(); recompute();
         } else if (a === 'optimize') {
@@ -1302,6 +1377,36 @@
     el.root.addEventListener('change', function (e) {
       var t = e.target;
       if (!t) { return; }
+      var tr6 = t.getAttribute && t.getAttribute('data-tr6');
+      if (tr6) {
+        var sep = tr6.indexOf(':');
+        var sid = tr6.slice(0, sep);
+        var oid = tr6.slice(sep + 1);
+        var arr6 = S.tr6[sid] || [];
+        if (t.checked) {
+          if (arr6.indexOf(oid) < 0) { arr6.push(oid); }
+        } else {
+          arr6 = arr6.filter(function (x) { return x !== oid; });
+        }
+        S.tr6[sid] = arr6;
+        S.opt = null;
+        /* 카드를 다시 그리지 않고 이 줄만 고칩니다 — 방금 누른 체크박스가 그대로 남도록 */
+        var oDmg = 0;
+        C.sixOptions(Number(sid)).forEach(function (o) { if (o.id === oid) { oDmg = o.d || 0; } });
+        var li = t.closest ? t.closest('.ds-six__li') : null;
+        if (li) {
+          var em = li.querySelector('em');
+          if (em) { em.textContent = t.checked ? '켜짐 · 계산 반영' : '켜면 +' + num(oDmg, 0) + '%'; }
+        }
+        var rowEl = t.closest ? t.closest('.ds-trans') : null;
+        if (rowEl) {
+          var rid = Number(rowEl.getAttribute('data-trans-row'));
+          var rMeta = rowEl.querySelector('.ds-trans__meta');
+          if (rMeta) { rMeta.textContent = transMetaText(rid, C.transInfo(rid, S.trans[rid], S.tr6)); }
+        }
+        recompute();
+        return;
+      }
       var tg = t.getAttribute && t.getAttribute('data-toggle');
       if (tg) {
         var parts = tg.split(':');

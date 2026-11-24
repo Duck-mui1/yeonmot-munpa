@@ -3472,28 +3472,121 @@ body.is-locked { overflow: hidden; }
   color: rgba(200, 232, 224, .78);
   font-variant-numeric: tabular-nums;
 }
-.ds-trans__six {
-  margin: 3px 0 0;
-  padding: 3px 7px;
-  border-radius: 8px;
-  border: 1px dashed rgba(240, 217, 165, .32);
-  background: rgba(240, 217, 165, .07);
-  font-size: 9px;
-  line-height: 1.45;
-  color: rgba(248, 238, 218, .72);
+/* ---- 등급 배지 — 일반(영웅) · 특별(전설) ---- */
+.ds-gr {
+  display: inline-block;
+  flex: none;
+  margin-right: 4px;
+  padding: 0 4px;
+  border-radius: 999px;
+  font-style: normal;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: -.01em;
+  line-height: 1.5;
+  vertical-align: 1px;
+  border: 1px solid transparent;
+}
+.ds-gr--sp {
+  color: #3a2a06;
+  background: linear-gradient(150deg, #f6e3b0, #e9c778);
+  border-color: rgba(240, 217, 165, .75);
+}
+.ds-gr--nm {
+  color: rgba(200, 232, 224, .82);
+  background: rgba(46, 139, 122, .2);
+  border-color: rgba(127, 209, 189, .25);
+}
+.ds-slot__meta .ds-gr { margin-right: 3px; font-size: 7.5px; }
+.ds-pk__name .ds-gr { margin: 0 0 0 1px; }
+.ds-trans__top .ds-gr { margin: 0 2px 0 0 !important; }
+
+/* ---- 6돌파 옵션 (특별 도술) ---- */
+.ds-six {
+  margin: 5px 0 0;
+  padding: 6px 8px 5px;
+  border-radius: 10px;
+  border: 1px dashed rgba(240, 217, 165, .3);
+  background: rgba(240, 217, 165, .06);
+}
+.ds-six.is-on {
+  border-style: solid;
+  border-color: rgba(240, 217, 165, .58);
+  background: rgba(240, 217, 165, .12);
+}
+.ds-six.is-locked { opacity: .74; }
+.ds-six--pre .ds-six__preview {
+  margin: 0;
+  font-size: 8.5px;
+  line-height: 1.5;
+  color: rgba(248, 238, 218, .82);
   word-break: keep-all;
 }
-.ds-trans__six:not(.is-on) {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.ds-six--none {
+  border-color: rgba(127, 209, 189, .18);
+  background: rgba(4, 22, 26, .5);
+  font-size: 8.5px;
+  line-height: 1.5;
+  color: rgba(147, 183, 174, .85);
+  word-break: keep-all;
 }
-.ds-trans__six.is-on {
-  border-style: solid;
-  border-color: rgba(240, 217, 165, .7);
-  background: rgba(240, 217, 165, .16);
-  color: #fff6e2;
+.ds-six__head {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  margin: 0 0 3px;
 }
+.ds-six__head b { font-size: 10px; font-weight: 800; color: #ffeec9; }
+.ds-six__head em { font-style: normal; font-size: 8.5px; color: rgba(240, 217, 165, .88); }
+.ds-six__list { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.ds-six__li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 5px;
+  font-size: 9px;
+  line-height: 1.45;
+  color: rgba(248, 238, 218, .92);
+}
+.ds-six__li > span,
+.ds-six__li label span { word-break: keep-all; }
+.ds-six__li em {
+  flex: none;
+  font-style: normal;
+  font-size: 8px;
+  font-weight: 700;
+  padding: 0 4px;
+  border-radius: 999px;
+}
+.ds-six__li.is-calc em { color: #06262a; background: rgba(240, 217, 165, .88); }
+.ds-six__li.is-opt em { color: rgba(200, 232, 224, .88); background: rgba(46, 139, 122, .28); }
+.ds-six__li.is-text { color: rgba(216, 232, 228, .76); }
+.ds-six__li.is-text em { color: rgba(147, 183, 174, .9); background: rgba(147, 183, 174, .14); }
+.ds-six__li label { display: inline-flex; align-items: center; gap: 4px; }
+.ds-six__li input { width: 13px; height: 13px; accent-color: #e9c778; }
+.ds-six__li input:disabled { opacity: .5; }
+.ds-six__li i {
+  flex-basis: 100%;
+  font-style: normal;
+  font-size: 8px;
+  color: rgba(147, 183, 174, .82);
+}
+.ds-six__foot {
+  margin: 4px 0 0;
+  font-size: 8.5px;
+  line-height: 1.45;
+  color: rgba(147, 183, 174, .86);
+  word-break: keep-all;
+}
+.ds-six__foot b { color: #ffeec9; }
+.ds-enh__grade {
+  margin: 0;
+  font-size: 8.5px;
+  line-height: 1.6;
+  color: rgba(147, 183, 174, .9);
+  word-break: keep-all;
+}
+.ds-enh__grade .ds-gr { margin: 0 2px; vertical-align: 0; }
 .ds-trans__none { margin: 3px 0 0; font-size: 9px; line-height: 1.5; color: rgba(147, 183, 174, .8); }
 .ds-enh__foot {
   display: flex;

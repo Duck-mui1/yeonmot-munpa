@@ -48,8 +48,35 @@
   var ENH = DATA.enhance || { max: 50, bonus: [], alt: {} };
   var TRANS = DATA.trans || {};
   var TRANS6 = DATA.trans6 || {};
+  var SPECIAL = DATA.special || { label: '특별', normalLabel: '일반', gradeMap: {}, effectIds: [] };
 
   function clamp(n, lo, hi) { return Math.max(lo, Math.min(hi, n)); }
+
+  /* ---------------------------------------------------------
+     등급 — 게임은 일반·특별, 도감은 영웅·전설로 부릅니다.
+     · 특별(전설) 도술 17개만 6돌파에 [돌파 효과]가 있고,
+       그 효과는 7~10돌파에서도 같은 값으로 유지됩니다.
+     --------------------------------------------------------- */
+  function gradeOf(id) {
+    var sk = SKILL_BY_ID[id];
+    if (!sk) { return ''; }
+    return (SPECIAL.gradeMap && SPECIAL.gradeMap[sk.g]) || sk.g || '';
+  }
+
+  function isSpecial(id) {
+    var sk = SKILL_BY_ID[id];
+    return !!sk && sk.g === '전설';
+  }
+
+  /* 6돌파 [돌파 효과]가 있는 도술인지 (전설 일반 도술 17개) */
+  function hasSixEffect(id) {
+    return Object.prototype.hasOwnProperty.call(TRANS6, String(id));
+  }
+
+  function sixOptions(id) {
+    var t = TRANS6[String(id)];
+    return (t && t.o) ? t.o : [];
+  }
 
   /* 계열 강화 Lv(0~50) → 피해 계수 보너스(%) */
   function enhanceBonus(level, id) {
@@ -65,21 +92,35 @@
 
   function enhanceMax() { return ENH.max || 50; }
 
-  /* 도술 돌파 정보 — 없으면(null) 계산에 넣지 않고 화면에서 안내합니다 */
-  function transInfo(id, step) {
-    var has = Object.prototype.hasOwnProperty.call(TRANS, String(id));
-    var base = has ? TRANS[String(id)] : null;
+  /* 도술 돌파 정보 — 없으면(null) 계산에 넣지 않고 화면에서 안내합니다
+     opts : 6돌파 옵션 중 켜 둔 것의 id 배열 (상황별 추가 피해) */
+  function transInfo(id, step, opts) {
+    var key = String(id);
+    var has = Object.prototype.hasOwnProperty.call(TRANS, key);
+    var base = has ? TRANS[key] : null;
     var n = clamp(Math.round(Number(step) || 0), 0, 10);
     if (!base) { n = 0; }
-    var t6 = TRANS6[String(id)] || null;
+    var t6 = TRANS6[key] || null;
+    var on6 = !!(t6 && n >= 6);
+    var onList = (opts && opts[key]) || [];
+    var extra = 0;
+    var list = (t6 && t6.o ? t6.o : []).map(function (o) {
+      var isOn = !!(o.id && on6 && onList.indexOf(o.id) >= 0);
+      var calc = o.k !== 'text' && (o.d || 0) > 0;
+      if (isOn && calc) { extra += o.d; }
+      return { id: o.id || '', t: o.t || '', d: o.d || 0, n: o.n || '', calc: calc, on: isOn };
+    });
     return {
       has: !!base,
       step: n,
       dmgPct: base ? base.d * n : 0,
       cdSec: base ? base.c * n : 0,
-      d6: (t6 && n >= 6) ? (t6.d || 0) : 0,
+      d6: on6 ? (t6.d || 0) : 0,
       t6: t6 ? t6.t : '',
-      t6on: !!(t6 && n >= 6)
+      t6on: on6,
+      has6: !!(t6),
+      opts: list,
+      extra: extra
     };
   }
 
@@ -150,6 +191,7 @@
     var ov = config.override || {};
     var enh = config.enhance || {};
     var transCfg = config.trans || {};
+    var tr6Cfg = config.tr6 || {};
 
     function makeEntry(id, slot) {
       var sk = SKILL_BY_ID[id];
@@ -167,12 +209,12 @@
       /* 강화는 그 도술의 계열 레벨을 따릅니다 */
       var enhLv = Math.round(Number(enh[sk.st]) || 0);
       var enhPct = enhanceBonus(enhLv, sk.id);
-      var tr = transInfo(sk.id, transCfg[id]);
+      var tr = transInfo(sk.id, transCfg[id], tr6Cfg);
 
       /* 돌파: 쿨타임은 그 도술만 줄고(최대 기본의 90%), 계수는 단계 누적 + 6돌파 효과 */
       var cdAfterTrans = Math.max(cdBase * 0.1, cdBase - Math.min(cdBase * 0.9, tr.cdSec));
       var cd = cdAfterTrans * cdMul;
-      var trMul = 1 + (tr.dmgPct + tr.d6) / 100;
+      var trMul = 1 + (tr.dmgPct + tr.d6 + tr.extra) / 100;
       return {
         id: sk.id, slot: slot, name: sk.n, style: sk.st, kind: sk.k,
         cdBase: cdBase, cd: cd,
@@ -181,7 +223,8 @@
         hits: sk.h, charge: sk.ch || 0,
         enh: enhLv, enhPct: enhPct,
         trans: tr.step, transDmgPct: tr.dmgPct, transCd: tr.cdSec,
-        tr6: tr.t6on, tr6Pct: tr.d6, tr6Text: tr.t6, hasTrans: tr.has
+        tr6: tr.t6on, tr6Pct: tr.d6, tr6Text: tr.t6, hasTrans: tr.has,
+        tr6Extra: tr.extra, tr6Opts: tr.opts, sp: isSpecial(sk.id), grade: gradeOf(sk.id)
       };
     }
 
@@ -230,7 +273,8 @@
       toggles: config.toggles || {},
       override: config.override || {},
       enhance: config.enhance || {},
-      trans: config.trans || {}
+      trans: config.trans || {},
+      tr6: config.tr6 || {}
     };
     var built = buildEntries(cfg);
     var gap = cfg.gap || 0;
@@ -367,7 +411,8 @@
           occupied: round(en.occupied, 2), hits: en.hits,
           enh: en.enh, enhPct: round(en.enhPct, 1),
           trans: en.trans, transDmgPct: round(en.transDmgPct, 1), transCd: round(en.transCd, 2),
-          tr6: en.tr6, tr6Pct: en.tr6Pct, tr6Text: en.tr6Text, hasTrans: en.hasTrans
+          tr6: en.tr6, tr6Pct: en.tr6Pct, tr6Text: en.tr6Text, hasTrans: en.hasTrans,
+          tr6Extra: round(en.tr6Extra || 0, 1), tr6Opts: en.tr6Opts, sp: en.sp, grade: en.grade
         });
       }
     }
@@ -479,6 +524,11 @@
     enhanceBonus: enhanceBonus,
     enhanceMax: enhanceMax,
     transInfo: transInfo,
+    gradeOf: gradeOf,
+    isSpecial: isSpecial,
+    hasSixEffect: hasSixEffect,
+    sixOptions: sixOptions,
+    special: SPECIAL,
     styles: styles,
     allSkills: allSkills,
     skillById: skillById,
