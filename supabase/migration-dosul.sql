@@ -16,7 +16,7 @@
 --         slots      jsonb  (장착 8칸 — 도술 id 8개, 빈 칸은 null)
 --         config     jsonb  (전투 시간·쿨감·시전 기준·평타·신식 토글 등 계산 설정)
 --         idle_pct   numeric(5,1)  (그때 계산된 '평타 빈 시간 %')
---         dps        numeric(8,2)  (그때 계산된 초당 피해 %)
+--         dps        numeric(10,2) (그때 계산된 초당 피해 %)
 --         created_at timestamptz
 --     · public.save_dosul_build(p_token, p_title, p_memo, p_slots, p_config,
 --                               p_idle_pct, p_dps)
@@ -60,7 +60,7 @@ create table if not exists private.dosul_builds (
   slots      jsonb not null,
   config     jsonb not null default '{}'::jsonb,
   idle_pct   numeric(5, 1) not null default 0,
-  dps        numeric(8, 2) not null default 0,
+  dps        numeric(10, 2) not null default 0,
   created_at timestamptz not null default now()
 );
 
@@ -450,7 +450,7 @@ begin
     end;
     begin
       perform public.save_dosul_build(v_t_mem, '빈 시간 이상', '', v_slots, v_config, 120, 10);
-      raise exception '100%를 넘는 평타 빈 시간이 통과되었습니다.';
+      raise exception '100%%를 넘는 평타 빈 시간이 통과되었습니다.';
     exception when sqlstate '22023' then null;
     end;
 
