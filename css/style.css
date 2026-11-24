@@ -3109,6 +3109,112 @@ body.is-locked { overflow: hidden; }
 }
 .ds-slot__move button:active { background: rgba(46, 139, 122, .4); }
 
+/* ---- 사용 순서 설정 (시전 · DPS 계산 순서) ---- */
+.ds-sec--order { --ds-sec-accent: rgba(127, 209, 189, .9); }
+.ds-order { display: flex; flex-direction: column; gap: 5px; margin-top: 2px; }
+.ds-ord {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 8px 6px 9px;
+  border-radius: 11px;
+  border: 1px solid rgba(127, 209, 189, .16);
+  background: linear-gradient(165deg, rgba(10, 46, 50, .78), rgba(4, 22, 26, .9));
+  overflow: hidden;
+}
+.ds-ord::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 3px;
+  background: var(--ds-style, rgba(127, 209, 189, .4));
+  opacity: .9;
+}
+.ds-ord.is-ult {
+  border-color: rgba(240, 217, 165, .42);
+  background: linear-gradient(165deg, rgba(40, 34, 20, .55), rgba(4, 22, 26, .92));
+}
+.ds-ord__no {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  font-size: 10px;
+  font-weight: 800;
+  color: #06262a;
+  background: rgba(240, 217, 165, .82);
+  font-variant-numeric: tabular-nums;
+}
+.ds-ord.is-ult .ds-ord__no { background: rgba(240, 217, 165, 1); }
+.ds-ord__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.ds-ord__name {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #f2faf6;
+  letter-spacing: -.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ds-ord__r {
+  flex: none;
+  font-style: normal;
+  font-size: 8px;
+  font-weight: 800;
+  padding: 1px 4px;
+  border-radius: 4px;
+  color: #2a1f06;
+  background: rgba(240, 217, 165, .92);
+}
+.ds-ord__meta {
+  font-size: 8.5px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ds-ord__move { flex: none; display: flex; flex-direction: column; gap: 2px; }
+.ds-ord__move button {
+  width: 26px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid rgba(127, 209, 189, .2);
+  background: rgba(4, 24, 28, .8);
+  font-size: 8px;
+  line-height: 1;
+  color: rgba(200, 232, 224, .85);
+}
+.ds-ord__move button:active { background: rgba(46, 139, 122, .4); }
+.ds-ord__move button:disabled { opacity: .28; }
+.ds-ord__empty { margin: 0; padding: 10px 2px; font-size: 10px; line-height: 1.6; color: var(--muted); }
+.ds-tune__hint {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  padding: 7px 8px;
+  border-radius: 9px;
+  border: 1px dashed rgba(127, 209, 189, .18);
+  font-size: 9.5px;
+  color: rgba(147, 183, 174, .8);
+}
+.ds-ico--ord { --ds-ico-size: 30px; }
+
 /* ---- 신식 ---- */
 .ds-sin { margin-top: 9px; }
 .ds-sinchips { display: flex; flex-wrap: wrap; gap: 5px; }
@@ -3157,14 +3263,17 @@ body.is-locked { overflow: hidden; }
 }
 .ds-sinon__head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 3px 8px;
   margin: 0 0 5px;
   font-size: 11px;
   color: var(--muted);
 }
-.ds-sinon__name { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.ds-sinon__name { display: inline-flex; align-items: center; gap: 6px; min-width: 0; flex: none; }
+.ds-sinon__title { white-space: nowrap; }
+.ds-sinon__head > span:last-child { margin-left: auto; text-align: right; }
 .ds-sinon__head b { font-size: 12px; color: #f4ead4; }
 .ds-sinon__head b.ds-sinon__ult { color: #b8ecdd; }
 .ds-sinon__mech { margin: 0 0 6px; font-size: 10px; line-height: 1.6; color: rgba(201, 222, 215, .82); }

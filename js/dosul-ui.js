@@ -64,6 +64,8 @@
   function defaults() {
     return {
       slots: [null, null, null, null, null, null, null, null],
+      /* 사용 순서 — 장착 8칸과 별개. 실제 전투에서 도술이 나가는 순서(궁극기 포함) */
+      castOrder: [],
       duration: 60,
       cdReducePct: 0,
       castMode: 'delay',
@@ -90,6 +92,7 @@
       /* 처음 열면 1번 프리셋을 채워 둡니다 — 바로 결과가 보이도록 */
       var p = C.presets()[0];
       if (p) { base.slots = p.slots.slice(0, 8); }
+      base.castOrder = C.syncCastOrder(base.slots, [], { ultFirst: base.ultFirst !== false });
       return base;
     }
     try {
@@ -101,11 +104,16 @@
         base.slots = defaults().slots;
       }
       base.slots = base.slots.map(function (v) { return v && C.skillById(v) ? v : null; });
+      /* 구버전 저장분에는 castOrder가 없습니다 — 그때는 슬롯 순서로 되돌립니다 */
+      base.castOrder = Array.isArray(base.castOrder)
+        ? base.castOrder.map(function (v) { return Number(v) || null; }).filter(function (v) { return v && C.skillById(v); })
+        : [];
       base.enhance = (base.enhance && typeof base.enhance === 'object') ? base.enhance : {};
       base.trans = (base.trans && typeof base.trans === 'object') ? base.trans : {};
       base.tr6 = (base.tr6 && typeof base.tr6 === 'object') ? base.tr6 : {};
       base.chain = (base.chain && typeof base.chain === 'object') ? base.chain : {};
       base.picker = { slot: -1, style: '', q: '' };
+      base.castOrder = C.syncCastOrder(base.slots, base.castOrder, { ultFirst: base.ultFirst !== false });
     } catch (e) { /* 깨진 저장값은 기본값으로 */ }
     /* 저장된 신식 토글 중 지금 활성 계열이 아닌 것은 그대로 두되 화면에는 활성만 보입니다 */
     return base;
@@ -114,7 +122,8 @@
   function save() {
     try {
       var out = {
-        slots: S.slots, duration: S.duration, cdReducePct: S.cdReducePct,
+        slots: S.slots, castOrder: S.castOrder,
+        duration: S.duration, cdReducePct: S.cdReducePct,
         castMode: S.castMode, chargeFull: S.chargeFull, ultFirst: S.ultFirst,
         autoInterval: S.autoInterval, autoCoeff: S.autoCoeff, gap: S.gap,
         toggles: S.toggles, override: S.override,
@@ -138,9 +147,15 @@
     });
   }
 
+  /* 장착 칸(slots)에 맞춰 사용 순서를 정리합니다 — 다른 도술의 순서는 최대한 그대로 둡니다 */
+  function syncOrder() {
+    S.castOrder = C.syncCastOrder(S.slots, S.castOrder, { ultFirst: S.ultFirst !== false });
+  }
+
   function config() {
     return {
       slots: S.slots,
+      castOrder: S.castOrder,
       duration: S.duration,
       cdReducePct: S.cdReducePct,
       castMode: S.castMode,
@@ -192,25 +207,32 @@
       '</section>',
 
       '<section class="ds-sec" id="ds-slots-sec">',
-      '  <div class="ds-sec__head"><span class="ds-sec__num">3</span><h3>도술 8칸</h3><span class="ds-hint">칸을 누르면 도술을 고릅니다</span></div>',
+      '  <div class="ds-sec__head"><span class="ds-sec__num">3</span><h3>도술 장착 8칸</h3><span class="ds-hint">칸을 누르면 도술을 고릅니다</span></div>',
+      '  <p class="ds-sec__sub">게임의 도술 칸과 같습니다. <b>기본 1~5칸</b>에 같은 계열 3개가 들어가면 그 계열 <b>신식·궁극기(R)</b>가 열립니다.</p>',
       '  <div class="ds-slots" id="ds-slots"></div>',
-      '  <div class="ds-subhead"><b>신식 · 궁극기</b><span>같은 계열 3개면 자동으로 열립니다</span></div>',
+      '  <div class="ds-subhead"><b>신식 · 궁극기</b><span>기본 1~5칸 구성으로만 결정됩니다</span></div>',
       '  <div class="ds-sin" id="ds-sin"></div>',
       '</section>',
 
+      '<section class="ds-sec ds-sec--order" id="ds-order-sec">',
+      '  <div class="ds-sec__head"><span class="ds-sec__num">4</span><h3>사용 순서 설정</h3><span class="ds-hint" id="ds-order-hint">시전 · DPS 계산 순서</span></div>',
+      '  <p class="ds-sec__sub">전투에서 도술이 나가는 순서입니다. <b>장착 칸과 따로</b> 정해서, 신식 조건(기본 1~5칸)은 그대로 두고 <b>원하는 순서</b>로 바꿀 수 있습니다. 궁극기(R)도 원하는 자리에 놓을 수 있어요.</p>',
+      '  <div class="ds-order" id="ds-order"></div>',
+      '</section>',
+
       '<section class="ds-sec ds-sec--gold" id="ds-enhance-sec">',
-      '  <div class="ds-sec__head"><span class="ds-sec__num">4</span><h3>강화 · 돌파</h3><span class="ds-hint" id="ds-enh-sum"></span></div>',
+      '  <div class="ds-sec__head"><span class="ds-sec__num">5</span><h3>강화 · 돌파</h3><span class="ds-hint" id="ds-enh-sum"></span></div>',
       '  <p class="ds-sec__sub">강화는 <b>계열 단위</b>(Lv50 · 피해 +75%), 돌파는 <b>도술 하나씩</b>(10단계 · 단계마다 피해 +3% · 쿨 -1.5%). <b>특별</b> 도술 17개만 6돌파에서 <b>[돌파 효과]</b>가 열립니다.</p>',
       '  <div class="ds-enh-wrap" id="ds-enhance"></div>',
       '</section>',
 
       '<details class="ds-sec ds-tune" id="ds-tune">',
-      '  <summary><span class="ds-sec__num">5</span><span class="ds-tune__title">내 스펙 조정</span><em id="ds-tune-sum">쿨감 0% · 60초</em></summary>',
+      '  <summary><span class="ds-sec__num">6</span><span class="ds-tune__title">내 스펙 조정</span><em id="ds-tune-sum">쿨감 0% · 60초</em></summary>',
       '  <div class="ds-tune__body" id="ds-tune-body"></div>',
       '</details>',
 
       '<section class="ds-sec ds-sec--result" id="ds-result-sec">',
-      '  <div class="ds-sec__head"><span class="ds-sec__num">6</span><h3>계산 결과</h3><span class="ds-hint">8칸 · 강화 · 돌파가 바로 반영</span></div>',
+      '  <div class="ds-sec__head"><span class="ds-sec__num">7</span><h3>계산 결과</h3><span class="ds-hint">8칸 · 사용 순서 · 강화 · 돌파가 바로 반영</span></div>',
       '  <div class="ds-result" id="ds-result"></div>',
       '</section>',
 
@@ -246,6 +268,8 @@
 
     el.presets = $('#ds-presets');
     el.slots = $('#ds-slots');
+    el.order = $('#ds-order');
+    el.orderHint = $('#ds-order-hint');
     el.sin = $('#ds-sin');
     el.enhance = $('#ds-enhance');
     el.enhSum = $('#ds-enh-sum');
@@ -350,7 +374,7 @@
         '<p class="ds-sinon__head"><span class="ds-sinon__name">' +
         ico(ult ? ult.id : st.ult, 'ds-ico--ult', 28) +
         '<b class="ds-sinon__title">' + esc(st.name) + ' 신식</b></span>' +
-        '<span>궁극기 <b class="ds-sinon__ult">' + esc(ult ? ult.n : '') + '</b> 자동 장착 · ' + num(ult ? ult.cd : 0) + '초</span></p>' +
+        '<span>궁극기 <b class="ds-sinon__ult">' + esc(ult ? ult.n : '') + '</b> 자동 장착 · ' + num(ult ? ult.cd : 0) + '초 · 자리는 ④에서</span></p>' +
         '<p class="ds-sinon__mech">' + esc(st.mech.join(' ')) + '</p>' +
         '<div class="ds-tgls">' + toggles + '</div>' +
         '</div>';
@@ -358,6 +382,58 @@
 
     el.sin.innerHTML = '<div class="ds-sinchips">' + chips + '</div>' +
       (active || '<p class="ds-sin__empty">기본 1~5번 칸에 <b>같은 계열 3개</b>를 넣으면 그 계열 <b>신식</b>과 <b>궁극기(R)</b>가 자동으로 켜집니다.</p>');
+  }
+
+  /* ---------------------------------------------------------
+     사용 순서 설정 (시전 · DPS 계산 순서)
+     · 장착 칸과 별개인 castOrder 를 그립니다. 게임의 「사용 순서 설정」 화면처럼
+       1번 → 2번 → … 순서로 늘어놓고 ▲/▼ 로 자리를 바꿉니다(궁극기 R 포함).
+     --------------------------------------------------------- */
+  function renderOrder() {
+    if (!el.order) { return; }
+    syncOrder();
+    if (el.orderHint) {
+      el.orderHint.textContent = S.castOrder.length
+        ? (S.castOrder.length + '개 · ▲▼로 자리 바꾸기')
+        : '시전 · DPS 계산 순서';
+    }
+    if (!S.castOrder.length) {
+      el.order.innerHTML = '<p class="ds-ord__empty">도술을 장착하면 여기에 <b>사용 순서</b>가 나옵니다. ' +
+        '신식이 열리면 <b>궁극기(R)</b>도 함께 들어옵니다.</p>';
+      return;
+    }
+    el.order.innerHTML = S.castOrder.map(function (id, i) {
+      var sk = C.skillById(id);
+      if (!sk) { return ''; }
+      var isUlt = sk.k === 'ult';
+      return '<div class="ds-ord' + (isUlt ? ' is-ult' : '') + '" data-ord-row="' + sk.id + '" style="--ds-style:' + C.styleColor(sk.st) + '">' +
+        '<span class="ds-ord__no">' + (i + 1) + '</span>' +
+        ico(sk.id, 'ds-ico--ord', 30) +
+        '<span class="ds-ord__body">' +
+        '<span class="ds-ord__name">' + esc(sk.n) + (isUlt ? '<em class="ds-ord__r">R</em>' : '') + chainBadge(sk.id) + '</span>' +
+        '<span class="ds-ord__meta">' + esc(C.styleName(sk.st)) + ' · ' + num(sk.cd) + '초 · 시전 ' + num(sk.ct, 2) + '초</span>' +
+        '</span>' +
+        '<span class="ds-ord__move">' +
+        '<button type="button" data-omv="up" data-ord="' + sk.id + '" aria-label="' + esc(sk.n) + ' 앞으로"' +
+        (i === 0 ? ' disabled' : '') + '>▲</button>' +
+        '<button type="button" data-omv="down" data-ord="' + sk.id + '" aria-label="' + esc(sk.n) + ' 뒤로"' +
+        (i === S.castOrder.length - 1 ? ' disabled' : '') + '>▼</button>' +
+        '</span>' +
+        '</div>';
+    }).join('');
+  }
+
+  function moveOrder(id, dir) {
+    var k = S.castOrder.indexOf(Number(id));
+    if (k < 0) { return; }
+    var j = k + dir;
+    if (j < 0 || j >= S.castOrder.length) { return; }
+    var tmp = S.castOrder[k];
+    S.castOrder[k] = S.castOrder[j];
+    S.castOrder[j] = tmp;
+    S.opt = null;
+    renderOrder();
+    recompute();
   }
 
   /* ---------------------------------------------------------
@@ -626,6 +702,7 @@
 
   function sharedConfig() {
     return {
+      castOrder: S.castOrder,
       duration: S.duration,
       cdReducePct: S.cdReducePct,
       castMode: S.castMode,
@@ -752,7 +829,7 @@
         : '체험 모드라 이 기기에만 저장됩니다. 가입하면 문파원과 함께 볼 수 있어요.';
     }
     el.shareBox.hidden = false;
-    if (el.shareName) { global.setTimeout(function () { el.shareName.focus(); el.shareName.select(); }, 60); }
+    if (el.shareName) { el.shareName.focus(); el.shareName.select(); }
   }
 
   function closeShare() {
@@ -852,9 +929,14 @@
     S.trans = cfg.trans && typeof cfg.trans === 'object' ? cfg.trans : {};
     S.tr6 = cfg.tr6 && typeof cfg.tr6 === 'object' ? cfg.tr6 : {};
     S.chain = cfg.chain && typeof cfg.chain === 'object' ? cfg.chain : {};
+    /* 사용 순서 — 저장한 조합에 있으면 그대로, 예전 조합이면 장착 순서로 되돌립니다 */
+    S.castOrder = Array.isArray(cfg.castOrder)
+      ? cfg.castOrder.map(function (v) { return Number(v) || null; }).filter(function (v) { return v && C.skillById(v); })
+      : [];
     S.opt = null;
     renderSlots();
     renderSin();
+    renderOrder();
     renderEnhance();
     renderTune();
     recompute();
@@ -935,7 +1017,7 @@
       '  </div>',
       '  <div class="ds-field ds-field--row">',
       '    <label class="ds-check"><input type="checkbox" data-opt="chargeFull"' + (S.chargeFull ? ' checked' : '') + '><span>차지 도술은 최대 차지로</span></label>',
-      '    <label class="ds-check"><input type="checkbox" data-opt="ultFirst"' + (S.ultFirst ? ' checked' : '') + '><span>궁극기는 쿨마다 먼저</span></label>',
+      '    <span class="ds-tune__hint">궁극기(R) 자리는 ④ 사용 순서 설정에서 정합니다</span>',
       '  </div>',
       '  <div class="ds-field">',
       '    <span class="ds-field__label">시전시간 기준 <em>시전시간은 실제 게임 값(도깨비지지)입니다</em></span>',
@@ -1097,12 +1179,14 @@
     if (!o || !o.ok) {
       return '<div class="ds-opt">' +
         optButtons(null) +
-        '<p class="ds-opt__note">8칸의 두 칸 맞바꾸기·한 칸 옮기기를 <b>모두 계산</b>해 <b>순서만</b> 다시 짭니다(8칸 구성은 그대로). ' +
+        '<p class="ds-opt__note">사용 순서의 두 칸 맞바꾸기·한 칸 옮기기를 <b>모두 계산</b>합니다. ' +
+        '<b>장착 8칸은 절대 건드리지 않으므로</b> 기본 1~5칸으로 정해진 신식·궁극기는 그대로입니다. ' +
         '⏱️는 <b>평타 빈 시간(초)</b>이 가장 적은 순서(동률이면 DPS 높은 쪽), 🔥는 <b>초당 피해(DPS)</b>가 가장 높은 순서(동률이면 평타 빈 시간 적은 쪽)를 찾습니다.</p>' +
         '</div>';
     }
     var mode = o.mode === 'idle' ? OPT_MODES[0] : OPT_MODES[1];
-    var names = o.slots.map(function (id, i) {
+    var orderIds = (Array.isArray(o.castOrder) && o.castOrder.length) ? o.castOrder : (o.slots || []);
+    var names = orderIds.map(function (id, i) {
       var sk = id ? C.skillById(id) : null;
       return sk ? (i + 1) + '.' + sk.n : '';
     }).filter(Boolean).join(' › ');
@@ -1228,6 +1312,7 @@
     closePicker();
     renderSlots();
     renderSin();
+    renderOrder();
     renderEnhance();
     renderTune();
     recompute();
@@ -1243,6 +1328,7 @@
     S.opt = null;
     renderSlots();
     renderSin();
+    renderOrder();
     renderEnhance();
     renderTune();
     recompute();
@@ -1263,8 +1349,9 @@
         var p = C.presets().filter(function (x) { return x.id === preset.getAttribute('data-preset'); })[0];
         if (p) {
           S.slots = p.slots.slice(0, 8);
+          S.castOrder = [];
           S.opt = null;
-          renderPresets(); renderSlots(); renderSin(); renderEnhance(); renderTune(); recompute();
+          renderPresets(); renderSlots(); renderSin(); renderOrder(); renderEnhance(); renderTune(); recompute();
         }
         return;
       }
@@ -1273,8 +1360,9 @@
         var a = act.getAttribute('data-act');
         if (a === 'clear') {
           S.slots = [null, null, null, null, null, null, null, null];
+          S.castOrder = [];
           S.opt = null;
-          renderPresets(); renderSlots(); renderSin(); renderEnhance(); renderTune(); recompute();
+          renderPresets(); renderSlots(); renderSin(); renderOrder(); renderEnhance(); renderTune(); recompute();
         } else if (a === 'picker-close') {
           closePicker();
         } else if (a === 'reset-ov') {
@@ -1298,10 +1386,11 @@
         } else if (a === 'share-save') {
           saveShare();
         } else if (a === 'apply-opt') {
-          if (S.opt && S.opt.ok) {
-            S.slots = S.opt.slots.slice(0, 8);
+          if (S.opt && S.opt.ok && Array.isArray(S.opt.castOrder)) {
+            /* 장착 8칸은 그대로 — 사용 순서만 바꿉니다 */
+            S.castOrder = S.opt.castOrder.slice();
             S.opt = null;
-            renderSlots(); renderSin(); renderEnhance(); renderTune(); recompute();
+            renderOrder(); recompute();
           }
         }
         return;
@@ -1309,6 +1398,11 @@
       var mv = t.closest('[data-mv]');
       if (mv) {
         moveSlot(Number(mv.getAttribute('data-slot')), mv.getAttribute('data-mv') === 'up' ? -1 : 1);
+        return;
+      }
+      var omv = t.closest('[data-omv]');
+      if (omv) {
+        moveOrder(omv.getAttribute('data-ord'), omv.getAttribute('data-omv') === 'up' ? -1 : 1);
         return;
       }
       var enhSet = t.closest('[data-enh-set]');
@@ -1509,6 +1603,7 @@
     renderPresets();
     renderSlots();
     renderSin();
+    renderOrder();
     renderEnhance();
     renderTune();
     renderResult();

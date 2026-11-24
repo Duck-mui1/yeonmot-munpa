@@ -165,6 +165,62 @@
     return out;
   }
 
+  /* ---------------------------------------------------------
+     장착(slots)과 사용 순서(castOrder) 분리 — 2026-11-24
+     · slots     : 게임의 도술 8칸. **기본 1~5칸 구성만이 신식·궁극기(R)** 를 결정합니다.
+     · castOrder : 전투에서 도술이 나가는 우선순위. 게임의 「사용 순서 설정」 화면처럼
+                   장착 칸과 따로 정하고, 활성화된 궁극기(R)도 이 목록에 들어갑니다.
+     --------------------------------------------------------- */
+  function equippedIds(slots) {
+    var out = [];
+    var seen = {};
+    for (var i = 0; i < 8; i++) {
+      var id = slots[i];
+      if (!id) { continue; }
+      var sk = SKILL_BY_ID[id];
+      if (!sk || seen[id]) { continue; }
+      seen[id] = true;
+      out.push(id);
+    }
+    return out;
+  }
+
+  /* 지금 켜져 있는 신식 궁극기 id — 신식이 없거나 useUlt=false면 null */
+  function activeUltId(slots, useUlt) {
+    if (useUlt === false) { return null; }
+    var sin = sinStyles(slots);
+    if (!sin.length) { return null; }
+    var ult = sin[0].style.ult;
+    return (ult && SKILL_BY_ID[ult]) ? ult : null;
+  }
+
+  /* 장착 칸에 맞춰 사용 순서를 정리합니다.
+     · 빠진 도술은 목록에서 지우고
+     · 새로 장착한 도술은 **끝에 덧붙이며** (이미 정해 둔 다른 도술 순서는 그대로)
+     · 궁극기는 처음 열릴 때 앞에 들어갑니다(예전 기본 동작). 이후엔 원하는 자리로 옮기면 됩니다. */
+  function syncCastOrder(slots, castOrder, opts) {
+    var o = opts || {};
+    var ultId = activeUltId(slots, o.useUlt);
+    var all = equippedIds(slots);
+    if (ultId != null && all.indexOf(ultId) < 0) { all.push(ultId); }
+    var prev = Array.isArray(castOrder) ? castOrder : [];
+    var out = [];
+    var seen = {};
+    prev.forEach(function (v) {
+      var id = Number(v);
+      if (!id || seen[id] || all.indexOf(id) < 0) { return; }
+      seen[id] = true;
+      out.push(id);
+    });
+    all.forEach(function (id) {
+      if (seen[id]) { return; }
+      seen[id] = true;
+      if (id === ultId && o.ultFirst !== false) { out.unshift(id); }
+      else { out.push(id); }
+    });
+    return out;
+  }
+
   /* 슬롯(도술 id 배열 8칸) → 시뮬레이션용 항목 */
   function buildEntries(config) {
     var entries = [];
@@ -175,6 +231,16 @@
     var sin = sinStyles(config.slots);
     var sinKeys = {};
     sin.forEach(function (s) { sinKeys[s.key] = true; });
+
+    /* 사용 순서 — 장착 칸과 별개로 정해진 시전 우선순위 */
+    var orderIds = syncCastOrder(config.slots, config.castOrder, {
+      useUlt: config.useUlt,
+      ultFirst: config.ultFirst
+    });
+    function ordOf(id) {
+      var k = orderIds.indexOf(id);
+      return k < 0 ? 999 : k;
+    }
 
     /* 신식 토글 → 효과 모으기 */
     var fx = { ultCd: 0, cd: 0, cdPct: 0, dmg: 0, ultDmg: 0, resetEvery: 0, ultResetEvery: 0, halfCdEvery: 0 };
@@ -266,6 +332,7 @@
 
       return {
         id: sk.id, slot: slot, name: sk.n, style: sk.st, kind: sk.k,
+        ord: ordOf(sk.id),
         cdBase: cdBase, cd: cd,
         cast: ct * scale, castBase: ct, est: est,
         coeff: (coeffBase + sinBonus) * allMul,
@@ -292,7 +359,7 @@
       if (e) { entries.push(e); }
     }
 
-    /* 신식 활성 → 궁극기 자동 장착(맨 뒤 순번) */
+    /* 신식 활성 → 궁극기 자동 장착. 자리는 「사용 순서 설정」(castOrder)을 그대로 따릅니다 */
     var ultEntry = null;
     if (sin.length && config.useUlt !== false) {
       var ultId = sin[0].style.ult;
@@ -300,13 +367,12 @@
       if (ultEntry) {
         ultEntry.kind = 'ult';
         ultEntry.cd = Math.max(1, ultEntry.cd - fx.ultCd);
-        ultEntry.ultFirst = config.ultFirst !== false;
       }
     }
 
     return {
       entries: entries, ult: ultEntry, fx: fx, toggles: activeToggles, sin: sin,
-      dmgMul: dmgMul, ultDmgMul: ultDmgMul
+      dmgMul: dmgMul, ultDmgMul: ultDmgMul, order: orderIds
     };
   }
 
@@ -326,6 +392,7 @@
       autoCoeff: config.autoCoeff >= 0 ? config.autoCoeff : 100,
       ultFirst: config.ultFirst !== false,
       useUlt: config.useUlt !== false,
+      castOrder: Array.isArray(config.castOrder) ? config.castOrder : null,
       toggles: config.toggles || {},
       override: config.override || {},
       enhance: config.enhance || {},
@@ -349,7 +416,8 @@
     var n = list.length;
     var i;
     for (i = 0; i < n; i++) {
-      list[i].order = i;
+      /* order = 사용 순서 설정(castOrder)에서의 자리. 궁극기도 같은 목록을 따릅니다 */
+      list[i].order = (list[i].ord != null ? list[i].ord : i);
       list[i].readyAt = 0;
       list[i].casts = 0;
       list[i].done = 0;
@@ -360,7 +428,6 @@
       list[i].chainDamage = 0;
     }
     var ult = built.ult;
-    if (ult) { ult.order = cfg.ultFirst ? -1 : 900; }
 
     var fx = built.fx;
     var castsSinceReset = 0;
@@ -547,6 +614,7 @@
       dps: round(duration > 0 ? totalCoeff / duration : 0, 1),
       autoShare: totalCoeff > 0 ? round((autoDamage / totalCoeff) * 100, 1) : 0,
       rows: rows,
+      castOrder: built.order.slice(),
       segments: segments,
       sin: built.sin.map(function (s) {
         return { key: s.key, name: s.style.name, count: s.count, color: s.style.color, ult: skillById(s.style.ult) };
@@ -559,10 +627,12 @@
   }
 
   /* ---------------------------------------------------------
-     순서 추천 — 두 칸 맞바꾸기 / 한 칸 옮기기를 모두 해 보고
-       · mode 'idle' : 평타 빈 시간(초)이 가장 적은 순서 (동률이면 DPS 높은 쪽)
-       · mode 'dps'  : 초당 피해(DPS)가 가장 높은 순서 (동률이면 평타 빈 시간 적은 쪽)
-     좋아지지 않을 때까지 여러 바퀴(라운드) 돌립니다. 8칸 구성은 그대로 두고 순서만 바꿉니다.
+     순서 추천 — **사용 순서(castOrder)만** 고칩니다
+       · 장착 8칸(slots)은 절대 건드리지 않으므로 기본 1~5칸의 신식 조건은 그대로!
+       · 두 칸 맞바꾸기 / 한 칸 옮기기를 모두 해 보고
+         mode 'idle' : 평타 빈 시간(초)이 가장 적은 순서 (동률이면 DPS 높은 쪽)
+         mode 'dps'  : 초당 피해(DPS)가 가장 높은 순서 (동률이면 평타 빈 시간 적은 쪽)
+     좋아지지 않을 때까지 여러 바퀴(라운드) 돌립니다. 궁극기(R) 자리까지 같이 찾습니다.
      --------------------------------------------------------- */
   function betterThan(mode, cand, best) {
     if (mode === 'idle') {
@@ -579,24 +649,33 @@
     mode = mode === 'idle' ? 'idle' : 'dps';
     var base = simulate(config);
     if (!base.ok) { return base; }
+    var start = (base.castOrder || []).slice();
+    var fixedSlots = (config.slots || []).slice(0, 8);
+    if (start.length < 2) {
+      return {
+        ok: true, mode: mode, before: base, after: base,
+        slots: fixedSlots, castOrder: start, changed: false,
+        gainDps: 0, gainIdle: 0
+      };
+    }
     var maxRound = rounds || 4;
-    var best = config.slots.slice(0, 8);
+    var best = start.slice();
     var bestRes = base;
     var pass;
     for (pass = 0; pass < maxRound; pass++) {
       var improved = false;
       var cand = [];
       var a, b;
-      for (a = 0; a < 8; a++) {
-        for (b = a + 1; b < 8; b++) {
-          if (!best[a] && !best[b]) { continue; }
+      var nOrd = best.length;
+      for (a = 0; a < nOrd; a++) {
+        for (b = a + 1; b < nOrd; b++) {
           var sw = best.slice();
           var tmp = sw[a]; sw[a] = sw[b]; sw[b] = tmp;
           cand.push(sw);
         }
       }
-      for (a = 0; a < 8; a++) {
-        for (b = 0; b < 8; b++) {
+      for (a = 0; a < nOrd; a++) {
+        for (b = 0; b < nOrd; b++) {
           if (a === b) { continue; }
           var mv = best.slice();
           var v = mv[a];
@@ -607,7 +686,8 @@
       }
       for (var i = 0; i < cand.length; i++) {
         var cfg = clone(config);
-        cfg.slots = cand[i];
+        cfg.slots = fixedSlots;
+        cfg.castOrder = cand[i];
         var res = simulate(cfg);
         if (!res.ok) { continue; }
         if (betterThan(mode, res, bestRes)) {
@@ -623,8 +703,9 @@
       mode: mode,
       before: base,
       after: bestRes,
-      slots: best,
-      changed: best.join(',') !== config.slots.slice(0, 8).join(','),
+      slots: fixedSlots,
+      castOrder: best,
+      changed: best.join(',') !== start.join(','),
       gainDps: round(bestRes.dps - base.dps, 1),
       gainIdle: round(base.idle - bestRes.idle, 2)
     };
@@ -652,6 +733,9 @@
     presets: presets,
     styleCounts: styleCounts,
     sinStyles: sinStyles,
+    equippedIds: equippedIds,
+    activeUltId: activeUltId,
+    syncCastOrder: syncCastOrder,
     kindLabel: function (k) { return KIND_LABEL[k] || k; },
     simulate: simulate,
     optimize: optimize
