@@ -20,6 +20,8 @@
 | `js/dosul-data.js` | **⚔️ 도술 계산기 데이터** — 12계열 · 도술 106개(일반 94 + 궁극기 12)의 쿨타임 · 시전시간 · 계수 · 신식 효과 (도깨비지지 kkaebi.gg 공개값, 문파청·도깨비허브·덱깨비와 교차 확인) |
 | `js/dosul-calc.js` | **⚔️ 계산 엔진** — 이벤트 단위 시뮬레이션(평타 빈 시간 · 도술 가동률 · DPS · 도술별 기여 · 타임라인)과 순서 추천 |
 | `js/dosul-ui.js` | **⚔️ 계산기 화면** — 8칸 · 신식 자동 활성 · 프리셋 · 내 스펙 조정 · 📌 문파 공유 조합 |
+| `js/dosul-icons.js` | **⚔️ 도술 아이콘 그리기** — 아이콘 목록과 `<img>` 마크업 (`assets/dosul/<도술 id>.webp`), 없는 id 는 계열 색 글자 타일로 대신 |
+| `assets/dosul/*.webp` | 도술 106개 **게임 아이콘** — 도깨비지지(kkaebi.gg) 도술 도감의 100×100 webp 를 내려받아 로컬에 둠(총 664KB, 궁극기 12개 포함) |
 | `js/vendor/supabase.js` | 실시간 구독용 `supabase-js` 2.58.0 (UMD, MIT). 저장소에 함께 두어 오프라인에서도 열립니다 |
 | `supabase/schema.sql` | Supabase에 한 번 실행하는 설치본 (테이블 · RPC · 권한 · Realtime) |
 | `supabase/migration-v2.sql` | 이미 설치해 쓰는 DB용 **v2 마이그레이션** — 프로필 그림 + 공략 (여러 번 실행해도 안전) |
@@ -275,3 +277,5 @@ python3 -m http.server 8000
 
 - `js/vendor/supabase.js` 는 [supabase-js](https://github.com/supabase/supabase-js) 2.58.0 UMD 빌드이며 MIT 라이선스입니다.
 - 나머지 코드와 `js/art.js` 의 그림은 이 프로젝트를 위해 작성했습니다.
+- 단, **경단 그림**(`assets/gyeongdan/`)과 **도술 아이콘**(`assets/dosul/`)은 「도깨비의 세계」 게임 이미지입니다.
+  계산기·놀이판 하단에 안내를 적어 두었고, 권리자 요청 시 즉시 삭제됩니다.

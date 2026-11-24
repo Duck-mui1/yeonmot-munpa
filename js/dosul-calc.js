@@ -256,7 +256,7 @@
       castSeq += 1;
 
       segments.push({
-        t0: t, t1: t + castLen, kind: 'cast', name: cur.name,
+        t0: t, t1: t + castLen, kind: 'cast', name: cur.name, id: cur.id,
         style: cur.style, color: styleColor(cur.style),
         isUlt: cur.kind === 'ult', slot: cur.id === (ult ? ult.id : -1) ? 'R' : (cur.slot + 1)
       });

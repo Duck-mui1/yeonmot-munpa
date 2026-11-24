@@ -21,6 +21,13 @@
   var SLOT_NAMES = ['1번', '2번', '3번', '4번', '5번', '6번', '7번', '8번'];
   var DURATIONS = [30, 60, 120];
 
+  /* 도술 아이콘 — js/dosul-icons.js 가 없으면 빈 문자열(아이콘 없이 동작) */
+  var ICONS = global.YM_DOSUL_ICONS || null;
+  function ico(id, cls, size, lazy) {
+    if (!ICONS || id == null) { return ''; }
+    return ICONS.html(id, { cls: cls || '', size: size || 40, lazy: !!lazy });
+  }
+
   function $(sel) { return document.querySelector(sel); }
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -162,6 +169,9 @@
 
       '<section class="ds-result" id="ds-result"></section>',
 
+      '<p class="ds-credit">' + esc((global.YM_DOSUL_ICONS && global.YM_DOSUL_ICONS.credit) ||
+        '도술 아이콘의 저작권은 「도깨비의 세계」에 있으며, 권리자 요청 시 즉시 삭제될 수 있습니다.') + '</p>',
+
       '<div class="ds-share" id="ds-share" hidden>',
       '  <div class="ds-share__panel" role="dialog" aria-modal="true" aria-labelledby="ds-share-title">',
       '    <p class="ds-share__head" id="ds-share-title">💾 이 조합 문파에 공유하기</p>',
@@ -245,9 +255,14 @@
       }
       return '<div class="' + cls + '" data-slot="' + i + '" style="--ds-style:' + C.styleColor(sk.st) + '">' +
         '<button type="button" class="ds-slot__hit" data-slot="' + i + '">' +
+        '<span class="ds-slot__iconwrap">' +
+        ico(sk.id, 'ds-ico--slot', 38) +
         '<span class="ds-slot__no">' + (i + 1) + '</span>' +
+        '</span>' +
+        '<span class="ds-slot__body">' +
         '<span class="ds-slot__name">' + esc(sk.n) + '</span>' +
         '<span class="ds-slot__meta">' + esc(C.styleName(sk.st)) + ' · ' + num(sk.cd) + '초 · ' + num(sk.ct, 2) + '초</span>' +
+        '</span>' +
         '</button>' +
         '<span class="ds-slot__move">' +
         '<button type="button" data-mv="up" data-slot="' + i + '" aria-label="' + (i + 1) + '번 칸 앞으로">▲</button>' +
@@ -284,8 +299,10 @@
           '<span>' + esc(t.label) + '</span></label>';
       }).join('');
       return '<div class="ds-sinon" style="--ds-style:' + st.color + '">' +
-        '<p class="ds-sinon__head"><b>' + esc(st.name) + ' 신식</b>' +
-        '<span>궁극기 <b>' + esc(ult ? ult.n : '') + '</b> 자동 장착 · ' + num(ult ? ult.cd : 0) + '초</span></p>' +
+        '<p class="ds-sinon__head"><span class="ds-sinon__name">' +
+        ico(ult ? ult.id : st.ult, 'ds-ico--ult', 28) +
+        '<b class="ds-sinon__title">' + esc(st.name) + ' 신식</b></span>' +
+        '<span>궁극기 <b class="ds-sinon__ult">' + esc(ult ? ult.n : '') + '</b> 자동 장착 · ' + num(ult ? ult.cd : 0) + '초</span></p>' +
         '<p class="ds-sinon__mech">' + esc(st.mech.join(' ')) + '</p>' +
         '<div class="ds-tgls">' + toggles + '</div>' +
         '</div>';
@@ -587,7 +604,7 @@
       var ctv = o.ct > 0 ? o.ct : sk.ct;
       var cv = o.c > 0 ? o.c : sk.c;
       return '<div class="ds-tune__row" data-tune-row="' + id + '">' +
-        '<span class="ds-tune__name"><i style="background:' + C.styleColor(sk.st) + '"></i>' + (i + 1) + '. ' + esc(sk.n) + '</span>' +
+        '<span class="ds-tune__name">' + ico(sk.id, 'ds-ico--tune', 16) + (i + 1) + '. ' + esc(sk.n) + '</span>' +
         '<label>쿨<input type="number" min="0.5" max="180" step="0.5" data-ov="cd" data-id="' + id + '" value="' + num(cdv, 1) + '"></label>' +
         '<label>시전<input type="number" min="0" max="8" step="0.01" data-ov="ct" data-id="' + id + '" value="' + num(ctv, 2) + '"></label>' +
         '<label>계수<input type="number" min="0" max="4000" step="1" data-ov="c" data-id="' + id + '" value="' + num(cv, 0) + '"></label>' +
@@ -670,7 +687,7 @@
     var rows = r.rows.map(function (x) {
       var isUlt = x.kind === 'ult';
       return '<div class="ds-tbl__row' + (isUlt ? ' is-ult' : '') + '">' +
-        '<span class="c-name"><i style="background:' + x.color + '"></i>' +
+        '<span class="c-name">' + ico(x.id, 'ds-ico--row', 20) +
         '<b>' + esc(x.name) + '</b>' +
         '<small>' + (isUlt ? 'R' : x.slot + '번') + ' · ' + esc(x.styleName) + ' ' + num(x.cd) + '초 · ' +
         '시전 ' + num(x.occupied, 1) + '초' + (x.est ? ' · 추정' : '') + '</small></span>' +
@@ -697,7 +714,7 @@
       var t0 = Math.min(s.t0, span);
       var t1 = Math.min(s.t1, span);
       if (t1 - t0 <= 0.0001) { return; }
-      segs.push({ t0: t0, t1: t1, kind: s.kind, name: s.name, color: s.color, isUlt: s.isUlt });
+      segs.push({ t0: t0, t1: t1, kind: s.kind, name: s.name, id: s.id, color: s.color, isUlt: s.isUlt });
     });
     var legend = [];
     var seen = {};
@@ -706,7 +723,7 @@
       var key = s.name;
       if (seen[key]) { return; }
       seen[key] = true;
-      legend.push({ name: s.name, color: s.color });
+      legend.push({ id: s.id, name: s.name, color: s.color });
     });
     legend = legend.slice(0, 6);
 
@@ -730,7 +747,7 @@
     }
 
     var legendHtml = legend.map(function (l) {
-      return '<span class="ds-tl__key"><i style="background:' + l.color + '"></i>' + esc(l.name) + '</span>';
+      return '<span class="ds-tl__key">' + ico(l.id, 'ds-ico--tl', 14) + esc(l.name) + '</span>';
     }).join('') + '<span class="ds-tl__key"><i class="is-auto"></i>평타</span>';
 
     return '<div class="ds-tl">' +
@@ -850,8 +867,11 @@
     html += list.map(function (sk) {
       var on = used[sk.id];
       return '<button type="button" class="ds-pk' + (on ? ' is-used' : '') + (sk.k === 'ult' ? ' is-ult' : '') + '" data-pick="' + sk.id + '" style="--ds-style:' + C.styleColor(sk.st) + '">' +
+        ico(sk.id, 'ds-ico--pk', 36, true) +
+        '<span class="ds-pk__body">' +
         '<span class="ds-pk__name">' + esc(sk.n) + '<em>' + esc(C.kindLabel(sk.k)) + '</em></span>' +
         '<span class="ds-pk__meta">' + esc(C.styleName(sk.st)) + ' · ' + num(sk.cd) + '초 · 시전 ' + num(sk.ct, 2) + '초 · ' + num(sk.c, 0) + '%</span>' +
+        '</span>' +
         '</button>';
     }).join('');
     el.pickerList.innerHTML = html;
