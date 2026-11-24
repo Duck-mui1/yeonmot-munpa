@@ -3334,6 +3334,7 @@ body.is-locked { overflow: hidden; }
   line-height: 1.35;
   color: var(--muted);
   text-align: right;
+  word-break: keep-all;
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
