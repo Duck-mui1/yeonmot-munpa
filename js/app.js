@@ -260,6 +260,12 @@
     if (isNaN(d.getTime())) { return ''; }
     return d.getFullYear() + '.' + pad(d.getMonth() + 1) + '.' + pad(d.getDate());
   }
+  function joinedLabel(value) {
+    // null · undefined 는 new Date(null)=1970-01-01 로 읽히므로 먼저 걸러 냅니다.
+    if (!value) { return ''; }
+    var text = dateLabel(value);
+    return text ? text + ' 가입' : '';
+  }
   function seenLabel(value) {
     if (!value) { return '오랫동안 조용했어요'; }
     var d = new Date(value);
@@ -491,7 +497,8 @@
         online: m.status === 'on',
         lastLabel: m.last,
         statusLabel: m.status === 'on' ? '접속 중' : (m.status === 'away' ? '자리 비움' : '오프라인'),
-        joined_at: null,
+        // 높은 등급일수록 오래전에 들어온 것으로 예시 날짜를 만듭니다.
+        joined_at: addDays(-(410 - i * 17)).toISOString(),
         me: false
       };
     });
@@ -2644,6 +2651,7 @@
     rows.forEach(function (m) {
       var statusLabel = m.statusLabel || (m.online ? '접속 중' : '자리 비움');
       var metaRight = (m.online && m.status === 'active') ? '' : m.lastLabel;
+      var joined = joinedLabel(m.joined_at);
       var statusClass = m.online ? 'on' : 'off';
       var tools = '';
 
@@ -2670,7 +2678,9 @@
         (m.me ? '<span class="member__me-tag">나</span>' : '') +
         '<span class="role ' + (m.roleClass || '') + '">' + esc(m.roleLabel || '문파원') + '</span></div>' +
         '<div class="member__meta"><span>' + esc(statusLabel) + '</span>' +
-        (metaRight ? '<span class="sep">·</span><span>' + esc(metaRight) + '</span>' : '') + '</div>' +
+        (metaRight ? '<span class="sep">·</span><span>' + esc(metaRight) + '</span>' : '') +
+        (joined ? '<span class="sep">·</span><span class="member__joined">' + esc(joined) + '</span>' : '') +
+        '</div>' +
         '</div>' +
         '<div class="member__level">' + (m.level ? 'Lv.' + m.level : 'Lv.–') + '<span>연못 등급</span></div>' +
         tools +
