@@ -142,6 +142,8 @@
       trans: {},
       tr6: {},
       chain: {},
+      /* 디버프 — 파티가 걸어 주는 것으로 보는 보조 토글 */
+      debuffOn: {},
       /* 나중에 더한 기본 ON 신식 토글을 기존 저장분에도 한 번만 켜기 위한 표시 */
       mig: {},
       picker: { slot: -1, style: '', q: '' }
@@ -176,6 +178,7 @@
       base.trans = (base.trans && typeof base.trans === 'object') ? base.trans : {};
       base.tr6 = (base.tr6 && typeof base.tr6 === 'object') ? base.tr6 : {};
       base.chain = (base.chain && typeof base.chain === 'object') ? base.chain : {};
+      base.debuffOn = (base.debuffOn && typeof base.debuffOn === 'object') ? base.debuffOn : {};
       /* 무기·장비 도술 피해 — 예전 저장분에는 없으므로 없으면 0 / {} 로 읽습니다 */
       base.allDosulDmgPct = clampPct(base.allDosulDmgPct);
       base.styleDmgPct = cleanStyleDmg(base.styleDmgPct);
@@ -195,6 +198,7 @@
         autoInterval: S.autoInterval, autoCoeff: S.autoCoeff, gap: S.gap,
         toggles: S.toggles, override: S.override,
         enhance: S.enhance, trans: S.trans, tr6: S.tr6, chain: S.chain, mig: S.mig,
+        debuffOn: S.debuffOn,
         allDosulDmgPct: S.allDosulDmgPct, styleDmgPct: S.styleDmgPct
       };
       global.localStorage.setItem(SAVE_KEY, JSON.stringify(out));
@@ -248,7 +252,8 @@
       tr6: S.tr6,
       chain: S.chain,
       allDosulDmgPct: S.allDosulDmgPct,
-      styleDmgPct: S.styleDmgPct
+      styleDmgPct: S.styleDmgPct,
+      debuffOn: S.debuffOn
     };
   }
 
@@ -812,7 +817,8 @@
       tr6: S.tr6,
       chain: S.chain,
       allDosulDmgPct: S.allDosulDmgPct,
-      styleDmgPct: S.styleDmgPct
+      styleDmgPct: S.styleDmgPct,
+      debuffOn: S.debuffOn
     };
   }
 
@@ -1025,6 +1031,7 @@
     S.trans = cfg.trans && typeof cfg.trans === 'object' ? cfg.trans : {};
     S.tr6 = cfg.tr6 && typeof cfg.tr6 === 'object' ? cfg.tr6 : {};
     S.chain = cfg.chain && typeof cfg.chain === 'object' ? cfg.chain : {};
+    S.debuffOn = cfg.debuffOn && typeof cfg.debuffOn === 'object' ? cfg.debuffOn : {};
     /* 무기·장비 — 공유 조합에 없던(예전) 조합은 0 / {} 으로 읽습니다 */
     S.allDosulDmgPct = clampPct(cfg.allDosulDmgPct);
     S.styleDmgPct = cleanStyleDmg(cfg.styleDmgPct);
@@ -1141,6 +1148,24 @@
         '</div>';
     }).join('');
 
+    /* 디버프 — 지금 덱이 조건부 피해를 받는 디버프와, 파티가 걸어 주는 것으로 보는 토글 */
+    var dbDefs = C.data.debuffs || {};
+    var dbUsed = {};
+    S.slots.forEach(function (id) {
+      var sk = id ? C.skillById(id) : null;
+      if (sk && sk.db) {
+        dbUsed[sk.db.k] = true;
+        (sk.db.types || []).forEach(function (tk) { dbUsed[tk] = true; });
+      }
+    });
+    var dbChips = Object.keys(dbDefs).map(function (k) {
+      var d = dbDefs[k];
+      var on = !!(S.debuffOn && S.debuffOn[k]);
+      return '<label class="ds-tgl ds-tgl--db' + (dbUsed[k] ? ' is-used' : '') + '" style="--ds-db:' + esc(d.color || '#8b9aa5') + '">' +
+        '<input type="checkbox" data-debuff="' + esc(k) + '"' + (on ? ' checked' : '') + '>' +
+        '<span>' + esc(d.name) + (dbUsed[k] ? ' <em>조건부 있음</em>' : '') + '</span></label>';
+    }).join('');
+
     el.tuneBody.innerHTML = [
       '<div class="ds-tune__grid">',
       '  <div class="ds-field">',
@@ -1165,6 +1190,13 @@
       '    <div class="ds-sdmg__head">계열별 도술 피해 <em>무기 추가 옵션 · 최대 2~3개 계열</em></div>',
       '    <div class="ds-sdmg__grid">' + styleCells + '</div>',
       '    <p class="ds-sdmg__note">③ 도술 장착 8칸에 넣은 계열은 <b>테두리</b>로 표시합니다. 전체 +%와 계열 +%를 <b>더해서</b> 그 계열 도술(일반 · 연계기 · 궁극기) 계수에 한 번 곱하고, <b>평타에는 붙지 않습니다</b>.</p>',
+      '  </div>',
+      '  <div class="ds-field ds-debuff">',
+      '    <span class="ds-field__label">디버프 조건 <em>파티원·다른 요소가 걸어 주는 것으로 보고 켜 둡니다</em></span>',
+      '    <div class="ds-tgls ds-tgls--db">' + dbChips + '</div>',
+      '    <p class="ds-debuff__note">③ 장착한 도술이 조건부 추가 피해를 받는 디버프는 이름 옆에 <b>조건부 있음</b>으로 표시합니다. ' +
+        '깨비지지 연결 정보에는 이 디버프들을 <b>거는 도술이 없어</b> 자동 감지가 비어 있으므로, 레이드처럼 파티가 걸어 주는 상황이면 여기서 켜 두세요. ' +
+        '해제 시간이 공개된 <b>빙결 3.5초 · 속박 2초</b>는 자동으로도 동작합니다.</p>',
       '  </div>',
       '  <div class="ds-field ds-field--row">',
       '    <label>평타 1회 시간<input type="number" min="0.3" max="3" step="0.05" value="' + num(S.autoInterval, 2) + '" data-auto="interval"></label>',
@@ -1249,7 +1281,7 @@
       '<b>신식</b>은 계열마다 <b>영력·중첩(게이지)</b>이 실제로 차는 만큼만 붙습니다 — 적중·시전·처치로 쌓이고, 단계·중첩·지속시간·최대치 효과를 그대로 계산합니다. ' +
       (r.halfCd ? '<b>기만 신식</b>(눈물 2개)은 궁극기를 뺀 도술 <b>' + r.halfCd.every + '회마다</b> 쿨이 돌고 있는 도술 하나의 <b>남은 쿨을 50%</b> 줄이며, 대상이 <b>무작위 1개</b>라 실제 편차가 있습니다 — 계산기는 쿨 중인 k개 도술의 남은 쿨을 (1 - 0.5/k)배로 함께 줄인 <b>평균 기댓값</b>으로 계산합니다. ' : '') +
       '<b>[주술 신식개방]</b>처럼 계열 신식이 열려야 붙는 추가 피해는 신식이 켜졌을 때만 더합니다. ' +
-      (r.snipeDmgMul > 1 ? '<b>저격 신식</b>은 도술 1회 = 1처치로 보고 화살촉을 모으며, 화살촉을 쓰는 <b>저격 계열 일반 도술</b>에만 +45%(궁극기와 다른 계열 도술에는 붙지 않음)를, 궁극기는 화살촉 3개 소모로 +75%를 붙입니다. ' : '') +
+      (r.snipe ? '<b>저격 신식</b>은 전투가 시작되면 저격 영력이 <b>1초에 25</b>(4초마다 화살촉 1개 · 최대 300 = 화살촉 3개)씩 차오르고, 저격 계열 일반 도술은 화살촉 1개를 써서 그 시전 피해 <b>+45%</b>, 궁극기(정조준)는 모은 화살촉을 모두 써서 1개당 <b>+25%</b>(최대 3개 +75%)입니다. 화살촉을 쓸 때마다 <b>연속 조준</b>이 1중첩(최대 5 · 10초 갱신) 쌓여 중첩당 모든 피해(평타 포함) +5%가 붙습니다. 적 처치·귀보 영력은 넣지 않습니다. ' : '') +
       (r.dmgBuff ? '<b>파멸 요기범람</b>은 궁극기를 뺀 도술 <b>' + r.dmgBuff.every + '회마다</b>(영력 200) 그 순간부터 <b>' + r.dmgBuff.sec + '초 동안만</b> 피해 +' + num(r.dmgBuff.buff * 100, 0) + '%가 붙고, 버프가 끝나면 다시 빠집니다. ' : '') +
       (r.valour ? '<b>용맹의 기운</b>은 시전이 끝난 순간부터 <b>' + r.valour.sec + '초 동안</b> 내가 주는 피해(도술·평타)를 ×' + num(r.valour.mul, 3) + '로 올리고, 10초가 지나면 빠집니다 — 공격력 버프는 <b>헌신 0강 +15% → 50강 +20%</b>(강화 레벨에 비례)이고, 사용 순서에서 앞쪽에 두면 뒤에 쓰는 도술이 버프를 실게 됩니다. ' : '') +
       '평타 1회 시간·계수는 내 스펙 조정에서 바꿀 수 있습니다.</p>' +
@@ -1259,7 +1291,60 @@
         num(r.halfCd.avgCooling, 1) + '개</b> 중 1개를 줄였습니다' +
         (r.halfCd.wasted ? ' (쿨 중인 도술이 없어 ' + r.halfCd.wasted + '회는 그냥 사라졌습니다)' : '') + '.</p>' : '') +
       (r.valour ? valourFootHtml(r) : '') +
-      gaugeFootHtml(r);
+      snipeFootHtml(r) +
+      debuffFootHtml(r) +
+      gaugeFootHtml(r) +
+      excludedFootHtml(r);
+  }
+
+  /* 저격 신식 — 시간 기반 화살촉 게이지가 이번 전투에서 어떻게 돌았는지 */
+  function snipeFootHtml(r) {
+    var s = r.snipe;
+    if (!s) { return ''; }
+    var aim = s.aim
+      ? '연속 조준이 <b>' + num(s.aimTime, 1) + '초</b> 돌았고 평균 <b>' + num(s.aimAvg, 1) + '중첩</b>(최대 ' +
+        s.aimMaxStack + '중첩 · 피해 +' + num(s.aimMaxStack * 5, 0) + '%)이었습니다' +
+        (s.aimExpiries ? ' · 10초가 지나 끊어진 횟수 ' + s.aimExpiries + '회' : '') + '.'
+      : '연속 조준 토글이 꺼져 있어 중첩은 쌓지 않았습니다.';
+    return '<p class="ds-foot">저격 신식 — 이번 전투에서 화살촉을 쓴 저격 도술 <b>' + s.shotCasts + '회</b>(화살촉 ' +
+      s.shots + '개) · 화살촉 없이 시전 ' + s.noArrowCasts + '회, 정조준은 <b>' + s.ultCasts + '회</b> 발동해 화살촉 <b>' +
+      s.ultArrows + '개</b>를 모두 소모했습니다. ' + aim + '</p>';
+  }
+
+  /* 디버프 조건부 — 이번 전투에서 어떤 디버프가 얼마나 돌았고, 얼마를 더했는지 */
+  function debuffFootHtml(r) {
+    var all = r.debuffs || [];
+    var active = all.filter(function (d) { return d.casts > 0 || (d.on && d.used); });
+    var used = all.filter(function (d) { return d.used; });
+    var lines = [];
+    if (active.length) {
+      lines.push(active.map(function (d) {
+        var src = d.on ? '파티가 걸어줌' : '내 덱이 걸어줌';
+        return '<b>' + esc(d.name) + '</b> ' +
+          (d.casts > 0
+            ? '조건부 피해 <b>' + d.casts + '회</b> 발동 · <b>+' + num(d.extra, 0) + '%p</b>(총 계수의 ' + num(d.share, 1) + '%)'
+            : '조건부 피해가 붙은 시전 없음') +
+          ' <i>(' + src + (d.sec ? ' · ' + d.sec + '초' : '') + ')</i>';
+      }).join(' · '));
+    } else if (used.length) {
+      lines.push('지금은 걸린 디버프가 없어 조건부 피해가 붙지 않았습니다 — 이 덱이 조건부로 받는 디버프: <b>' +
+        used.map(function (d) { return esc(d.name); }).join(' · ') + '</b>. ⑥ 내 스펙 조정의 디버프 조건에서 켜 보세요.');
+    }
+    if (r.statusCond) {
+      lines.push('정조준 — 걸린 <b>출혈·화상·감전·약화</b> 1종류당 +' + num(r.statusCond.pct, 0) + '%로 <b>' +
+        r.statusCond.casts + '회</b> 시전(평균 ' + num(r.statusCond.avgTypes, 2) + '종 · 최대 ' + r.statusCond.maxTypes +
+        '종)해 <b>+' + num(r.statusCond.extra, 0) + '%p</b>(총 계수의 ' + num(r.statusCond.share, 1) + '%)를 더했습니다.');
+    }
+    if (!lines.length) { return ''; }
+    return '<p class="ds-foot">디버프 조건부 — ' + lines.join('<br>') + '</p>';
+  }
+
+  /* 계산에서 빠진 항목 — 지금 덱에 해당하는 것만 */
+  function excludedFootHtml(r) {
+    var list = r.excluded || [];
+    if (!list.length) { return ''; }
+    return '<p class="ds-foot ds-foot--excluded"><b>계산에서 제외됨</b> — ' +
+      list.map(function (x) { return esc(x.t); }).join(' · ') + '.</p>';
   }
 
   /* 용맹의 기운 — 10초 버프가 이번 전투에서 어떻게 돌았는지 */
@@ -1821,6 +1906,16 @@
           arr = arr.filter(function (x) { return x !== id; });
         }
         S.toggles[key] = arr;
+        S.opt = null;
+        recompute();
+        return;
+      }
+      /* 디버프 보조 토글 — 파티가 걸어 주는 것으로 보고 전투 내내 켜 둡니다 */
+      var db = t.getAttribute && t.getAttribute('data-debuff');
+      if (db) {
+        if (!S.debuffOn) { S.debuffOn = {}; }
+        if (t.checked) { S.debuffOn[db] = true; }
+        else { delete S.debuffOn[db]; }
         S.opt = null;
         recompute();
         return;

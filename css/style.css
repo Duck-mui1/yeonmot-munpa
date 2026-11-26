@@ -3581,6 +3581,28 @@ body.is-locked { overflow: hidden; }
 .ds-tgl input { margin: 1px 0 0; accent-color: #2e8b7a; width: 12px; height: 12px; flex: none; }
 .ds-tgl.is-info { opacity: .68; }
 
+/* 디버프 조건 — 파티가 걸어 주는 디버프를 켜 두는 칩 */
+.ds-tgls--db { flex-direction: row; flex-wrap: wrap; gap: 6px; }
+.ds-tgl--db {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(127, 209, 189, .22);
+  background: rgba(9, 32, 32, .45);
+  font-size: 10.5px;
+  white-space: nowrap;
+  line-height: 1.5;
+}
+.ds-field .ds-tgl--db { display: inline-block; flex-direction: row; gap: 0; }
+.ds-tgl--db input { display: inline-block; vertical-align: -2px; margin: 0 4px 0 0 !important; width: 13px; height: 13px; }
+.ds-field .ds-tgl--db input { display: inline-block; width: 13px; height: 13px; }
+.ds-tgl--db span { display: inline; white-space: nowrap; line-height: 1.2; }
+.ds-tgl--db.is-used { border-color: var(--ds-db, #7fd1bd); background: rgba(9, 40, 38, .7); }
+.ds-tgl--db input:checked + span { color: #eafff8; font-weight: 700; }
+.ds-tgl--db em { font-style: normal; font-size: 9px; color: var(--ds-db, #9fd8c9); }
+.ds-debuff__note { margin: 7px 0 0; font-size: 9.5px; line-height: 1.6; color: rgba(147, 183, 174, .8); }
+.ds-debuff__note b { color: rgba(200, 232, 224, .95); }
+
 /* ---- 내 스펙 조정 ---- */
 .ds-sec.ds-tune {
   margin: 0 0 18px;
@@ -4614,6 +4636,15 @@ body.is-locked { overflow: hidden; }
   color: rgba(147, 183, 174, .78);
 }
 .ds-foot b { color: rgba(200, 232, 224, .92); }
+.ds-foot--excluded {
+  margin-top: 5px;
+  padding: 7px 9px;
+  border-radius: 10px;
+  border: 1px dashed rgba(224, 184, 120, .35);
+  background: rgba(46, 32, 14, .35);
+  color: rgba(226, 200, 160, .82);
+}
+.ds-foot--excluded b { color: #f0d6a8; }
 
 /* 하단 탭 6칸 — 360px에서도 한 줄 */
 @media (max-width: 380px) {

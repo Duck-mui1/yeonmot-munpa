@@ -109,9 +109,10 @@
     var touched = Array.isArray(rawOpts);
     var onList = touched ? rawOpts : [];
     var extra = 0;
-    /* when 이 있는 옵션(하늘의 심판 「요기범람 상태일 때 +50%」)은 늘 붙지 않고,
-       그 상태가 살아 있는 시전에만 더합니다 */
+    /* when 이 있는 옵션(하늘의 심판 「요기범람 상태일 때 +50%」·묵영정정·용사비등 「속박 대상 +20%」)은
+       늘 붙지 않고, 그 상태가 살아 있는 시전에만 더합니다 */
     var extraCond = 0;
+    var conds = [];
     /* k:'aura' — 그 도술 자신이 아니라 **버프가 돌아가는 동안의 모든 시전**에
        곱해지는 옵션입니다(용맹의 기운 6돌파 +20%(10초)). 시뮬레이터가 따로 곱합니다. */
     var aura = 0;
@@ -120,7 +121,7 @@
       var calc = o.k !== 'text' && (o.d || 0) > 0;
       if (isOn && calc) {
         if (o.k === 'aura') { aura += o.d; }
-        else if (o.when) { extraCond += o.d; }
+        else if (o.when) { extraCond += o.d; conds.push({ when: o.when, d: o.d }); }
         else { extra += o.d; }
       }
       return { id: o.id || '', t: o.t || '', d: o.d || 0, n: o.n || '', k: o.k || '',
@@ -138,6 +139,7 @@
       opts: list,
       extra: extra,
       extraCond: extraCond,
+      conds: conds,
       aura: aura
     };
   }
@@ -321,6 +323,9 @@
       var enhLv = Math.round(Number(enh[sk.st]) || 0);
       var enhPct = enhanceBonus(enhLv, sk.id);
       var tr = transInfo(sk.id, transCfg[id], tr6Cfg);
+      /* 디버프 — 이 도술이 받는 조건부 추가 피해(db) · 거는 디버프(dbI) · 비공개 수치(unk) */
+      var db = sk.db || null;
+      var dbI = sk.dbI || null;
 
       /* 돌파: 쿨타임은 그 도술만 줄고(최대 기본의 90%), 계수는 단계 누적 + 6돌파 효과 */
       var cdAfterTrans = Math.max(cdBase * 0.1, cdBase - Math.min(cdBase * 0.9, tr.cdSec));
@@ -396,7 +401,11 @@
         gearPct: gearPct, gearAllPct: gearAllPct, gearStylePct: gearStylePct,
         trans: tr.step, transDmgPct: tr.dmgPct, transCd: tr.cdSec,
         tr6: tr.t6on, tr6Pct: tr.d6, tr6Text: tr.t6, hasTrans: tr.has,
-        tr6Extra: tr.extra, tr6ExtraCond: tr.extraCond || 0, tr6Opts: tr.opts, sp: isSpecial(sk.id), grade: gradeOf(sk.id)
+        tr6Extra: tr.extra, tr6ExtraCond: tr.extraCond || 0, tr6Opts: tr.opts, sp: isSpecial(sk.id), grade: gradeOf(sk.id),
+        dbKey: db ? (db.k || '') : '', dbPct: db ? (Number(db.pct) || 0) : 0,
+        dbTypes: (db && Array.isArray(db.types)) ? db.types.slice() : [],
+        dbInflict: dbI ? (dbI.k || '') : '', dbInflictSec: dbI ? (Number(dbI.sec) || 0) : 0,
+        conds: tr.conds || [], unk: sk.unk || ''
       };
     }
 
@@ -465,16 +474,40 @@
          이번 시전의 피해 배수 / 남은 쿨 감소 / 궁극기 강화가 붙습니다.
        · 정의는 dosul-data.js 의 styles[].gauge (max · perCast · perHit · perKill ·
          decayPerSec · tiers · stacks · ultReset · ultCdCut · ultBuff)
+       · 저격(snipe)은 **시간에 따라 저절로 차는** 게이지라(perSec) 아래 simulator가
+         전투 시간을 따라가며 따로 계산합니다 — 여기서는 설정만 모아 둡니다.
        --------------------------------------------------------- */
     var gauges = [];
+    var snipe = null;
+    var DB = DATA.debuffs || {};
+    var dbOnCfg = (config.debuffOn && typeof config.debuffOn === 'object') ? config.debuffOn : {};
+    var debuffs = [];
+    var dk;
+    for (dk in DB) {
+      if (!Object.prototype.hasOwnProperty.call(DB, dk)) { continue; }
+      debuffs.push({
+        k: dk, name: DB[dk].name || dk, sec: DB[dk].sec || 0,
+        color: DB[dk].color || '#8b9aa5', on: !!dbOnCfg[dk]
+      });
+    }
     DATA.styles.forEach(function (st) {
       if (!sinKeys[st.key] || !st.gauge) { return; }
       var on = config.toggles && config.toggles[st.key] ? config.toggles[st.key] : [];
+      if (st.key === 'snipe') {
+        snipe = {
+          style: st.key, name: st.name, def: st.gauge, on: on.slice(),
+          quiver: on.indexOf(st.gauge.castGate || 'quiver') >= 0,
+          aim: on.indexOf(st.gauge.aimGate || 'aim') >= 0,
+          ultdmg: on.indexOf(st.gauge.ultGate || 'ultdmg') >= 0
+        };
+        return;
+      }
       gauges.push({ style: st.key, name: st.name, def: st.gauge, on: on.slice() });
     });
 
     return {
       entries: entries, ult: ultEntry, fx: fx, toggles: activeToggles, sin: sin, gauges: gauges,
+      snipe: snipe, debuffs: debuffs,
       dmgMul: dmgMul, ultDmgMul: ultDmgMul, snipeDmgMul: snipeDmgMul, order: orderIds,
       valour: valour
     };
@@ -503,6 +536,7 @@
       trans: config.trans || {},
       tr6: config.tr6 || {},
       chain: config.chain || {},
+      debuffOn: (config.debuffOn && typeof config.debuffOn === 'object') ? config.debuffOn : {},
       allDosulDmgPct: config.allDosulDmgPct || 0,
       styleDmgPct: (config.styleDmgPct && typeof config.styleDmgPct === 'object') ? config.styleDmgPct : {}
     };
@@ -533,8 +567,87 @@
       list[i].chainUses = 0;
       list[i].chainOcc = 0;
       list[i].chainDamage = 0;
+      /* 저격 신식 — 이 도술이 화살촉을 쓴 횟수 / 연속 조준 중첩이 붙은 회차 합 */
+      list[i].snipeShots = 0;
+      list[i].aimStacks = 0;
     }
     var ult = built.ult;
+
+    /* ---------------------------------------------------------
+       저격 신식 — 시간 기반 화살촉 게이지 (2026-11-27)
+       · 전투 시작 0에서 **1초마다 영력 +25** (4초에 화살촉 1개) · 최대 300 = 화살촉 3개
+       · 궁극기 외 저격 도술 : 화살촉 1개(영력 100)를 소모 → 그 시전 피해 +45%
+       · 궁극기(정조준)      : 모은 화살촉을 **모두** 소모 → 1개당 +25% (1·2·3개 → +25/50/75%)
+       · 연속 조준 : 화살촉을 쓸 때마다 1중첩(최대 5 · 10초 · 새로 쓰면 갱신)
+                    → 중첩당 모든 PvE 피해(도술 + 평타) +5%
+       · 귀보·적 처치 영력(+100)은 단일 보스 기준이라 계산에 넣지 않습니다.
+       --------------------------------------------------------- */
+    var snipe = built.snipe || null;
+    var sDef = snipe ? snipe.def : null;
+    var sp = null;
+    if (snipe) {
+      sp = {
+        energy: 0, energyT: 0, maxEnergy: 0,
+        shots: 0, shotCasts: 0, noArrowCasts: 0,
+        ultCasts: 0, ultArrows: 0,
+        aim: 0, aimUntil: -Infinity, markT: 0,
+        aimTime: 0, stackSec: 0, maxStack: 0, expiries: 0, buffCasts: 0,
+        autoAimSec: 0, log: []
+      };
+    }
+
+    /* ---------------------------------------------------------
+       디버프(상태 이상) — 지금 덱이 거는 것(자동) + 파티가 걸어 주는 것(토글)
+       · 자동 : skills[].dbI 가 있는 도술이 적중하면 그 디버프가 지속시간 동안 살아 있습니다
+       · 수동 : config.debuffOn[k] 를 켜면 전투 내내 걸려 있는 것으로 봅니다(레이드 파티원 등)
+       · 조건부 피해 : skills[].db(k·pct) 와 6돌파 옵션의 when 이 그 디버프에 해당될 때만 붙습니다
+       --------------------------------------------------------- */
+    var dbDefs = built.debuffs || [];
+    var dbInfo = {};
+    var statusStat = { casts: 0, types: 0, maxTypes: 0, extra: 0 };
+    var hasStatusCond = false;
+    for (i = 0; i < n; i++) { if (list[i].dbKey === 'status') { hasStatusCond = true; break; } }
+    dbDefs.forEach(function (d) {
+      dbInfo[d.k] = d;
+      d.until = -Infinity;
+      d.windows = [];
+      d.casts = 0;
+      d.extra = 0;
+    });
+    function dbActive(key, now) {
+      if (!key) { return false; }
+      var d = dbInfo[key];
+      if (!d) { return false; }
+      return d.on || now < d.until - EPS;
+    }
+    function dbUptime(d) {
+      if (d.on) { return duration; }
+      if (!d.windows.length) { return 0; }
+      var ws = d.windows.slice().sort(function (a, b) { return a[0] - b[0]; });
+      var total = 0, cs = ws[0][0], ce = ws[0][1];
+      for (var wi = 1; wi < ws.length; wi++) {
+        if (ws[wi][0] <= ce + EPS) { ce = Math.max(ce, ws[wi][1]); }
+        else { total += ce - cs; cs = ws[wi][0]; ce = ws[wi][1]; }
+      }
+      var tail = Math.max(0, Math.min(duration, ce) - Math.max(0, cs));
+      return Math.min(duration, total + tail);
+    }
+    /* 6돌파 옵션의 when — 요기범람 구간 또는 그 디버프가 살아 있는 시전 */
+    function condOn(when, now) {
+      if (!when) { return false; }
+      if (when === 'overflow') { return now < buffUntil - EPS; }
+      return dbActive(when, now);
+    }
+    /* 시전이 끝난 순간 그 디버프를 겁니다(적중 시점) */
+    function dbInflictAfterCast(cur, castEnd) {
+      if (!cur.dbInflict || !dbInfo[cur.dbInflict]) { return; }
+      var d = dbInfo[cur.dbInflict];
+      var sec = cur.dbInflictSec || d.sec || 0;
+      if (sec <= 0) { return; }
+      var end = castEnd + sec;
+      if (end > d.until) { d.until = end; }
+      d.windows.push([castEnd, end]);
+    }
 
     var fx = built.fx;
     var castsSinceReset = 0;
@@ -592,6 +705,42 @@
     });
 
     function gOn(g, id) { return !!id && g.on.indexOf(id) >= 0; }
+
+    /* ---------------------------------------------------------
+       저격 신식 — 화살촉 게이지 (시간 누적 · 소모 · 연속 조준 만료)
+       --------------------------------------------------------- */
+    /* 지금 시각의 저격 영력 — 1초에 25씩 차고 최대 300에서 멈춥니다 */
+    function spEnergyAt(now) {
+      var e = sp.energy + (sDef.perSec || 0) * (now - sp.energyT);
+      return Math.max(0, Math.min(sDef.max, e));
+    }
+    /* 연속 조준 — 중첩이 바뀌기 전 시점까지 가동 시간·중첩×시간을 쌓고,
+       10초가 지나면 0중첩으로 돌립니다(마지막 화살촉 소모로부터 10초) */
+    function spAimAdvance(now) {
+      if (!sp || now <= sp.markT) { return; }
+      if (sp.aim > 0) {
+        var end = Math.min(now, sp.aimUntil);
+        if (end > sp.markT) {
+          sp.aimTime += end - sp.markT;
+          sp.stackSec += sp.aim * (end - sp.markT);
+        }
+      }
+      if (now >= sp.aimUntil) {
+        if (sp.aim > 0) { sp.expiries += 1; }
+        sp.aim = 0;
+      }
+      sp.markT = now;
+    }
+    function spAimMul() {
+      return (sp && sp.aim > 0 && snipe.aim) ? 1 + (sDef.aimPerStack || 0) * sp.aim : 1;
+    }
+    /* 화살촉을 쓴 만큼 연속 조준을 쌓고 10초 타이머를 갱신합니다 */
+    function spGainAim(now, stacks) {
+      if (!sp || !snipe.aim || stacks <= 0) { return; }
+      sp.aim = Math.min(sDef.aimMax || 5, sp.aim + stacks);
+      sp.aimUntil = now + (sDef.aimSec || 10);
+      if (sp.aim > sp.maxStack) { sp.maxStack = sp.aim; }
+    }
 
     function gDecay(g, now) {
       var d = g.def.decayPerSec;
@@ -791,6 +940,12 @@
             var vOv = Math.min(end, vUntil) - Math.max(t, vFrom);
             if (vOv > 0) { vIdle += vOv; }
           }
+          /* 저격 — 평타 구간에도 연속 조준 중첩만큼 피해가 붙습니다(10초 안에서만) */
+          if (sp && snipe.aim && sp.aim > 0) {
+            var aimEnd = Math.min(end, sp.aimUntil);
+            if (aimEnd > t) { sp.autoAimSec += sp.aim * (sDef.aimPerStack || 0) * (aimEnd - t); }
+          }
+          if (sp) { spAimAdvance(end); }
           segments.push({ t0: t, t1: end, kind: 'auto', name: '평타' });
         }
         t = end;
@@ -805,20 +960,88 @@
 
       cur.casts += 1;
       cur.occupied += castLen;
+      /* ---------------------------------------------------------
+         저격 신식 — 시전 시작 순간의 영력으로 화살촉을 소모합니다.
+         · 궁극기 외 저격 도술 : 영력 100(화살촉 1개)이 있으면 소모 → 그 시전 피해 +45%
+           (화살촉이 없으면 그냥 시전 — 피해 증가 없음)
+         · 궁극기(정조준) : 모은 화살촉을 모두 소모 → 1개당 +25%
+         · 소모한 화살촉 1개마다 연속 조준 1중첩 (그 시전부터 붙습니다)
+         --------------------------------------------------------- */
+      var snipeMul = 1;
+      if (sp) {
+        spAimAdvance(t);
+        var eNow = spEnergyAt(t);
+        sp.energy = eNow;
+        sp.energyT = t;
+        if (eNow > sp.maxEnergy) { sp.maxEnergy = eNow; }
+        var arrows = Math.min(sDef.arrowMax || 3, Math.floor(eNow / (sDef.arrowPer || 100) + EPS));
+        if (cur.kind === 'ult') {
+          sp.ultCasts += 1;
+          if (arrows > 0) {
+            sp.energy = Math.max(0, sp.energy - arrows * (sDef.arrowPer || 100));
+            sp.ultArrows += arrows;
+            if (snipe.ultdmg) { snipeMul = 1 + (sDef.ultPerArrow || 0) * arrows; }
+            spGainAim(t, arrows);
+          }
+          sp.log.push({ t: round(t, 2), kind: 'ult', arrows: arrows, mul: round(snipeMul, 3) });
+        } else if (cur.style === 'snipe') {
+          if (eNow >= (sDef.arrowPer || 100) - EPS) {
+            sp.energy = Math.max(0, sp.energy - (sDef.arrowPer || 100));
+            sp.shots += 1;
+            sp.shotCasts += 1;
+            cur.snipeShots += 1;
+            if (snipe.quiver) { snipeMul = 1 + (sDef.castDmg || 0); }
+            spGainAim(t, 1);
+            sp.log.push({ t: round(t, 2), kind: 'shot', arrows: 1, mul: round(snipeMul, 3) });
+          } else {
+            sp.noArrowCasts += 1;
+          }
+        }
+      }
+      /* 연속 조준 — 화살촉을 쓴 그 시전부터 중첩만큼 피해가 붙습니다(도술·평타 공통) */
+      var aimMul = spAimMul();
+      if (sp && aimMul > 1) { sp.buffCasts += 1; cur.aimStacks += sp.aim; }
       /* 버프형 피해 증가(파멸 요기범람) — 버프가 살아 있는 시점의 시전에만 붙습니다 */
       var buffMul = (fx.dmgBuff && t < buffUntil - EPS) ? (1 + fx.dmgBuff) : 1;
       if (buffMul !== 1) { buffHitCasts += 1; }
       /* 신식 게이지 배수(영력 단계 · 격노/척결 중첩 · 궁극기 형상·구슬·연쇄)와
          조건부 6돌파 옵션(하늘의 심판 「요기범람일 때 +50%」) */
+      /* 6돌파 조건 옵션(요기범람 +50% · 속박 +20%)과 디버프 조건부 피해 */
       var gMul = gaugeMul(t, cur);
-      var condMul = (cur.condRatio > 1 && t < buffUntil - EPS) ? cur.condRatio : 1;
+      var condMul = 1;
+      for (var ci = 0; ci < (cur.conds || []).length; ci++) {
+        if (condOn(cur.conds[ci].when, t)) { condMul *= 1 + cur.conds[ci].d / 100; }
+      }
+      var dbMul = 1;
+      var dbCount = 0;
+      if (cur.dbKey === 'status' && cur.dbTypes && cur.dbTypes.length) {
+        /* 정조준 — 걸려 있는 출혈·화상·감전·약화 1종류당 +15% (최대 4종 +60%) */
+        for (var di = 0; di < cur.dbTypes.length; di++) {
+          if (dbActive(cur.dbTypes[di], t)) { dbCount += 1; }
+        }
+        if (dbCount > 0) {
+          dbMul = 1 + (cur.dbPct / 100) * dbCount;
+          statusStat.casts += 1;
+          statusStat.types += dbCount;
+          if (dbCount > statusStat.maxTypes) { statusStat.maxTypes = dbCount; }
+        }
+      } else if (cur.dbKey && dbActive(cur.dbKey, t) && cur.dbPct > 0) {
+        dbMul = 1 + cur.dbPct / 100;
+        dbInfo[cur.dbKey].casts += 1;
+      }
       /* 용맹의 기운 — 버프가 켜져 있는 동안의 시전에만 곱합니다(시작 시점 기준) */
       var vMul = 1;
       if (valour && t >= vFrom - EPS && t < vUntil - EPS) {
         vMul = valour.mul;
         vCasts += 1;
       }
-      var castMul = buffMul * gMul * condMul * vMul;
+      var castMul = buffMul * gMul * condMul * vMul * snipeMul * aimMul;
+      if (dbMul > 1) {
+        var dbExtra = (cur.coeff + (cur.chain ? cur.chain.coeff : 0)) * castMul * (dbMul - 1);
+        if (cur.dbKey === 'status') { statusStat.extra += dbExtra; }
+        else { dbInfo[cur.dbKey].extra += dbExtra; }
+      }
+      castMul *= dbMul;
       cur.damage += cur.coeff * castMul;
       if (cur.chain) {
         cur.damage += cur.chain.coeff * castMul;
@@ -931,6 +1154,8 @@
       /* 신식 게이지 — 이 시전으로 영력/중첩이 차고, 최대치 효과가 터집니다
          (시전이 끝난 시점 기준 · 방금 쓴 도술은 남은 쿨 감소에서 제외) */
       gaugeAfterCast(cur, t, castLen, pick);
+      /* 디버프 — 이 도술이 거는 디버프는 시전이 끝난 순간(적중)부터 지속시간만큼 삽니다 */
+      dbInflictAfterCast(cur, t + castLen);
 
       t = t + castLen;
 
@@ -958,6 +1183,14 @@
     }
     if (vFrom > -Infinity) {
       vTime += Math.max(0, Math.min(duration, vUntil) - vFrom);
+    }
+    /* 저격 — 전투가 끝날 때까지의 연속 조준 시간·영력을 마저 셉니다 */
+    if (sp) {
+      spAimAdvance(duration);
+      var spEnd = spEnergyAt(duration);
+      sp.energy = spEnd;
+      sp.energyT = duration;
+      if (spEnd > sp.maxEnergy) { sp.maxEnergy = spEnd; }
     }
     var castTotal = 0;
     var skillDamage = 0;
@@ -994,7 +1227,9 @@
           chainUses: en.chainUses, chainOcc: round(en.chainOcc, 2),
           chainDamage: round(en.chainDamage, 1),
           castAll: round(en.cast + (en.chain ? en.chain.castLen : 0), 2),
-          hitsAll: en.chain ? (en.hits + en.chain.hits * en.chain.uses) : en.hits
+          hitsAll: en.chain ? (en.hits + en.chain.hits * en.chain.uses) : en.hits,
+          snipeShots: en.snipeShots || 0,
+          aimStacks: en.aimStacks || 0
         });
       }
     }
@@ -1008,7 +1243,8 @@
     /* 용맹의 기운 버프가 걸린 평타 구간만 배수를 더 받습니다 */
     var autoBuffedCount = valour ? (vIdle / cfg.autoInterval) : 0;
     var autoDamage = autoCount * cfg.autoCoeff +
-      autoBuffedCount * cfg.autoCoeff * (valour ? (valour.mul - 1) : 0);
+      autoBuffedCount * cfg.autoCoeff * (valour ? (valour.mul - 1) : 0) +
+      (sp ? (sp.autoAimSec / cfg.autoInterval) * cfg.autoCoeff : 0);
     var totalCoeff = skillDamage + autoDamage;
     var idlePct = duration > 0 ? (idle / duration) * 100 : 0;
     var uptime = 100 - idlePct;
@@ -1019,6 +1255,58 @@
       r.deals = (r.coeff + (r.chain ? r.chain.coeff : 0)) > 0;
       r.coeffAll = round(r.coeff + (r.chain ? r.chain.coeff : 0), 1);
     });
+
+    /* 신식 게이지 발동 기록 — 계열별 영력·중첩이 어떻게 돌았는지 */
+    var gaugeOut = gauges.map(function (g) {
+      return {
+        style: g.style, name: g.name, max: g.def.max,
+        triggers: g.triggers, cuts: g.cuts, buffCasts: g.buffCasts,
+        ultBuffed: g.ultBuffed, maxStacks: g.maxStacks,
+        tierCasts: g.tierCasts.slice(0, 3), windowSec: round(g.windowSec, 1)
+      };
+    });
+    /* 저격은 시간 기반 게이지라 따로 담습니다 — 화면은 r.snipe 을 읽습니다 */
+    if (sp) {
+      gaugeOut.push({
+        style: 'snipe', name: '저격', max: sDef.max,
+        triggers: sp.shotCasts, cuts: 0, buffCasts: sp.buffCasts,
+        ultBuffed: sp.ultCasts, maxStacks: sp.maxStack,
+        tierCasts: [0, 0, 0], windowSec: round(sp.aimTime, 1)
+      });
+    }
+
+    /* 디버프 조건부 — 이번 전투에서 어떤 디버프가 얼마나 돌았고, 얼마를 더했는지 */
+    var debuffRows = [];
+    dbDefs.forEach(function (d) {
+      var equipped = false;
+      for (var qi = 0; qi < n; qi++) {
+        if (list[qi].dbKey === d.k) { equipped = true; break; }
+        if ((list[qi].dbTypes || []).indexOf(d.k) >= 0) { equipped = true; break; }
+        for (var qj = 0; qj < (list[qi].conds || []).length; qj++) {
+          if (list[qi].conds[qj].when === d.k) { equipped = true; break; }
+        }
+        if (equipped) { break; }
+      }
+      debuffRows.push({
+        k: d.k, name: d.name, sec: d.sec, color: d.color, on: !!d.on,
+        uptime: round(dbUptime(d), 1), casts: d.casts, extra: round(d.extra, 1),
+        share: totalCoeff > 0 ? round((d.extra / totalCoeff) * 100, 1) : 0,
+        used: equipped
+      });
+    });
+    /* 계산에서 빠진 항목 — 지금 덱(활성 신식 · 장착 도술)에 해당하는 것만 */
+    var EXCL = DATA.exclusions || {};
+    var excluded = [];
+    (built.sin || []).forEach(function (s) {
+      (EXCL[s.key] || []).forEach(function (txt) { excluded.push({ k: s.key, name: s.style.name, t: txt }); });
+    });
+    var seenUnk = {};
+    for (i = 0; i < n; i++) {
+      if (list[i].unk && !seenUnk[list[i].id]) {
+        seenUnk[list[i].id] = 1;
+        excluded.push({ k: list[i].style, name: styleName(list[i].style), t: list[i].name + ' — ' + list[i].unk });
+      }
+    }
 
     return {
       ok: true,
@@ -1084,14 +1372,38 @@
         return out;
       })() },
       /* 신식 게이지 발동 기록 — 계열별 영력·중첩이 어떻게 돌았는지 */
-      gauge: gauges.map(function (g) {
+      gauge: gaugeOut,
+      /* 저격 신식 — 시간 기반 화살촉 게이지가 이번 전투에서 어떻게 돌았는지 */
+      snipe: sp ? {
+        max: sDef.max, perSec: sDef.perSec,
+        arrowPer: sDef.arrowPer || 100, arrowMax: sDef.arrowMax || 3,
+        quiver: !!snipe.quiver, aim: !!snipe.aim, ultdmg: !!snipe.ultdmg,
+        energyEnd: round(Math.max(0, Math.min(sDef.max, sp.energy)), 1),
+        maxEnergy: round(sp.maxEnergy, 1),
+        arrowsGained: Math.round(sp.shots + sp.ultArrows + Math.max(0, sp.energy) / (sDef.arrowPer || 100)),
+        shots: sp.shots, shotCasts: sp.shotCasts, noArrowCasts: sp.noArrowCasts,
+        ultCasts: sp.ultCasts, ultArrows: sp.ultArrows,
+        aimTime: round(sp.aimTime, 1),
+        aimAvg: sp.aimTime > 0 ? round(sp.stackSec / sp.aimTime, 1) : 0,
+        aimMaxStack: sp.maxStack, aimExpiries: sp.expiries, aimCasts: sp.buffCasts,
+        autoAimSec: round(sp.autoAimSec, 2),
+        log: sp.log.slice(-60)
+      } : null,
+      /* 디버프 조건부 발동 — 화면·테스트가 발동 횟수와 기여를 확인합니다 */
+      debuffs: debuffRows,
+      /* 정조준 — 걸린 상태이상 종류 수만큼 붙는 피해 */
+      statusCond: hasStatusCond ? (function () {
+        var pct = 0;
+        for (var si = 0; si < n; si++) { if (list[si].dbKey === 'status') { pct = list[si].dbPct; break; } }
         return {
-          style: g.style, name: g.name, max: g.def.max,
-          triggers: g.triggers, cuts: g.cuts, buffCasts: g.buffCasts,
-          ultBuffed: g.ultBuffed, maxStacks: g.maxStacks,
-          tierCasts: g.tierCasts.slice(0, 3), windowSec: round(g.windowSec, 1)
+          pct: pct, casts: statusStat.casts, maxTypes: statusStat.maxTypes,
+          avgTypes: statusStat.casts ? round(statusStat.types / statusStat.casts, 2) : 0,
+          extra: round(statusStat.extra, 1),
+          share: totalCoeff > 0 ? round((statusStat.extra / totalCoeff) * 100, 1) : 0
         };
-      }),
+      })() : null,
+      /* 계산에서 제외된 항목 — 처치·귀보·피격·비공개 수치 */
+      excluded: excluded,
       totalCasts: rows.reduce(function (a, r) { return a + r.casts; }, 0)
     };
   }
