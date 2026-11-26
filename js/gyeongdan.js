@@ -170,6 +170,7 @@
 
   function grabDom() {
     el.root = $('#gyeongdan');
+    el.panel = $('.gyeongdan__panel', el.root);
     el.canvas = $('#gyeongdan-canvas');
     el.stage = $('#gyeongdan-stage');
     el.score = $('#gd-score');
@@ -1669,8 +1670,86 @@
 
   var backdrop = null;
 
+  /* 판은 언제나 444 : 480 — 넓고 낮은 그릇 비율을 지킵니다 */
+  var STAGE_RATIO = 444 / 480;
+  var stageFit = { w: 0, h: 0 };
+
+  function num(v) { var n = parseFloat(v); return isFinite(n) ? n : 0; }
+
+  /* 창 높이가 낮아도 가로·세로가 444 : 480 을 지킨 채 함께 줄어들도록
+     남은 자리를 재서 판 크기를 직접 정합니다(가운데 정렬).
+     창 높이가 넉넉하면 예전처럼 판 너비가 100% 까지 찹니다. */
+  function fitStage() {
+    var stage = el.stage, panel = el.panel, root = el.root;
+    if (!stage || !panel || !root || root.hidden) { return; }
+    var rootW = root.clientWidth, rootH = root.clientHeight;
+    if (rootW < 40 || rootH < 40) { return; }   /* 아직 화면에 올라오기 전 */
+    var rs = window.getComputedStyle(root);
+    var ps = window.getComputedStyle(panel);
+    var padY = num(ps.paddingTop) + num(ps.paddingBottom)
+      + num(ps.borderTopWidth) + num(ps.borderBottomWidth);
+    var padX = num(ps.paddingLeft) + num(ps.paddingRight)
+      + num(ps.borderLeftWidth) + num(ps.borderRightWidth);
+    var boxW = Math.min(440, Math.round(rootW - num(rs.paddingLeft) - num(rs.paddingRight)));
+    var boxH = Math.round(rootH - num(rs.paddingTop) - num(rs.paddingBottom));
+    /* 한 번에 못 정합니다 — 카드 폭이 좁아지면 안내문이 줄을 더 쓰거든요.
+       두세 번 돌려 가로·세로·카드 폭이 함께 앉는 자리를 찾습니다. */
+    var w = 0;
+    for (var pass = 0; pass < 4; pass++) {
+      var room = boxH - padY - otherHeight(panel, stage);
+      if (room < 0) { room = 0; }
+      var next = Math.max(90, Math.min(boxW - padX, room * STAGE_RATIO));
+      if (pass > 0 && Math.abs(next - w) < 2) { break; }
+      w = next;
+      setPanelWidth(w + padX, boxW);
+      applyStageWidth(w);
+    }
+    /* 안내문이 줄바꿈으로 한 줄 늘어 아래가 잘리면 조금 더 줄입니다 */
+    var spill = panel.scrollHeight - panel.clientHeight;
+    if (spill > 1) {
+      applyStageWidth(Math.max(90, stageFit.w - spill * STAGE_RATIO - 1));
+    }
+  }
+
+  /* 판 말고 나머지(제목 · 점수 · 도구 · 버튼 · 안내문)가 쓰는 세로 */
+  function otherHeight(panel, stage) {
+    var sum = 0;
+    for (var i = 0; i < panel.children.length; i++) {
+      var child = panel.children[i];
+      if (child === stage) { continue; }
+      var cs = window.getComputedStyle(child);
+      if (cs.display === 'none' || cs.position === 'absolute' || cs.position === 'fixed') { continue; }
+      sum += child.getBoundingClientRect().height + num(cs.marginTop) + num(cs.marginBottom);
+    }
+    return sum;
+  }
+
+  /* 판이 세로에 막혀 작아지면 카드도 그만큼 좁혀 빈 자리가 크게 남지 않게 합니다 */
+  function setPanelWidth(width, boxW) {
+    var panel = el.panel;
+    if (!panel) { return; }
+    var target = Math.round(Math.min(boxW, Math.max(340, width)));
+    if (target >= boxW) {
+      if (panel.style.width) { panel.style.width = ''; }
+      return;
+    }
+    if (panel.style.width !== target + 'px') { panel.style.width = target + 'px'; }
+  }
+
+  function applyStageWidth(width) {
+    var stage = el.stage;
+    if (!stage || !(width > 0)) { return; }
+    var w = Math.round(width);
+    var h = Math.round(w * (480 / 444));
+    if (Math.abs(w - stageFit.w) < 1 && Math.abs(h - stageFit.h) < 1) { return; }
+    stageFit.w = w; stageFit.h = h;
+    stage.style.width = w + 'px';
+    stage.style.height = h + 'px';
+  }
+
   function resize() {
     if (!el.canvas || !el.stage) { return; }
+    fitStage();
     /* 테두리 안쪽(내용 상자)을 그대로 놀이판으로 — 남는 여백도 넘침도 없습니다 */
     var w = Math.round(el.stage.clientWidth);
     var h = Math.round(el.stage.clientHeight);

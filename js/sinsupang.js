@@ -75,6 +75,7 @@
 
   function grabDom() {
     el.root = $('#sinsupang');
+    el.panel = $('.sinsupang__panel', el.root);
     el.stage = $('#sinsupang-stage');
     el.canvas = $('#sinsupang-canvas');
     el.score = $('#sp-score');
@@ -124,6 +125,7 @@
   var running = false;
   var raf = 0;
   var lastT = 0;
+  var frozen = false;      /* 테스트용 — 화면을 한 순간에 멈춰 놓고 찍을 때 */
   var restartArmTimer = 0;
 
   function nowMs() {
@@ -158,6 +160,7 @@
       feverUntil: 0,
       clock: 0,
       timeLeft: ROUND_MS,
+      timeBonus: 0,          // 콤보로 늘어난 시간(ms) 합 — 화면에는 "+1초"로만 보입니다
       lastCount: 99,
       over: false,
       phase: 'idle',        // idle · swap · fall · over
@@ -165,6 +168,7 @@
       drag: null,
       queue: [],
       fx: [],
+      hold: 0,              // 이 시간이 지난 뒤에야 다음 차례(낙하)로 — 특수 블록 연출을 보여 주려고
       made: [],             // 이번 판에서 만들어 낸 특수 블록 기록(테스트·확인용)
       hintPair: null,
       hintUntil: 0,
@@ -377,6 +381,9 @@
     return key(best.r + ((best.len - 1) >> 1), best.c);
   }
 
+  /* 특수 블록이 터진 자리 — expandClears 가 기록해 두면 부르는 쪽이 눈에 보이는 효과로 바꿉니다 */
+  var pendingSpecialFx = [];
+
   /**
    * 터뜨릴 칸을 모읍니다. 안에 특수 블록이 있으면 그 효과까지 이어서 펼칩니다.
    * fallbackType 은 무지개 경단이 지울 신수의 종류입니다(없으면 자기 종류).
@@ -396,8 +403,10 @@
       var i, rr, cc;
       if (cl.sp === 'row') {
         for (i = 0; i < COLS; i++) { add.push([p.r, i]); }
+        pendingSpecialFx.push({ kind: 'beam', dir: 'row', r: p.r, c: p.c });
       } else if (cl.sp === 'col') {
         for (i = 0; i < ROWS; i++) { add.push([i, p.c]); }
+        pendingSpecialFx.push({ kind: 'beam', dir: 'col', r: p.r, c: p.c });
       } else if (cl.sp === 'bomb') {
         for (var dr = -1; dr <= 1; dr++) {
           for (var dc = -1; dc <= 1; dc++) {
@@ -405,13 +414,19 @@
             if (rr >= 0 && rr < ROWS && cc >= 0 && cc < COLS) { add.push([rr, cc]); }
           }
         }
+        pendingSpecialFx.push({ kind: 'blast', r: p.r, c: p.c });
       } else if (cl.sp === 'rainbow') {
         var t = (fallbackType === null || fallbackType === undefined) ? cl.t : fallbackType;
+        var targets = [];
         for (rr = 0; rr < ROWS; rr++) {
           for (cc = 0; cc < COLS; cc++) {
-            if (S.board[rr][cc] && S.board[rr][cc].t === t) { add.push([rr, cc]); }
+            if (S.board[rr][cc] && S.board[rr][cc].t === t) {
+              add.push([rr, cc]);
+              targets.push([rr, cc]);
+            }
           }
         }
+        pendingSpecialFx.push({ kind: 'rainbow', r: p.r, c: p.c, cells: targets, seed: p.r * 31 + p.c * 17 });
       }
       add.forEach(function (pos) {
         var kk = key(pos[0], pos[1]);
@@ -420,6 +435,26 @@
     }
     return clear;
   }
+
+  /* 기록해 둔 특수 블록을 화면 효과로 올립니다 — 터졌다는 걸 한눈에 알아보게 */
+  function flushSpecialFx() {
+    if (!pendingSpecialFx.length) { return false; }
+    pendingSpecialFx.forEach(function (f) {
+      f.age = 0;
+      f.max = f.kind === 'beam' ? 430 : (f.kind === 'blast' ? 460 : 460);
+      S.fx.push(f);
+    });
+    pendingSpecialFx.length = 0;
+    if (S.fx.length > 90) { S.fx.splice(0, S.fx.length - 90); }
+    return true;
+  }
+
+  /* 효과를 보여 주는 동안 낙하를 잠깐 멈춥니다 */
+  function holdFor(ms) {
+    if (!S) { return; }
+    S.hold = Math.max(S.hold || 0, ms);
+  }
+
 
   /* ===================================================================
      7. 점수 · 콤보 · 피버
@@ -430,6 +465,22 @@
   }
   function feverActive() {
     return !!S && S.clock < S.feverUntil;
+  }
+
+  /* 콤보로 시간이 늘어납니다 — 2연쇄부터 1초씩, 최대 60초 */
+  function addTime(ms) {
+    if (!S || S.over || !(ms > 0)) { return 0; }
+    var before = S.timeLeft;
+    S.timeLeft = Math.min(ROUND_MS, S.timeLeft + ms);   /* 60초를 넘지 않습니다 */
+    var gained = Math.round(S.timeLeft - before);
+    if (gained > 0) {
+      S.timeBonus += gained;
+      pushFx({
+        kind: 'time', text: '+' + (gained % 1000 === 0 ? (gained / 1000) : (gained / 1000).toFixed(1)) + '초',
+        age: 0, max: 820
+      });
+    }
+    return gained;
   }
 
   function addFever(point) {
@@ -556,6 +607,8 @@
     if (S.chain >= 2) {
       pushFx({ kind: 'combo', text: S.chain + ' COMBO!', age: 0, max: 900 });
       addFever(1);
+      /* 연쇄가 이어질 때마다 1초 — 2연쇄 +1초, 3연쇄까지면 누적 +2초 */
+      addTime(1000);
     } else if (cnt >= 6) {
       addFever(1);
     }
@@ -576,9 +629,18 @@
       if (S.made.length < 60) { S.made.push({ sp: s.sp, r: p.r, c: p.c }); }
     });
 
-    applyGravity();
+    /* 특수 블록이 터졌다면 빛줄기·폭발 연출을 먼저 보여 주고 낙하는 조금 뒤에 */
     S.phase = 'fall';
-    S.queue.push(function () { resolveStep(); });
+    if (flushSpecialFx()) {
+      holdFor(220);
+      S.queue.push(function () {
+        applyGravity();
+        S.queue.push(function () { resolveStep(); });
+      });
+    } else {
+      applyGravity();
+      S.queue.push(function () { resolveStep(); });
+    }
   }
 
   function afterCascade() {
@@ -689,12 +751,23 @@
       age: 0, max: 720
     });
     S.chain = 1;
-    applyGravity();
     S.phase = 'fall';
-    S.queue.push(function () {
-      S.chain = 0;
-      resolveStep();
-    });
+    if (flushSpecialFx()) {
+      holdFor(220);
+      S.queue.push(function () {
+        applyGravity();
+        S.queue.push(function () {
+          S.chain = 0;
+          resolveStep();
+        });
+      });
+    } else {
+      applyGravity();
+      S.queue.push(function () {
+        S.chain = 0;
+        resolveStep();
+      });
+    }
   }
 
   /* ===================================================================
@@ -910,6 +983,164 @@
     ctx.restore();
   }
 
+  /* ---- 특수 블록 발동 연출 — "아이템이 터졌다"를 한눈에 ---- */
+
+  /* 가로/세로 줄 폭탄 : 판을 가로지르는 밝은 빛줄기 + 반짝임 */
+  function fxBeam(f, k, m) {
+    var cx = m.x0 + f.c * m.cell + m.cell / 2;
+    var cy = m.y0 + f.r * m.cell + m.cell / 2;
+    var grow = Math.min(1, k / 0.16);                       /* 성는데 빠르게 */
+    var fade = k < 0.5 ? 1 : Math.max(0, 1 - (k - 0.5) / 0.5);
+    var a = fade * (0.55 + 0.45 * grow);
+    var x0 = m.x0, x1 = m.x0 + COLS * m.cell;
+    var y0 = m.y0, y1 = m.y0 + ROWS * m.cell;
+    var thick = m.cell * (0.5 + 0.24 * Math.sin(Math.min(1, k / 0.45) * Math.PI));
+    var l, r, t, b;
+    if (f.dir === 'row') {
+      l = cx - (cx - x0) * grow; r = cx + (x1 - cx) * grow;
+      t = cy - thick / 2; b = cy + thick / 2;
+    } else {
+      t = cy - (cy - y0) * grow; b = cy + (y1 - cy) * grow;
+      l = cx - thick / 2; r = cx + thick / 2;
+    }
+    var grad = f.dir === 'row'
+      ? ctx.createLinearGradient(l, cy, r, cy)
+      : ctx.createLinearGradient(cx, t, cx, b);
+    grad.addColorStop(0, 'rgba(255,186,86,0)');
+    grad.addColorStop(0.16, 'rgba(255,206,110,' + (a * 0.85).toFixed(3) + ')');
+    grad.addColorStop(0.5, 'rgba(255,252,236,' + a.toFixed(3) + ')');
+    grad.addColorStop(0.84, 'rgba(255,206,110,' + (a * 0.85).toFixed(3) + ')');
+    grad.addColorStop(1, 'rgba(255,186,86,0)');
+    ctx.save();
+    ctx.fillStyle = grad;
+    ctx.shadowColor = 'rgba(255,196,96,' + (a * 0.85).toFixed(3) + ')';
+    ctx.shadowBlur = m.cell * 0.5;
+    roundRect(ctx, l, t, Math.max(1, r - l), Math.max(2, b - t), Math.min(r - l, b - t) / 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    /* 한가운데 하얀 심지 */
+    ctx.globalAlpha = a * 0.9;
+    ctx.fillStyle = '#fffdf4';
+    if (f.dir === 'row') {
+      roundRect(ctx, l, cy - thick * 0.09, Math.max(1, r - l), Math.max(1.5, thick * 0.18), thick * 0.09);
+    } else {
+      roundRect(ctx, cx - thick * 0.09, t, Math.max(1.5, thick * 0.18), Math.max(1, b - t), thick * 0.09);
+    }
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    /* 빛줄기 위 반짝임 */
+    var span = f.dir === 'row' ? (x1 - x0) : (y1 - y0);
+    for (var i = 0; i < 9; i++) {
+      var tw = Math.abs(Math.sin((k * 2.4 + i * 0.6) * Math.PI));
+      if (tw < 0.15) { continue; }
+      var d = (i + 0.5) / 9;
+      var px = f.dir === 'row' ? x0 + span * d : cx;
+      var py = f.dir === 'row' ? cy : y0 + span * d;
+      var sz = m.cell * (0.09 + 0.09 * tw);
+      ctx.globalAlpha = Math.min(1, a * tw * 1.2);
+      ctx.fillStyle = '#fff8dc';
+      ctx.beginPath();
+      ctx.moveTo(px, py - sz * 1.7); ctx.quadraticCurveTo(px + sz * 0.3, py - sz * 0.3, px + sz * 1.7, py);
+      ctx.quadraticCurveTo(px + sz * 0.3, py + sz * 0.3, px, py + sz * 1.7);
+      ctx.quadraticCurveTo(px - sz * 0.3, py + sz * 0.3, px - sz * 1.7, py);
+      ctx.quadraticCurveTo(px - sz * 0.3, py - sz * 0.3, px, py - sz * 1.7);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
+
+  /* 대폭발 : 3×3 충격파 링 + 황금 섬광 */
+  function fxBlast(f, k, m) {
+    var cx = m.x0 + f.c * m.cell + m.cell / 2;
+    var cy = m.y0 + f.r * m.cell + m.cell / 2;
+    var a = Math.max(0, 1 - k);
+    ctx.save();
+    /* 중심 섬광 */
+    var glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, m.cell * 1.75);
+    glow.addColorStop(0, 'rgba(255,255,232,' + Math.min(1, a * 1.5).toFixed(3) + ')');
+    glow.addColorStop(0.32, 'rgba(255,196,86,' + (a * 0.62).toFixed(3) + ')');
+    glow.addColorStop(0.72, 'rgba(255,132,40,' + (a * 0.26).toFixed(3) + ')');
+    glow.addColorStop(1, 'rgba(255,110,30,0)');
+    ctx.fillStyle = glow;
+    ctx.beginPath(); ctx.arc(cx, cy, m.cell * 1.75, 0, Math.PI * 2); ctx.fill();
+    /* 충격파 링 두 개 */
+    for (var i = 0; i < 2; i++) {
+      var kk = Math.min(1, k * 1.6 - i * 0.22);
+      if (kk <= 0) { continue; }
+      var rr = m.cell * (0.5 + 1.6 * kk);
+      var ra = Math.max(0, (1 - kk) * a) * (i === 0 ? 0.95 : 0.55);
+      ctx.strokeStyle = i === 0
+        ? 'rgba(255,238,190,' + ra.toFixed(3) + ')'
+        : 'rgba(255,170,70,' + ra.toFixed(3) + ')';
+      ctx.lineWidth = Math.max(1.5, m.cell * 0.16 * (1 - kk * 0.7));
+      ctx.beginPath(); ctx.arc(cx, cy, rr, 0, Math.PI * 2); ctx.stroke();
+    }
+    /* 터진 3×3 칸을 금빛 테두리로 */
+    var bx = m.x0 + Math.max(0, f.c - 1) * m.cell;
+    var by = m.y0 + Math.max(0, f.r - 1) * m.cell;
+    var bw = m.cell * (Math.min(COLS - 1, f.c + 1) - Math.max(0, f.c - 1) + 1);
+    var bh = m.cell * (Math.min(ROWS - 1, f.r + 1) - Math.max(0, f.r - 1) + 1);
+    ctx.globalAlpha = a * 0.75;
+    ctx.strokeStyle = 'rgba(255,232,170,.95)';
+    ctx.lineWidth = Math.max(1.5, m.cell * 0.07);
+    roundRect(ctx, bx + 1, by + 1, bw - 2, bh - 2, m.cell * 0.3);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
+
+  /* 무지개 : 지워지는 칸마다 광선이 뻗고 그 칸이 번쩍 */
+  function fxRainbow(f, k, m) {
+    var cx = m.x0 + f.c * m.cell + m.cell / 2;
+    var cy = m.y0 + f.r * m.cell + m.cell / 2;
+    var a = Math.max(0, 1 - k);
+    var grow = Math.min(1, k / 0.2);
+    ctx.save();
+    (f.cells || []).forEach(function (pos, i) {
+      var tx = m.x0 + pos[1] * m.cell + m.cell / 2;
+      var ty = m.y0 + pos[0] * m.cell + m.cell / 2;
+      var ex = cx + (tx - cx) * grow;
+      var ey = cy + (ty - cy) * grow;
+      var hue = (i * 47) % 360;
+      ctx.shadowColor = i % 2 ? 'rgba(255,226,150,.95)' : 'hsla(' + hue + ',100%,72%,.95)';
+      ctx.shadowBlur = m.cell * 0.4;
+      ctx.strokeStyle = i % 2 ? 'rgba(255,236,170,' + (a * 0.92).toFixed(3) + ')' : 'hsla(' + hue + ',96%,74%,' + (a * 0.88).toFixed(3) + ')';
+      ctx.lineWidth = Math.max(2.2, m.cell * 0.19);
+      ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(ex, ey); ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = 'rgba(255,255,248,' + (a * 0.95).toFixed(3) + ')';
+      ctx.lineWidth = Math.max(1.2, m.cell * 0.06);
+      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(ex, ey); ctx.stroke();
+      /* 대상 칸 번짍 — 사라진 자리가 밝게 빛납니다 */
+      var fl = Math.max(0, 1 - Math.abs(k - 0.3) / 0.55);
+      if (fl > 0) {
+        var g2 = ctx.createRadialGradient(tx, ty, 0, tx, ty, m.cell * 0.95);
+        g2.addColorStop(0, 'rgba(255,255,244,' + Math.min(1, fl * 1.05).toFixed(3) + ')');
+        g2.addColorStop(0.45, 'hsla(' + hue + ',100%,80%,' + (fl * 0.72).toFixed(3) + ')');
+        g2.addColorStop(1, 'rgba(255,220,140,0)');
+        ctx.fillStyle = g2;
+        ctx.beginPath(); ctx.arc(tx, ty, m.cell * 0.95, 0, Math.PI * 2); ctx.fill();
+        /* 작은 반짝이 */
+        var sz = m.cell * 0.16 * fl;
+        ctx.fillStyle = 'rgba(255,255,250,' + fl.toFixed(3) + ')';
+        ctx.beginPath();
+        ctx.moveTo(tx, ty - sz * 1.8); ctx.quadraticCurveTo(tx + sz * 0.3, ty - sz * 0.3, tx + sz * 1.8, ty);
+        ctx.quadraticCurveTo(tx + sz * 0.3, ty + sz * 0.3, tx, ty + sz * 1.8);
+        ctx.quadraticCurveTo(tx - sz * 0.3, ty + sz * 0.3, tx - sz * 1.8, ty);
+        ctx.quadraticCurveTo(tx - sz * 0.3, ty - sz * 0.3, tx, ty - sz * 1.8);
+        ctx.fill();
+      }
+    });
+    /* 무지개 경단 자리 — 금빛 고리 */
+    var ring = m.cell * (0.5 + 0.9 * Math.min(1, k / 0.45));
+    ctx.strokeStyle = 'rgba(255,246,214,' + (a * 0.9).toFixed(3) + ')';
+    ctx.lineWidth = Math.max(1.6, m.cell * 0.1);
+    ctx.beginPath(); ctx.arc(cx, cy, ring, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+  }
+
   function draw() {
     if (!ctx || !S || !S.board) { return; }
     var w = S.w, h = S.h, m = S.metrics;
@@ -1001,6 +1232,12 @@
         ctx.arc(f.x + f.vx * k * 0.25, f.y + f.vy * k * 0.25 + 60 * k * k, f.size * (1 - k * 0.4), 0, Math.PI * 2);
         ctx.fill();
         ctx.globalAlpha = 1;
+      } else if (f.kind === 'beam') {
+        fxBeam(f, k, m);
+      } else if (f.kind === 'blast') {
+        fxBlast(f, k, m);
+      } else if (f.kind === 'rainbow') {
+        fxRainbow(f, k, m);
       } else if (f.kind === 'gain') {
         ctx.globalAlpha = Math.max(0, 1 - k * k);
         ctx.fillStyle = '#ffe9b4';
@@ -1048,6 +1285,22 @@
         ctx.fillText(f.text, 0, 0);
         ctx.restore();
         ctx.globalAlpha = 1;
+      } else if (f.kind === 'time') {
+        /* 콤보로 늘어난 시간 — 판 위쪽에 짧게 떠오릅니다 */
+        var ty = m.y0 + m.cell * 1.05 - 18 * k;
+        ctx.globalAlpha = Math.max(0, 1 - k * k * 1.05);
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.font = '900 ' + Math.round(m.cell * 0.44) + 'px sans-serif';
+        ctx.lineWidth = 4.5;
+        ctx.strokeStyle = 'rgba(12,44,38,.88)';
+        ctx.strokeText(f.text, w / 2, ty);
+        ctx.fillStyle = '#c8f7d3';
+        ctx.shadowColor = 'rgba(140,255,190,.85)';
+        ctx.shadowBlur = 12;
+        ctx.fillText(f.text, w / 2, ty);
+        ctx.shadowBlur = 0;
+        ctx.globalAlpha = 1;
       } else if (f.kind === 'count') {
         ctx.globalAlpha = Math.max(0, 1 - k);
         ctx.textAlign = 'center';
@@ -1084,11 +1337,77 @@
      11. 크기 · 반복
      =================================================================== */
 
+  /* 판은 언제나 정사각 — 낮은 창에서도 가로·세로가 함께 줄어듭니다 */
+  var stageFit = { w: 0, h: 0 };
+
+  function num(v) { var n = parseFloat(v); return isFinite(n) ? n : 0; }
+
+  function fitStage() {
+    var stage = el.stage, panel = el.panel, root = el.root;
+    if (!stage || !panel || !root || root.hidden) { return; }
+    var rootW = root.clientWidth, rootH = root.clientHeight;
+    if (rootW < 40 || rootH < 40) { return; }
+    var rs = window.getComputedStyle(root);
+    var ps = window.getComputedStyle(panel);
+    var padY = num(ps.paddingTop) + num(ps.paddingBottom)
+      + num(ps.borderTopWidth) + num(ps.borderBottomWidth);
+    var padX = num(ps.paddingLeft) + num(ps.paddingRight)
+      + num(ps.borderLeftWidth) + num(ps.borderRightWidth);
+    var boxW = Math.min(440, Math.round(rootW - num(rs.paddingLeft) - num(rs.paddingRight)));
+    var boxH = Math.round(rootH - num(rs.paddingTop) - num(rs.paddingBottom));
+    var w = 0;
+    for (var pass = 0; pass < 4; pass++) {
+      var room = boxH - padY - otherHeight(panel, stage) - 6;   /* 6 = 판의 위 여백 */
+      if (room < 0) { room = 0; }
+      var next = Math.max(90, Math.min(boxW - padX, room));
+      if (pass > 0 && Math.abs(next - w) < 2) { break; }
+      w = next;
+      setPanelWidth(w + padX, boxW);
+      applyStageSize(w);
+    }
+    var spill = panel.scrollHeight - panel.clientHeight;
+    if (spill > 1) { applyStageSize(Math.max(90, stageFit.w - spill - 1)); }
+  }
+
+  function otherHeight(panel, stage) {
+    var sum = 0;
+    for (var i = 0; i < panel.children.length; i++) {
+      var child = panel.children[i];
+      if (child === stage) { continue; }
+      var cs = window.getComputedStyle(child);
+      if (cs.display === 'none' || cs.position === 'absolute' || cs.position === 'fixed') { continue; }
+      sum += child.getBoundingClientRect().height + num(cs.marginTop) + num(cs.marginBottom);
+    }
+    return sum;
+  }
+
+  function setPanelWidth(width, boxW) {
+    var panel = el.panel;
+    if (!panel) { return; }
+    var target = Math.round(Math.min(boxW, Math.max(340, width)));
+    if (target >= boxW) {
+      if (panel.style.width) { panel.style.width = ''; }
+      return;
+    }
+    if (panel.style.width !== target + 'px') { panel.style.width = target + 'px'; }
+  }
+
+  function applyStageSize(width) {
+    var stage = el.stage;
+    if (!stage || !(width > 0)) { return; }
+    var s = Math.round(width);
+    if (Math.abs(s - stageFit.w) < 1 && Math.abs(s - stageFit.h) < 1) { return; }
+    stageFit.w = s; stageFit.h = s;
+    stage.style.width = s + 'px';
+    stage.style.height = s + 'px';
+  }
+
   function resize() {
     if (!el.stage || !el.canvas || !S) { return; }
+    fitStage();
     var rect = el.stage.getBoundingClientRect();
-    var w = Math.max(120, Math.round(rect.width));
-    var h = Math.max(120, Math.round(rect.height));
+    var w = Math.max(90, Math.round(rect.width));
+    var h = Math.max(90, Math.round(rect.height));
     var dpr = Math.min(3, window.devicePixelRatio || 1);
     S.w = w; S.h = h; S.dpr = dpr;
     el.canvas.width = Math.round(w * dpr);
@@ -1136,7 +1455,13 @@
       if (S.fx[i].age >= S.fx[i].max) { S.fx.splice(i, 1); }
     }
 
-    if (!moving && S.queue.length) {
+    /* 특수 블록 연출이 끝날 때까지는 다음 차례(낙하)를 미룹니다 */
+    if (S.hold > 0) {
+      S.hold -= dt;
+      if (S.hold < 0) { S.hold = 0; }
+    }
+
+    if (!moving && S.hold <= 0 && S.queue.length) {
       var fn = S.queue.shift();
       fn();
     }
@@ -1175,18 +1500,21 @@
     raf = window.requestAnimationFrame(frame);
     var dt = lastT ? Math.min(64, t - lastT) : 16;
     lastT = t;
-    if (S && !S.paused && !S.over) {
-      S.clock += dt;
-      S.timeLeft -= dt;
-      if (S.timeLeft <= 0) {
-        S.timeLeft = 0;
-        tickTimer();
-        endGame();
-      } else {
-        tickTimer();
+    if (S && !frozen) {
+      if (!S.paused && !S.over) {
+        S.clock += dt;
+        S.timeLeft -= dt;
+        if (S.timeLeft <= 0) {
+          S.timeLeft = 0;
+          tickTimer();
+          endGame();
+        } else {
+          tickTimer();
+        }
       }
+      update(dt);
     }
-    if (S) { update(dt); draw(); }
+    if (S) { draw(); }
   }
 
   function startLoop() {
@@ -1626,7 +1954,14 @@
         } : null;
       },
       fx: function () {
-        return S ? S.fx.map(function (f) { return { kind: f.kind, text: f.text }; }) : [];
+        return S ? S.fx.map(function (f) { return { kind: f.kind, text: f.text, age: f.age, max: f.max }; }) : [];
+      },
+      /* 테스트용 — 연출을 확인하려고 화면을 한 순간 멈춰 두거나, 효과를 조금 진행시킵니다 */
+      freeze: function (on) { frozen = !!on; },
+      advanceFx: function (ms) {
+        if (!S) { return; }
+        S.fx.forEach(function (f) { f.age = Math.min(f.max - 1, (f.age || 0) + (Number(ms) || 0)); });
+        draw();
       },
       /* 테스트용 — 지금 판에서 매치를 한 단계 풀어 봅니다(연쇄·콤보 확인) */
       resolve: function () { if (S) { resolveStep(); } },
@@ -1719,6 +2054,8 @@
         S.selected = { r: r, c: c };
         return true;
       },
+      /* 테스트용 — 콤보로 늘어난 시간(ms) */
+      timeBonus: function () { return S ? S.timeBonus : 0; },
       setTime: function (sec) {
         if (!S) { return; }
         S.timeLeft = Math.max(0, Number(sec) * 1000);

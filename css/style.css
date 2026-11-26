@@ -2548,11 +2548,13 @@ body.is-locked { overflow: hidden; }
 /* ---- 놀이판 ---- */
 .gyeongdan__stage {
   position: relative;
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   width: 100%;
+  max-width: 100%;
+  height: auto;
   /* 「루팡문파」 경단만들기와 같은 판 비율 — 넓고 낮은 그릇 */
   aspect-ratio: 444 / 480;
-  min-height: 200px;
+  margin: 0 auto;
   border-radius: 18px;
   overflow: hidden;
   border: 1px solid rgba(233, 199, 140, .5);
@@ -3007,11 +3009,11 @@ body.is-locked { overflow: hidden; }
 .sinsupang__stage {
   position: relative;
   z-index: 1;
-  flex: none;
+  flex: 0 0 auto;
   width: 100%;
+  max-width: 100%;
+  height: auto;
   aspect-ratio: 1 / 1;
-  max-width: calc(100vh - 300px);
-  max-width: calc(100dvh - 300px);
   margin: 6px auto 0;
   border-radius: 18px;
   overflow: hidden;
@@ -3082,6 +3084,47 @@ body.is-locked { overflow: hidden; }
   animation: gdFade .2s ease both;
 }
 .sinsupang__sheet::-webkit-scrollbar { display: none; }
+
+/* =========================================================
+   🍡🐾 낮은 창(PC PWA 등) — 여백과 글자를 조금 줄여 놀이판 자리를 벌어 줍니다
+   판 비율은 JS 가 444:480 · 정사각으로 지킵니다.
+   ========================================================= */
+@media (max-height: 620px) {
+  .gyeongdan__panel,
+  .sinsupang__panel {
+    padding: 8px 10px calc(8px + var(--safe-b));
+  }
+  .gyeongdan__head,
+  .sinsupang__head { padding: 0 2px 4px; }
+  .gyeongdan__title,
+  .sinsupang__title { font-size: 15px; gap: 6px; }
+  .gyeongdan__mark,
+  .sinsupang__mark { font-size: 16px; }
+  .gyeongdan__close,
+  .sinsupang__close { width: 28px; height: 28px; }
+  .gyeongdan__hud,
+  .sinsupang__hud { margin-bottom: 5px; }
+  .gyeongdan .gd-stat,
+  .sinsupang .gd-stat { padding: 4px 10px; }
+  .gyeongdan .gd-stat__label,
+  .sinsupang .gd-stat__label { font-size: 9px; }
+  .gyeongdan .gd-stat__value { font-size: 17px; }
+  .sinsupang .gd-stat__value { font-size: 16px; }
+  .sinsupang__timer { height: 15px; }
+  .sp-timer__text { line-height: 15px; font-size: 9px; }
+  .gyeongdan__stage,
+  .sinsupang__stage { border-radius: 14px; }
+  .gyeongdan__tools { padding: 5px 2px 0; }
+  .gd-tools__label { margin-bottom: 3px; font-size: 9px; }
+  .gd-tool { padding: 6px 6px; font-size: 10.5px; }
+  .gyeongdan__actions,
+  .sinsupang__actions { padding: 5px 2px 0; }
+  .gd-btn { padding: 6px 6px; font-size: 10.5px; }
+  .gyeongdan__hint,
+  .sinsupang__hint { margin-top: 3px; font-size: 9.5px; }
+  .gyeongdan__credit,
+  .sinsupang__credit { margin-top: 1px; font-size: 9.5px; line-height: 1.35; }
+}
 
 /* =========================================================
    ⚔️ 도술 효율 · 평타 빈 시간 계산기 — 하단 「도술」 탭
