@@ -11,6 +11,9 @@
  *    피버(×2)가 곱해집니다. 특수 블록이 함께 터지면 터진 칸마다 30점이 더 붙습니다.
  *  · 특수 블록 — 4개 일렬은 줄 폭탄(가로/세로 한 줄), 5개 일렬은 무지개 경단(같은 신수 전부),
  *    T·L자(가로·세로가 함께 걸친 자리)는 대폭발(주변 3×3).
+ *  · 줄 폭탄·대폭발은 같은 신수 세 개가 맞춰져 터질 때(또는 다른 특수 블록의 폭발에 휘말릴 때)만
+ *    발동하고, 매치 없이 옆 칸과 자리만 바꾸면 일반 스와이프처럼 제자리로 돌아옵니다.
+ *    무지개 경단만 예외로, 이웃한 아무 경단과 바꾸면 바로 터져 그 종류를 판 전체에서 지웁니다.
  *  · 화면 코드는 YM_SINSUPANG.open({ ... }) 만 부르고, 점수 저장 · 랭킹 조회는
  *    넘겨받은 함수(opts.submitScore / opts.listRanking)로 합니다.
  */
@@ -141,7 +144,7 @@
   function randType() { return (Math.random() * TYPE_COUNT) | 0; }
 
   function makeCell(t, sp) {
-    return { t: t, sp: sp || '', x: 0, y: 0, sc: 1 };
+    return { t: t, sp: sp || '', x: 0, y: 0, sc: 1, fresh: false };
   }
 
   function newState() {
@@ -198,28 +201,29 @@
     return n >= 3;
   }
 
+  /**
+   * 그 자리를 바꾸면 둘 수 있는 수가 되는지.
+   * 무지개 경단은 이웃한 아무 경단과 바꿔도 발동하므로 그 자체로 유효한 수이고,
+   * 줄 폭탄·대폭발은 매치 없이 옮겨도 발동하지 않으므로 3매치가 생겨야만 유효한 수입니다.
+   */
+  function swapIsMove(b, r1, c1, r2, c2) {
+    var a = b[r1] && b[r1][c1];
+    var d = b[r2] && b[r2][c2];
+    if (!a || !d) { return false; }
+    if (a.sp === 'rainbow' || d.sp === 'rainbow') { return true; }
+    var g = typeGrid(b);
+    var tmp = g[r1][c1]; g[r1][c1] = g[r2][c2]; g[r2][c2] = tmp;
+    return matchAtGrid(g, r1, c1) || matchAtGrid(g, r2, c2);
+  }
+
   function findMove(board) {
     var b = board || (S && S.board);
     if (!b) { return null; }
-    var g = typeGrid(b);
     var r, c;
-    function swap(r1, c1, r2, c2) {
-      var tmp = g[r1][c1]; g[r1][c1] = g[r2][c2]; g[r2][c2] = tmp;
-    }
     for (r = 0; r < ROWS; r++) {
       for (c = 0; c < COLS; c++) {
-        if (c + 1 < COLS) {
-          swap(r, c, r, c + 1);
-          var ok = matchAtGrid(g, r, c) || matchAtGrid(g, r, c + 1);
-          swap(r, c, r, c + 1);
-          if (ok) { return [r, c, r, c + 1]; }
-        }
-        if (r + 1 < ROWS) {
-          swap(r, c, r + 1, c);
-          var ok2 = matchAtGrid(g, r, c) || matchAtGrid(g, r + 1, c);
-          swap(r, c, r + 1, c);
-          if (ok2) { return [r, c, r + 1, c]; }
-        }
+        if (c + 1 < COLS && swapIsMove(b, r, c, r, c + 1)) { return [r, c, r, c + 1]; }
+        if (r + 1 < ROWS && swapIsMove(b, r, c, r + 1, c)) { return [r, c, r + 1, c]; }
       }
     }
     return null;
@@ -482,13 +486,16 @@
         if (write !== r) {
           S.board[write][c] = cl;
           S.board[r][c] = null;
-          cl.y += (write - r) * m.cell;
+          /* 목표 칸(write)보다 위쪽에서 출발해 아래로 떨어지도록 — 음수 = 화면 위 */
+          cl.y -= (write - r) * m.cell;
         }
         write -= 1;
       }
       for (var w = write; w >= 0; w--) {
         var fresh = makeCell(randType());
-        fresh.y = -(write - w + 1) * m.cell;
+        /* 새 경단은 모두 보드 위쪽 바깥에 줄을 서고, 위에서 아래로 떨어져 쌓입니다 */
+        fresh.y = -(write + 1) * m.cell;
+        fresh.fresh = true;
         S.board[w][c] = fresh;
       }
     }
@@ -621,8 +628,9 @@
     S.queue.push(function () {
       if (!S || S.over) { return; }
       var groups = findGroups();
-      var specials = (S.board[r1][c1].sp || S.board[r2][c2].sp);
-      if (!groups.length && !specials) {
+      /* 줄 폭탄·대폭발은 매치에 들어가야만 터지고, 무지개 경단만 옮기면 바로 터집니다 */
+      var rainbowSwap = (S.board[r1][c1].sp === 'rainbow') || (S.board[r2][c2].sp === 'rainbow');
+      if (!groups.length && !rainbowSwap) {
         /* 3매치가 안 되면 부드럽게 제자리로 — 살짝 흔들고 안내 */
         S.phase = 'swap';
         S.board[r1][c1].x = (c2 - c1) * m.cell;
@@ -648,7 +656,7 @@
     return true;
   }
 
-  /** 매치 없이 특수 블록만 옮겼을 때 — 그 효과를 바로 터뜨립니다 */
+  /** 무지개 경단을 매치 없이 옮겼을 때 — 바꾼 상대 경단과 같은 종류를 판 전체에서 터뜨립니다 */
   function activateSpecials(keys, r1, c1, r2, c2) {
     var fallback = null;
     keys.forEach(function (k) {
@@ -1139,7 +1147,7 @@
         S.hintPair = findMove();
         S.hintUntil = S.clock + 2600;
         if (S.hintPair) {
-          setHint('빛나는 두 신수를 바꾸면 세 개가 맞아요');
+          setHint(hintTextFor(S.hintPair));
         }
       }
     }
@@ -1204,6 +1212,16 @@
   /* ===================================================================
      12. 안내 문구
      =================================================================== */
+
+  /* 힌트 문구 — 무지개 경단이 섞인 자리면 그에 맞게 알려 줍니다 */
+  function hintTextFor(pair) {
+    var a = S && S.board[pair[0]] ? S.board[pair[0]][pair[1]] : null;
+    var b = S && S.board[pair[2]] ? S.board[pair[2]][pair[3]] : null;
+    if ((a && a.sp === 'rainbow') || (b && b.sp === 'rainbow')) {
+      return '빛나는 무지개 경단과 바꾸면 그 신수가 모두 사라져요';
+    }
+    return '빛나는 두 신수를 바꾸면 세 개가 맞아요';
+  }
 
   var hintTimer = 0;
   function setHint(text) {
@@ -1619,6 +1637,12 @@
         for (var i = 0; i < (n || 6); i++) { addFever(1); }
         return feverActive();
       },
+      /* 테스트용 — 피버 상태를 비웁니다 */
+      clearFever: function () {
+        if (!S) { return; }
+        S.feverGauge = 0;
+        S.feverUntil = 0;
+      },
       comboMultiplier: comboMultiplier,
       board: function () {
         if (!S) { return null; }
@@ -1631,6 +1655,19 @@
           for (var c = 0; c < COLS; c++) {
             var cl = S.board[r][c];
             out.push({ r: r, c: c, t: cl ? cl.t : -1, sp: cl ? cl.sp : '' });
+          }
+        }
+        return out;
+      },
+      /* 테스트용 — 칸마다 지금 그려지는 위치 어긋남(x·y)과 새로 채운 칸 여부 */
+      offsets: function () {
+        if (!S) { return null; }
+        var out = [];
+        for (var r = 0; r < ROWS; r++) {
+          for (var c = 0; c < COLS; c++) {
+            var cl = S.board[r][c];
+            if (!cl) { continue; }
+            out.push({ r: r, c: c, t: cl.t, sp: cl.sp, x: cl.x, y: cl.y, fresh: !!cl.fresh });
           }
         }
         return out;
