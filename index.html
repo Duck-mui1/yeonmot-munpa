@@ -102,12 +102,27 @@
         <strong>연못</strong>
         <span class="topbar__sub">도깨비의 세계</span>
       </div>
-      <button type="button" class="topbar__game" id="game-btn" aria-label="🍡 경단만들기 열기">
-        <span class="topbar__game-icon" aria-hidden="true">🍡</span><span class="topbar__game-text">경단만들기</span>
-      </button>
-      <button type="button" class="topbar__game topbar__game--paw" id="sinsupang-btn" aria-label="🐾 신수팡 열기">
-        <span class="topbar__game-icon" aria-hidden="true">🐾</span><span class="topbar__game-text">신수팡</span>
-      </button>
+      <div class="topbar__games">
+        <button type="button" class="topbar__game" id="game-btn" aria-label="🎮 미니게임 고르기" aria-haspopup="true" aria-expanded="false" aria-controls="game-menu">
+          <span class="topbar__game-icon" aria-hidden="true">🎮</span><span class="topbar__game-text">미니게임</span>
+        </button>
+        <!-- 🎮 미니게임 고르기 — 경단만들기 · 신수팡 · 신수모아 -->
+        <div class="game-menu" id="game-menu" role="menu" aria-labelledby="game-btn" hidden>
+          <p class="game-menu__title">미니게임</p>
+          <button type="button" class="game-menu__item" id="mg-gyeongdan" role="menuitem" data-game="gyeongdan">
+            <span class="game-menu__mark" aria-hidden="true">🍡</span>
+            <span class="game-menu__body"><b>경단만들기</b><em>경단을 쌓아 합치는 11단계</em></span>
+          </button>
+          <button type="button" class="game-menu__item" id="mg-sinsupang" role="menuitem" data-game="sinsupang">
+            <span class="game-menu__mark" aria-hidden="true">🐾</span>
+            <span class="game-menu__body"><b>신수팡</b><em>세 개를 맞추는 60초 퍼즐</em></span>
+          </button>
+          <button type="button" class="game-menu__item" id="mg-sinsumoa" role="menuitem" data-game="sinsumoa">
+            <span class="game-menu__mark" aria-hidden="true">🫧</span>
+            <span class="game-menu__body"><b>신수모아</b><em>네 개 이상 모아 터뜨리는 60초 퍼즐</em></span>
+          </button>
+        </div>
+      </div>
       <span class="topbar__live"><span class="dot" aria-hidden="true"></span><span id="topbar-online">연결 중</span></span>
     </header>
 
@@ -266,6 +281,44 @@
   </div>
 </section>
 
+<!-- ============ 🫧 신수모아 ============ -->
+<section class="sinsumoa" id="sinsumoa" hidden aria-label="신수모아">
+  <div class="sinsumoa__panel" role="dialog" aria-modal="true" aria-labelledby="sinsumoa-title">
+    <header class="sinsumoa__head">
+      <p class="sinsumoa__title" id="sinsumoa-title"><span class="sinsumoa__mark" aria-hidden="true">🫧</span>신수모아<em>도깨비의 세계</em></p>
+      <button type="button" class="sinsumoa__close" id="sinsumoa-close" aria-label="신수모아 닫기">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      </button>
+    </header>
+
+    <div class="sinsumoa__hud" id="sinsumoa-hud">
+      <div class="gd-stat"><span class="gd-stat__label">점수</span><strong class="gd-stat__value" id="sm-score">0</strong></div>
+      <div class="gd-stat gd-stat--combo"><span class="gd-stat__label">연쇄</span><strong class="gd-stat__value" id="sm-combo">0</strong></div>
+      <div class="gd-stat gd-stat--best"><span class="gd-stat__label">최고</span><strong class="gd-stat__value" id="sm-best">0</strong></div>
+    </div>
+
+    <div class="sinsumoa__timer" id="sm-timer-wrap" role="timer" aria-label="남은 시간">
+      <span class="sm-timer__fill" id="sm-timer-fill"></span>
+      <span class="sm-timer__text" id="sm-timer-text">60초</span>
+    </div>
+
+    <div class="sinsumoa__stage" id="sinsumoa-stage">
+      <canvas class="sinsumoa__canvas" id="sinsumoa-canvas" aria-label="신수모아 놀이판"></canvas>
+      <div class="sinsumoa__over" id="sinsumoa-over" hidden></div>
+    </div>
+
+    <div class="sinsumoa__actions">
+      <button type="button" class="gd-btn" id="sm-rank-btn">🏆 문파 랭킹</button>
+      <button type="button" class="gd-btn gd-btn--accent" id="sm-restart-btn">다시하기</button>
+    </div>
+
+    <p class="sinsumoa__hint" id="sm-hint"></p>
+    <p class="sinsumoa__credit">경단 이미지의 저작권은 「도깨비의 세계」에 있으며, 권리자 요청 시 즉시 삭제될 수 있습니다.</p>
+
+    <div class="sinsumoa__sheet" id="sm-sheet" hidden></div>
+  </div>
+</section>
+
 <div class="modal" id="modal" hidden>
   <div class="modal__backdrop" data-close="1"></div>
   <div class="modal__panel" role="dialog" aria-modal="true" aria-labelledby="modal-title" tabindex="-1">
@@ -304,6 +357,7 @@
 <script src="./js/db.js"></script>
 <script src="./js/gyeongdan.js"></script>
 <script src="./js/sinsupang.js"></script>
+<script src="./js/sinsumoa.js"></script>
 <script src="./js/dosul-data.js"></script>
 <script src="./js/dosul-calc.js"></script>
 <script src="./js/dosul-icons.js"></script>

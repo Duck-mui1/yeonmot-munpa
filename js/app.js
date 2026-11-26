@@ -4480,6 +4480,80 @@
     G.open(options);
   }
 
+  /* ============================================================
+     🫧 신수모아 (미니게임)
+     ============================================================ */
+  /** 🎮 미니게임 메뉴의 🫧 신수모아 → 신수모아를 엽니다.
+   *  경단만들기·신수팡과 같은 방식으로 점수 저장·랭킹을 Supabase로, 체험 모드에서는 이 기기 최고 점수만 씁니다. */
+  function openSinsumoa() {
+    var G = window.YM_SINSUMOA;
+    if (!G) {
+      toast('신수모아를 불러오지 못했어요. 새로고침해 주세요.');
+      return;
+    }
+    var options = {
+      live: isLive(),
+      nickname: myNick(),
+      onToast: toast,
+      /* 랭킹 아바타 — 프로필 그림(preset:...)은 SVG, 사진(data:image/...)은 <img> 로 그립니다. */
+      avatarHtml: function (name, avatar) {
+        return (presetName(avatar) || isImageAvatar(avatar)) ? avatarSpan('gd-rank__avatar', name, avatar) : '';
+      }
+    };
+    if (isLive()) {
+      options.submitScore = function (score, combo) { return DB.submitSinsumoaScore(score, combo); };
+      options.listRanking = function () { return DB.listSinsumoaRanking(20); };
+    }
+    G.open(options);
+  }
+
+  /* ============================================================
+     🎮 미니게임 고르기 메뉴 (경단만들기 · 신수팡 · 신수모아)
+     ============================================================ */
+  var gameMenuOpen = false;
+
+  function setGameMenu(open) {
+    var menu = $('#game-menu');
+    var btn = $('#game-btn');
+    if (!menu || !btn) { return; }
+    gameMenuOpen = !!open;
+    menu.hidden = !gameMenuOpen;
+    btn.setAttribute('aria-expanded', gameMenuOpen ? 'true' : 'false');
+  }
+
+  function closeGameMenu() { setGameMenu(false); }
+
+  function openGamePick(which) {
+    closeGameMenu();
+    if (which === 'gyeongdan') { openGyeongdan(); return; }
+    if (which === 'sinsupang') { openSinsupang(); return; }
+    if (which === 'sinsumoa') { openSinsumoa(); return; }
+  }
+
+  function bindGameMenu() {
+    var btn = $('#game-btn');
+    var menu = $('#game-menu');
+    if (btn) {
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        setGameMenu(!gameMenuOpen);
+      });
+    }
+    if (menu) {
+      menu.addEventListener('click', function (e) {
+        var item = e.target && e.target.closest ? e.target.closest('[data-game]') : null;
+        if (!item) { return; }
+        openGamePick(item.getAttribute('data-game'));
+      });
+    }
+    document.addEventListener('click', function (e) {
+      if (!gameMenuOpen) { return; }
+      var t = e.target;
+      if (t && t.closest && (t.closest('#game-menu') || t.closest('#game-btn'))) { return; }
+      closeGameMenu();
+    });
+  }
+
   function bindGlobal() {
     $('#modal').addEventListener('click', function (e) {
       var target = e.target;
@@ -4489,13 +4563,11 @@
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape') {
         if (V.open) { closeViewer(); return; }
+        if (gameMenuOpen) { closeGameMenu(); return; }
         closeModal();
       }
     });
-    var gameBtn = $('#game-btn');
-    if (gameBtn) { gameBtn.addEventListener('click', openGyeongdan); }
-    var sinsupangBtn = $('#sinsupang-btn');
-    if (sinsupangBtn) { sinsupangBtn.addEventListener('click', openSinsupang); }
+    bindGameMenu();
   }
 
   if ('serviceWorker' in navigator && window.location.protocol.indexOf('http') === 0) {
