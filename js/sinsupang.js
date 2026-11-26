@@ -1223,6 +1223,7 @@
     S.drag = null;
     S.hintPair = null;
     S.queue.length = 0;
+    closeSheet();
     if (S.score > S.best) { S.best = S.score; }
     setLocalBest(S.score);
     renderScore();
@@ -1525,9 +1526,14 @@
           closeGame();
         }
       });
+      /* 다른 앱을 보는 동안에는 시간을 멈추고, 돌아오면 이어서 갑니다 */
       document.addEventListener('visibilitychange', function () {
         if (!opened) { return; }
-        if (document.hidden) { pause(); }
+        if (document.hidden) {
+          pause();
+        } else if (S && !S.over && (!el.sheet || el.sheet.hidden)) {
+          resume();
+        }
       });
       opened = true;
     }
