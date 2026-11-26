@@ -6,8 +6,9 @@
  *      같은 신수가 3개 이하로 이어져 있으면 아무 일도 일어나지 않습니다.
  *  · 특수 경단 — 덩어리 크기가 5개면 특수 경단(일직선이면 줄 폭탄, 그 밖의 모양이면 3×3 대폭발),
  *    6개 이상이면 무지개 경단이 그 자리에 생깁니다. 4개는 그냥 터지기만 합니다.
- *      줄 폭탄 · 대폭발은 같은 신수 4개 이상 덩어리에 함께 들어 터질 때만 발동하고,
- *      무지개 경단은 이웃한 아무 신수와 바꾸면 그 종류를 판 전체에서 지웁니다.
+ *      줄 폭탄 · 대폭발 · 무지개 경단 모두 같은 신수 4개 이상 덩어리에 함께 들어 터질 때만 발동합니다.
+ *      무지개 경단도 자기 신수 색을 그대로 가지고 있어서, 매치 없이 옮기면 다른 특수 경단처럼 제자리로 돌아옵니다.
+ *      무지개 경단이 터지면 판 전체에서 그 경단과 같은 신수를 모두 지웁니다.
  *  · 병렬 입력 — 신수팡은 한 번 터지면 판 전체가 낙하를 기다려야 하지만, 신수모아는
  *    **터지거나 떨어지고 있는 칸만** 잠기고 나머지 멈춰 있는 칸은 그동안에도 바로 누르고 바꿀 수 있습니다.
  *    (칸마다 popping / falling 상태를 따로 두고, 열마다 따로 중력을 적용합니다.)
@@ -167,7 +168,6 @@
       fx: [],
       made: [],
       swapKeys: null,
-      pendingRainbow: null,
       hintPair: null,
       hintUntil: 0,
       lastInput: 0,
@@ -416,9 +416,9 @@
 
   /**
    * 터뜨릴 칸을 모읍니다. 안에 특수 경단이 있으면 그 효과까지 이어서 펼칩니다.
-   * fallbackType 은 무지개 경단이 지울 신수의 종류입니다(없으면 자기 종류).
+   * 무지개 경단은 자기 신수 색(cl.t)을 그대로 가지므로 그 색을 판 전체에서 지웁니다.
    */
-  function expandClears(initial, fallbackType) {
+  function expandClears(initial) {
     var clear = {};
     var queue = [];
     initial.forEach(function (k) {
@@ -446,7 +446,7 @@
         }
         pendingSpecialFx.push({ kind: 'blast', r: p.r, c: p.c });
       } else if (cl.sp === 'rainbow') {
-        var t = (fallbackType === null || fallbackType === undefined) ? cl.t : fallbackType;
+        var t = cl.t;
         var targets = [];
         for (rr = 0; rr < ROWS; rr++) {
           for (cc = 0; cc < COLS; cc++) {
@@ -585,7 +585,7 @@
       var spawnKey = sp ? pickSpawnKey(g) : null;
       if (spawnKey) { spawnKeys[spawnKey] = true; }
       g.cells.forEach(function (k) { groupCells[k] = true; });
-      var set = expandClears(g.cells, g.t);
+      var set = expandClears(g.cells);
       Object.keys(set).forEach(function (k) {
         if (k !== spawnKey) { clear[k] = true; }
       });
@@ -624,32 +624,6 @@
 
     flushSpecialFx();
     /* 특수 경단 자리를 고를 때 쓰는 "방금 옮긴 칸"은 이번 터짐까지만 */
-    S.swapKeys = null;
-  }
-
-  /** 무지개 경단을 이웃과 바꿨을 때 — 바꾼 상대의 종류를 판 전체에서 지웁니다 */
-  function activateRainbow(pr) {
-    var keys = [key(pr.r1, pr.c1), key(pr.r2, pr.c2)];
-    var fallback = null;
-    var a = S.board[pr.r1] && S.board[pr.r1][pr.c1];
-    var b = S.board[pr.r2] && S.board[pr.r2][pr.c2];
-    if (a && a.sp === 'rainbow') { fallback = b ? b.t : null; }
-    else if (b && b.sp === 'rainbow') { fallback = a ? a.t : null; }
-
-    pendingSpecialFx.length = 0;
-    var set = expandClears(keys, fallback);
-    var total = Object.keys(set).length;
-    if (!total) { S.swapKeys = null; return; }
-
-    var mult = beginChain();
-    var points = Math.round(total * 70 * mult);
-    var center = markClear(set, null);
-    S.score += points;
-    renderScore();
-    if (center) {
-      pushFx({ kind: 'gain', text: '+' + fmtNum(points), x: center.x, y: center.y, age: 0, max: 720 });
-    }
-    flushSpecialFx();
     S.swapKeys = null;
   }
 
@@ -718,7 +692,6 @@
     var a = b[r1] && b[r1][c1];
     var d = b[r2] && b[r2][c2];
     if (!a || !d) { return false; }
-    if (a.sp === 'rainbow' || d.sp === 'rainbow') { return true; }
     if (a.t === d.t) { return false; }
     var g = typeGrid();
     var tmp = g[r1][c1]; g[r1][c1] = g[r2][c2]; g[r2][c2] = tmp;
@@ -737,12 +710,8 @@
     return null;
   }
 
-  function hintTextFor(pair) {
-    var a = S && S.board[pair[0]] ? S.board[pair[0]][pair[1]] : null;
-    var b = S && S.board[pair[2]] ? S.board[pair[2]][pair[3]] : null;
-    if ((a && a.sp === 'rainbow') || (b && b.sp === 'rainbow')) {
-      return '빛나는 무지개 경단과 바꾸면 그 신수가 모두 사라져요';
-    }
+  /* 힌트는 「네 개가 이어진다」는 자리만 골라 주므로 문구도 하나입니다 */
+  function hintTextFor() {
     return '빛나는 두 신수를 바꾸면 네 개가 이어져요';
   }
 
@@ -846,23 +815,15 @@
     S.lastInput = S.clock;
     S.swapKeys = [key(r1, c1), key(r2, c2)];
 
-    var aRainbow = a.sp === 'rainbow';
-    var bRainbow = b.sp === 'rainbow';
-
     swapCells(r1, c1, r2, c2);
     S.board[r2][c2].x = (c1 - c2) * m.cell;
     S.board[r2][c2].y = (r1 - r2) * m.cell;
     S.board[r1][c1].x = (c2 - c1) * m.cell;
     S.board[r1][c1].y = (r2 - r1) * m.cell;
 
-    var ok;
-    if (aRainbow || bRainbow) {
-      ok = true;
-      S.pendingRainbow = { r1: r1, c1: c1, r2: r2, c2: c2 };
-    } else {
-      var g = typeGrid();
-      ok = compSizeAt(r1, c1, g) >= 4 || compSizeAt(r2, c2, g) >= 4;
-    }
+    /* 무지개 경단도 자기 신수 색을 가지므로, 네 개 이상 덩어리가 생길 때만 유효한 수입니다 */
+    var g = typeGrid();
+    var ok = compSizeAt(r1, c1, g) >= 4 || compSizeAt(r2, c2, g) >= 4;
 
     if (!ok) {
       swapCells(r1, c1, r2, c2);
@@ -878,23 +839,11 @@
   }
 
   /* ===================================================================
-     11. 매 프레임 — 멈춘 칸의 덩어리 찾기 · 무지개 · 판 막힘
+     11. 매 프레임 — 멈춘 칸의 덩어리 찾기 · 판 막힘
      =================================================================== */
 
   function resolveTick() {
     if (!S || S.over) { return; }
-
-    if (S.pendingRainbow) {
-      var pr = S.pendingRainbow;
-      var a = S.board[pr.r1] && S.board[pr.r1][pr.c1];
-      var b = S.board[pr.r2] && S.board[pr.r2][pr.c2];
-      if (!a || !b) { S.pendingRainbow = null; return; }
-      if (!busy(a) && !busy(b)) {
-        S.pendingRainbow = null;
-        activateRainbow(pr);
-      }
-      return;
-    }
 
     var groups = findSettledGroups();
     if (groups.length) {
@@ -1620,7 +1569,6 @@
     S.over = true;
     S.selected = null;
     S.drag = null;
-    S.pendingRainbow = null;
     S.hintPair = null;
     closeSheet();
     if (S.score > S.best) { S.best = S.score; }
@@ -2039,7 +1987,6 @@
         }
         S.selected = null;
         S.hintPair = null;
-        S.pendingRainbow = null;
         S.swapKeys = null;
         S.made = [];
         return true;
