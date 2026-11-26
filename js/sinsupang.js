@@ -818,59 +818,86 @@
     ctx.globalAlpha = 1;
   }
 
+  /* 특수 블록 표시 — 어떤 그림 위에서도 보이도록 어두운 테두리를 먼저 깔고 밝은 표시를 얹습니다 */
   function drawSpecialMark(cl, cx, cy, size) {
-    var half = size * 0.42;
+    var half = size * 0.44;
+    var w = Math.max(2.6, size * 0.085);
     ctx.save();
-    ctx.lineWidth = Math.max(1.6, size * 0.045);
+    ctx.lineCap = 'round';
+
+    function strokeDark(path) {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(24, 12, 6, .78)';
+      ctx.lineWidth = w + 3.2;
+      path();
+      ctx.stroke();
+      ctx.restore();
+    }
+    function strokeBright(color, glow) {
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = w;
+      ctx.shadowColor = glow;
+      ctx.shadowBlur = Math.round(size * 0.34);
+      ctx.stroke();
+      ctx.restore();
+    }
+
     if (cl.sp === 'row' || cl.sp === 'col') {
-      ctx.strokeStyle = 'rgba(255,236,180,.95)';
-      ctx.shadowColor = 'rgba(255,214,120,.9)';
-      ctx.shadowBlur = 10;
-      ctx.beginPath();
-      if (cl.sp === 'row') {
-        ctx.moveTo(cx - half, cy); ctx.lineTo(cx + half, cy);
-      } else {
-        ctx.moveTo(cx, cy - half); ctx.lineTo(cx, cy + half);
-      }
-      ctx.stroke();
-      ctx.beginPath();
-      var ax = cl.sp === 'row' ? half : 0;
-      var ay = cl.sp === 'col' ? half : 0;
-      ctx.moveTo(cx + ax, cy + ay);
-      ctx.lineTo(cx + ax - (cl.sp === 'row' ? size * 0.1 : size * 0.07), cy + ay - size * 0.07);
-      ctx.moveTo(cx + ax, cy + ay);
-      ctx.lineTo(cx + ax - (cl.sp === 'row' ? size * 0.1 : size * 0.07), cy + ay + size * 0.07);
-      if (cl.sp === 'col') {
-        ctx.moveTo(cx - size * 0.07, cy + ay - size * 0.1);
-        ctx.lineTo(cx + size * 0.07, cy + ay - size * 0.1);
-      }
-      ctx.stroke();
-    } else if (cl.sp === 'bomb') {
-      ctx.strokeStyle = 'rgba(255,170,120,.95)';
-      ctx.shadowColor = 'rgba(255,150,90,.9)';
-      ctx.shadowBlur = 12;
-      ctx.beginPath();
-      ctx.arc(cx, cy, half * 0.86, 0, Math.PI * 2);
-      ctx.stroke();
-      for (var i = 0; i < 6; i++) {
-        var a = (Math.PI * 2 / 6) * i;
+      var horiz = cl.sp === 'row';
+      var drawLine = function () {
         ctx.beginPath();
-        ctx.moveTo(cx + Math.cos(a) * half * 0.9, cy + Math.sin(a) * half * 0.9);
-        ctx.lineTo(cx + Math.cos(a) * half * 1.1, cy + Math.sin(a) * half * 1.1);
-        ctx.stroke();
-      }
+        if (horiz) { ctx.moveTo(cx - half, cy); ctx.lineTo(cx + half, cy); }
+        else { ctx.moveTo(cx, cy - half); ctx.lineTo(cx, cy + half); }
+      };
+      var drawHeads = function () {
+        ctx.beginPath();
+        var hx = horiz ? half : 0;
+        var hy = horiz ? 0 : half;
+        var bx = horiz ? -half : 0;
+        var by = horiz ? 0 : -half;
+        var tip = size * 0.17;
+        var back = size * 0.12;
+        if (horiz) {
+          ctx.moveTo(cx + hx, cy); ctx.lineTo(cx + hx - tip, cy - back);
+          ctx.moveTo(cx + hx, cy); ctx.lineTo(cx + hx - tip, cy + back);
+          ctx.moveTo(cx + bx, cy); ctx.lineTo(cx + bx + tip, cy - back);
+          ctx.moveTo(cx + bx, cy); ctx.lineTo(cx + bx + tip, cy + back);
+        } else {
+          ctx.moveTo(cx, cy + hy); ctx.lineTo(cx - back, cy + hy - tip);
+          ctx.moveTo(cx, cy + hy); ctx.lineTo(cx + back, cy + hy - tip);
+          ctx.moveTo(cx, cy + by); ctx.lineTo(cx - back, cy + by + tip);
+          ctx.moveTo(cx, cy + by); ctx.lineTo(cx + back, cy + by + tip);
+        }
+      };
+      strokeDark(drawLine);
+      strokeBright('rgba(255,246,206,.98)', 'rgba(255,206,110,.95)');
+      strokeDark(drawHeads);
+      strokeBright('rgba(255,246,206,.98)', 'rgba(255,206,110,.95)');
+    } else if (cl.sp === 'bomb') {
+      var drawBomb = function () {
+        ctx.beginPath();
+        ctx.arc(cx, cy, half * 0.9, 0, Math.PI * 2);
+        for (var i = 0; i < 8; i++) {
+          var a = (Math.PI * 2 / 8) * i;
+          ctx.moveTo(cx + Math.cos(a) * half * 0.95, cy + Math.sin(a) * half * 0.95);
+          ctx.lineTo(cx + Math.cos(a) * half * 1.16, cy + Math.sin(a) * half * 1.16);
+        }
+      };
+      strokeDark(drawBomb);
+      strokeBright('rgba(255,168,110,.98)', 'rgba(255,120,60,.95)');
     } else if (cl.sp === 'rainbow') {
+      var drawRing = function () {
+        ctx.beginPath();
+        ctx.arc(cx, cy, half * 0.94, 0, Math.PI * 2);
+      };
+      strokeDark(drawRing);
       var grad = ctx.createLinearGradient(cx - half, cy - half, cx + half, cy + half);
-      grad.addColorStop(0, 'rgba(255,120,140,.95)');
-      grad.addColorStop(0.35, 'rgba(255,214,120,.95)');
-      grad.addColorStop(0.7, 'rgba(140,230,160,.95)');
-      grad.addColorStop(1, 'rgba(130,190,255,.95)');
-      ctx.strokeStyle = grad;
-      ctx.shadowColor = 'rgba(255,220,150,.85)';
-      ctx.shadowBlur = 14;
-      ctx.beginPath();
-      ctx.arc(cx, cy, half * 0.92, 0, Math.PI * 2);
-      ctx.stroke();
+      grad.addColorStop(0, 'rgba(255,120,150,.98)');
+      grad.addColorStop(0.35, 'rgba(255,214,120,.98)');
+      grad.addColorStop(0.7, 'rgba(140,235,165,.98)');
+      grad.addColorStop(1, 'rgba(130,190,255,.98)');
+      strokeBright(grad, 'rgba(255,220,150,.9)');
     }
     ctx.restore();
   }
