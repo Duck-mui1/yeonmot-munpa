@@ -4438,7 +4438,12 @@
     var options = {
       live: isLive(),
       nickname: myNick(),
-      onToast: toast
+      onToast: toast,
+      /* 랭킹 아바타 — 프로필 그림(preset:...)은 SVG, 사진(data:image/...)은 <img> 로 그립니다.
+         그림이 없으면 빈 문자열을 돌려주고 경단만들기가 닉네임 첫 글자를 그립니다. */
+      avatarHtml: function (name, avatar) {
+        return (presetName(avatar) || isImageAvatar(avatar)) ? avatarSpan('gd-rank__avatar', name, avatar) : '';
+      }
     };
     if (isLive()) {
       options.submitScore = function (score, tier) { return DB.submitGyeongdanScore(score, tier); };

@@ -247,7 +247,7 @@
      =================================================================== */
 
   var S = null;          // 현재 판
-  var opts = {};         // { live, nickname, best, submitScore, listRanking, onToast }
+  var opts = {};         // { live, nickname, best, submitScore, listRanking, onToast, avatarHtml }
   var raf = 0;
   var lastT = 0;
   var acc = 0;
@@ -2455,12 +2455,9 @@
     ranking.rows.forEach(function (row) {
       var mine = opts.nickname && row.nickname === opts.nickname;
       var tierName = TIERS[clampInt(row.max_tier, 1, LAST_TIER, 1)].name;
-      var initial = String(row.nickname || '?').slice(0, 1);
       html += '<li class="gd-rank__row' + (mine ? ' is-mine' : '') + '">' +
         '<span class="gd-rank__no">' + (row.rank || '-') + '</span>' +
-        (row.avatar
-          ? '<span class="gd-rank__avatar" style="background-image:url(' + escapeAttr(row.avatar) + ')"></span>'
-          : '<span class="gd-rank__avatar gd-rank__avatar--initial">' + escapeHtml(initial) + '</span>') +
+        rankAvatarMarkup(row.nickname, row.avatar) +
         '<span class="gd-rank__who"><b>' + escapeHtml(row.nickname || '') + '</b>' +
         '<span class="gd-rank__role">' + escapeHtml(ROLE_LABEL[row.role] || '문파원') + ' · ' + escapeHtml(tierName) + '</span></span>' +
         '<span class="gd-rank__score">' + fmtNum(row.best_score) + '</span>' +
@@ -2478,8 +2475,43 @@
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
-  function escapeAttr(s) {
-    return escapeHtml(s).replace(/\)/g, '%29').replace(/\(/g, '%28');
+
+  /* 랭킹의 프로필 그림 한 칸.
+     DB의 avatar 는 URL 이 아니라 ① 'preset:duck' 같은 일러스트 프리셋 문자열,
+     ② data:image/... 사진, ③ 없음(null) 중 하나입니다.
+     배경 이미지(background-image:url(preset:duck))로 넣으면 그림이 그려지지 않아
+     빈 원이 되므로, app.js 가 넘겨주는 avatarHtml(일러스트 SVG·사진 <img>)로 그립니다.
+     단독 실행 등으로 넘겨받지 못하면 YM_ART 로 직접 그립니다. */
+  var AVATAR_PRESETS = ['lotus', 'koi', 'frog', 'firefly', 'moon', 'leaf', 'turtle', 'lantern', 'duck'];
+  function avatarPreset(value) {
+    if (typeof value !== 'string' || value.indexOf('preset:') !== 0) { return null; }
+    var kind = value.slice(7);
+    return AVATAR_PRESETS.indexOf(kind) === -1 ? null : kind;
+  }
+  function avatarImageSrc(value) {
+    if (typeof value !== 'string') { return null; }
+    if (/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(value)) { return value; }
+    if (/^https:\/\/[^\s"'<>]+$/.test(value)) { return value; }
+    return null;
+  }
+  function rankAvatarMarkup(name, avatar) {
+    if (typeof opts.avatarHtml === 'function') {
+      var painted = opts.avatarHtml(String(name || ''), avatar);
+      if (painted) { return painted; }
+    } else {
+      var preset = avatarPreset(avatar);
+      var art = window.YM_ART;
+      if (preset && art && typeof art.avatar === 'function') {
+        return '<span class="gd-rank__avatar avatar--art" aria-hidden="true">' + art.avatar(preset) + '</span>';
+      }
+      var src = avatarImageSrc(avatar);
+      if (src) {
+        return '<span class="gd-rank__avatar avatar--art" aria-hidden="true">' +
+          '<img class="avatar__img" src="' + escapeHtml(src) + '" alt=""></span>';
+      }
+    }
+    return '<span class="gd-rank__avatar gd-rank__avatar--initial">' +
+      escapeHtml(String(name || '?').slice(0, 1)) + '</span>';
   }
 
   function openSheet(kind) {
