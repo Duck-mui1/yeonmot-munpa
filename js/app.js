@@ -4452,6 +4452,34 @@
     G.open(options);
   }
 
+  /* ============================================================
+     🐾 신수팡 (미니게임)
+     ============================================================ */
+  /** 상단 헤더의 🐾 신수팡 버튼 → 신수팡을 엽니다.
+   *  경단만들기와 같은 방식으로 점수 저장·랭킹을 Supabase로, 체험 모드에서는 이 기기 최고 점수만 씁니다. */
+  function openSinsupang() {
+    var G = window.YM_SINSUPANG;
+    if (!G) {
+      toast('신수팡을 불러오지 못했어요. 새로고침해 주세요.');
+      return;
+    }
+    var options = {
+      live: isLive(),
+      nickname: myNick(),
+      onToast: toast,
+      /* 랭킹 아바타 — 프로필 그림(preset:...)은 SVG, 사진(data:image/...)은 <img> 로 그립니다.
+         그림이 없으면 빈 문자열을 돌려주고 신수팡이 닉네임 첫 글자를 그립니다. */
+      avatarHtml: function (name, avatar) {
+        return (presetName(avatar) || isImageAvatar(avatar)) ? avatarSpan('gd-rank__avatar', name, avatar) : '';
+      }
+    };
+    if (isLive()) {
+      options.submitScore = function (score, combo) { return DB.submitSinsupangScore(score, combo); };
+      options.listRanking = function () { return DB.listSinsupangRanking(20); };
+    }
+    G.open(options);
+  }
+
   function bindGlobal() {
     $('#modal').addEventListener('click', function (e) {
       var target = e.target;
@@ -4466,6 +4494,8 @@
     });
     var gameBtn = $('#game-btn');
     if (gameBtn) { gameBtn.addEventListener('click', openGyeongdan); }
+    var sinsupangBtn = $('#sinsupang-btn');
+    if (sinsupangBtn) { sinsupangBtn.addEventListener('click', openSinsupang); }
   }
 
   if ('serviceWorker' in navigator && window.location.protocol.indexOf('http') === 0) {

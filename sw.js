@@ -1,5 +1,5 @@
 /* 연못 서비스 워커 — 오프라인에서도 연못이 열리도록 */
-var CACHE_NAME = 'yeonmot-munpa-v39';
+var CACHE_NAME = 'yeonmot-munpa-v40';
 var CORE_ASSETS = [
   './',
   './index.html',
@@ -8,6 +8,7 @@ var CORE_ASSETS = [
   './js/art.js',
   './js/db.js',
   './js/gyeongdan.js',
+  './js/sinsupang.js',
   './js/dosul-data.js',
   './js/dosul-calc.js',
   './js/dosul-icons.js',

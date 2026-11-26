@@ -563,6 +563,25 @@
       });
     },
 
+    /* --- 🐾 신수팡 ---
+     *  경단만들기와 같은 구조 — 한 사람당 최고 기록만 남기고, 서버가 더 높은 점수일 때만 갱신합니다.
+     *  마이그레이션 전(PGRST202)에는 게임은 이 기기 최고 점수로 그대로 돌고, 랭킹 탭에만 안내가 나옵니다.
+     */
+    submitSinsupangScore: function (score, combo) {
+      return withToken(function (t) {
+        return rpc('submit_sinsupang_score', {
+          p_token: t,
+          p_score: Math.max(0, Math.floor(Number(score) || 0)),
+          p_combo: Math.max(0, Math.floor(Number(combo) || 0))
+        });
+      });
+    },
+    listSinsupangRanking: function (limit) {
+      return withToken(function (t) {
+        return rpc('list_sinsupang_ranking', { p_token: t, p_limit: limit || 20 });
+      });
+    },
+
     /* --- ⚔️ 도술 계산기 · 문파 공유 조합 ---
      *  마이그레이션(supabase/migration-dosul.sql) 전에는 PGRST202 가 올라옵니다.
      *  화면은 그때 이 기기(localStorage)에만 저장하고 '아직 준비되지 않았어요' 라고 알려 줍니다.

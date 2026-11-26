@@ -440,6 +440,24 @@ comment on column private.gyeongdan_scores.max_tier is '그 문파원이 만든 
 create index if not exists gyeongdan_scores_best_idx
   on private.gyeongdan_scores (best_score desc, updated_at asc);
 
+-- 2-9d. 신수팡 문파 랭킹 (🐾 미니게임 · 3매치 퍼즐) — 문파원 한 명에 최고 기록 한 줄
+--   · 퍼즐은 브라우저(js/sinsupang.js)에서만 돌고, 서버에는 점수·콤보만 남습니다.
+--   · 읽기/쓰기는 RPC(submit_sinsupang_score · list_sinsupang_ranking)만.
+create table if not exists private.sinsupang_scores (
+  member_id  uuid primary key references private.members (id) on delete cascade,
+  best_score integer not null default 0
+               constraint sinsupang_scores_score_range check (best_score between 0 and 100000000),
+  best_combo smallint not null default 0
+               constraint sinsupang_scores_combo_range check (best_combo between 0 and 999),
+  updated_at timestamptz not null default now()
+);
+
+comment on table private.sinsupang_scores is '신수팡 문파 랭킹 — 문파원마다 최고 점수 한 줄. 랭킹 RPC 로만 읽고 씁니다.';
+comment on column private.sinsupang_scores.best_combo is '그 문파원이 한 판에서 이어 간 가장 긴 콤보(연쇄) 수.';
+
+create index if not exists sinsupang_scores_best_idx
+  on private.sinsupang_scores (best_score desc, updated_at asc);
+
 -- 2-10. 관리자 행동 기록
 create table if not exists private.admin_audit (
   id          bigint generated always as identity primary key,
@@ -546,6 +564,7 @@ alter table private.album_images    enable row level security;
 alter table private.album_likes     enable row level security;
 alter table private.admin_audit     enable row level security;
 alter table private.gyeongdan_scores enable row level security;
+alter table private.sinsupang_scores enable row level security;
 
 -- 테이블 직접 권한 정리: anon/authenticated 는 세 테이블의 SELECT 만.
 revoke all on table public.chat_messages from public, anon, authenticated;
@@ -554,6 +573,7 @@ revoke all on table public.events        from public, anon, authenticated;
 revoke all on table public.guides        from public, anon, authenticated;
 revoke all on table public.member_absences from public, anon, authenticated;
 revoke all on table private.gyeongdan_scores from public, anon, authenticated;
+revoke all on table private.sinsupang_scores from public, anon, authenticated;
 grant select on table public.chat_messages to anon, authenticated;
 grant select on table public.notices       to anon, authenticated;
 grant select on table public.events        to anon, authenticated;
@@ -3043,6 +3063,135 @@ comment on function public.list_gyeongdan_ranking(text, integer) is
 
 
 -- ===========================================================================
+-- 10-14. 신수팡 (🐾 미니게임) — 점수 올리기 · 문파 랭킹
+-- ===========================================================================
+
+-- 점수 올리기 — 로그인한 문파원의 최고 기록일 때만 갱신합니다.
+create or replace function public.submit_sinsupang_score(
+  p_token text,
+  p_score integer,
+  p_combo integer
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $fn$
+declare
+  v_actor private.session_actor := private.current_member(p_token);
+  v_prev  private.sinsupang_scores;
+  v_best  integer;
+  v_combo smallint;
+  v_new   boolean := false;
+  v_rank  integer;
+begin
+  if p_score is null or p_score < 0 or p_score > 100000000 then
+    raise exception '점수가 올바르지 않아요.' using errcode = '22023';
+  end if;
+
+  if p_combo is null or p_combo < 0 or p_combo > 999 then
+    raise exception '콤보가 올바르지 않아요.' using errcode = '22023';
+  end if;
+
+  select * into v_prev
+    from private.sinsupang_scores s
+   where s.member_id = v_actor.member_id;
+
+  if not found then
+    v_best := p_score;
+    v_combo := p_combo::smallint;
+    v_new  := p_score > 0;
+    insert into private.sinsupang_scores (member_id, best_score, best_combo)
+    values (v_actor.member_id, v_best, v_combo);
+  else
+    v_best := greatest(v_prev.best_score, p_score);
+    v_combo := greatest(v_prev.best_combo, p_combo::smallint);
+    v_new  := p_score > v_prev.best_score;
+    if v_best <> v_prev.best_score or v_combo <> v_prev.best_combo then
+      update private.sinsupang_scores
+         set best_score = v_best,
+             best_combo = v_combo,
+             updated_at = now()
+       where member_id = v_actor.member_id;
+    end if;
+  end if;
+
+  select count(*) + 1
+    into v_rank
+    from private.sinsupang_scores s
+    join private.members m on m.id = s.member_id
+   where m.status = 'active'
+     and s.best_score > v_best;
+
+  return jsonb_build_object(
+    'ok', true,
+    'best_score', v_best,
+    'best_combo', v_combo,
+    'is_new_best', v_new,
+    'rank', v_rank
+  );
+end;
+$fn$;
+
+comment on function public.submit_sinsupang_score(text, integer, integer) is
+  '신수팡 점수 제출 — 로그인한 문파원의 최고 점수만 갱신하고 { ok, best_score, best_combo, is_new_best, rank } 를 돌려줍니다.';
+
+-- 문파 랭킹 — 점수 높은 순(같으면 먼저 올린 사람이 위) · 활성 문파원만 · 최대 50명
+create or replace function public.list_sinsupang_ranking(
+  p_token text,
+  p_limit integer default 20
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $fn$
+declare
+  v_actor  private.session_actor := private.current_member(p_token);
+  v_limit  integer := least(greatest(coalesce(p_limit, 20), 1), 50);
+  v_result jsonb;
+begin
+  select coalesce(jsonb_agg(s.item order by s.rank_no, s.nickname), '[]'::jsonb)
+    into v_result
+    from (
+      select jsonb_build_object(
+               'rank', r.rank_no,
+               'member_id', r.id,
+               'nickname', r.nickname,
+               'role', r.member_role,
+               'avatar', r.avatar,
+               'best_score', r.best_score,
+               'best_combo', r.best_combo,
+               'updated_at', r.updated_at
+             ) as item,
+             r.rank_no,
+             r.nickname
+        from (
+          select m.id,
+                 m.nickname,
+                 m.member_role,
+                 m.avatar,
+                 s.best_score,
+                 s.best_combo,
+                 s.updated_at,
+                 rank() over (order by s.best_score desc, s.updated_at asc) as rank_no
+            from private.sinsupang_scores s
+            join private.members m on m.id = s.member_id
+           where m.status = 'active'
+        ) r
+       order by r.rank_no, r.nickname
+       limit v_limit
+    ) s;
+
+  return v_result;
+end;
+$fn$;
+
+comment on function public.list_sinsupang_ranking(text, integer) is
+  '신수팡 문파 랭킹 — 점수 높은 순(같으면 먼저 올린 사람이 위). 활성 문파원만, 최대 50명.';
+
+
+-- ===========================================================================
 -- 11. 초기 문주(관리자) 확보
 --    · 첫 가입자 규칙: 문주가 한 명도 없을 때 register_member 로 들어온 첫 사람이
 --      자동으로 admin 이 됩니다. (배포 직후 본인이 먼저 가입하세요.)
@@ -3171,6 +3320,7 @@ begin
          'create_guide', 'update_guide', 'delete_guide',
          'admin_delete_chat_message', 'admin_delete_album_post', 'admin_list_audit',
          'submit_gyeongdan_score', 'list_gyeongdan_ranking',
+         'submit_sinsupang_score', 'list_sinsupang_ranking',
          'bootstrap_admin'
        )
   loop

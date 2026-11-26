@@ -439,14 +439,31 @@ svg { max-width: 100%; }
 .topbar__game:active { transform: scale(.96); }
 .topbar__game-icon { font-size: 12px; line-height: 1; }
 .topbar__game-text { line-height: 1; }
-/* 미니게임 버튼이 생겨도 오른쪽 배지는 맨 끝에 붙습니다 */
+/* 미니게임 버튼이 둘이라도 오른쪽 배지는 맨 끝에 붙습니다 */
+.topbar__game + .topbar__game { margin-left: 0; }
 .topbar__game + .topbar__live { margin-left: 0; }
-@media (max-width: 360px) {
-  .topbar { gap: 8px; padding-left: 12px; padding-right: 12px; }
-  .topbar__game { padding: 5px 7px; gap: 3px; font-size: 10px; }
-  .topbar__sub { letter-spacing: .1em; }
+/* 🐾 신수팡 — 경단만들기 옆에 나란히 */
+.topbar__game--paw {
+  border-color: rgba(147, 209, 189, .38);
+  background: rgba(127, 209, 189, .12);
+  color: #bfe9db;
 }
-/* 아주 좁은 화면 — 미니게임 버튼은 🍡 아이콘만 남겨 한 줄을 지킵니다 */
+.topbar__game--paw:hover { background: rgba(127, 209, 189, .22); border-color: rgba(147, 209, 189, .6); }
+@media (max-width: 400px) {
+  .topbar { gap: 7px; padding-left: 12px; padding-right: 12px; }
+  .topbar__game { padding: 5px 8px; gap: 3px; font-size: 10px; letter-spacing: -.02em; }
+  .topbar__game-icon { font-size: 11px; }
+  .topbar__sub { letter-spacing: .1em; font-size: 9px; }
+  .topbar__live { padding: 5px 8px; font-size: 10px; gap: 5px; }
+}
+@media (max-width: 360px) {
+  .topbar { gap: 6px; padding-left: 10px; padding-right: 10px; }
+  .topbar__game { padding: 5px 7px; font-size: 9.5px; }
+  .topbar__game-icon { font-size: 10px; }
+  .topbar__text strong { font-size: 15px; }
+  .topbar__live { padding: 5px 7px; font-size: 9.5px; }
+}
+/* 아주 좁은 화면 — 두 버튼 모두 아이콘만 남겨 한 줄을 지킵니다 */
 @media (max-width: 340px) {
   .topbar__game-text { display: none; }
   .topbar__game { padding: 6px 8px; }
@@ -2843,9 +2860,228 @@ body.is-locked { overflow: hidden; }
   line-height: 1.7;
   color: #e2d6bf;
   text-align: center;
+  word-break: keep-all;
 }
 .gd-rank__empty b { color: var(--gold-soft); }
 
+
+/* =========================================================
+   🐾 신수팡 — 3매치 퍼즐 (경단만들기와 같은 한지 · 금빛)
+   ========================================================= */
+.sinsupang {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    radial-gradient(120% 62% at 50% 0%, rgba(34, 46, 84, .55), transparent 62%),
+    radial-gradient(90% 55% at 50% 100%, rgba(196, 141, 84, .22), transparent 72%),
+    rgba(4, 6, 12, .88);
+  backdrop-filter: blur(6px);
+  padding: max(8px, env(safe-area-inset-top, 0px)) 8px max(8px, var(--safe-b));
+}
+.sinsupang__panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 440px;
+  height: auto;
+  max-height: 100%;
+  padding: 10px 12px calc(10px + var(--safe-b));
+  border-radius: 22px;
+  border: 1px solid rgba(233, 199, 140, .42);
+  background:
+    radial-gradient(120% 42% at 50% 102%, rgba(206, 148, 88, .34), transparent 72%),
+    linear-gradient(180deg, #121a2e 0%, #18213c 26%, #33261f 64%, #563823 100%);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, .62), inset 0 1px 0 rgba(255, 226, 176, .1);
+  overflow: hidden;
+  animation: gdIn .28s ease both;
+}
+.sinsupang__panel::after {
+  content: "";
+  position: absolute;
+  inset: 5px;
+  border-radius: 18px;
+  border: 1px solid rgba(240, 217, 165, .14);
+  pointer-events: none;
+}
+.sinsupang__head {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 2px 6px;
+}
+.sinsupang__title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 17px;
+  letter-spacing: .04em;
+  color: #f8eeda;
+}
+.sinsupang__title em {
+  font-style: normal;
+  font-family: var(--sans);
+  font-size: 9.5px;
+  letter-spacing: .06em;
+  color: rgba(230, 199, 146, .8);
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(233, 199, 140, .28);
+}
+.sinsupang__mark { font-size: 18px; line-height: 1; }
+.sinsupang__close {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid rgba(233, 199, 140, .3);
+  background: rgba(14, 22, 44, .72);
+  color: rgba(240, 217, 165, .85);
+}
+.sinsupang__close:hover { color: #fff6e2; }
+
+.sinsupang__hud {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.sinsupang__hud .gd-stat { padding: 6px 10px; }
+.sinsupang__hud .gd-stat__value { font-size: 20px; }
+.gd-stat--combo .gd-stat__value { color: #8fe3c4; }
+
+/* ---- 60초 게이지 ---- */
+.sinsupang__timer {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  height: 17px;
+  margin: 0 0 2px;
+  border-radius: 999px;
+  border: 1px solid rgba(233, 199, 140, .34);
+  background: rgba(10, 14, 24, .8);
+  overflow: hidden;
+}
+.sp-timer__fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #6fc9b4 0%, #cfe3a8 55%, #f0d9a5 100%);
+  transition: width .12s linear, background .3s ease;
+}
+.sp-timer__text {
+  position: relative;
+  display: block;
+  line-height: 17px;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .06em;
+  color: #10202a;
+  font-variant-numeric: tabular-nums;
+}
+.sinsupang__timer.is-urgent { border-color: rgba(255, 106, 106, .7); }
+.sinsupang__timer.is-urgent .sp-timer__fill { background: linear-gradient(90deg, #ff8a6a, #ff4646); }
+.sinsupang__timer.is-urgent .sp-timer__text { color: #fff3f0; animation: spPulse .6s ease-in-out infinite alternate; }
+@keyframes spPulse { from { opacity: .78; } to { opacity: 1; } }
+
+/* ---- 놀이판 (정사각) ---- */
+.sinsupang__stage {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  max-width: calc(100vh - 300px);
+  max-width: calc(100dvh - 300px);
+  margin: 6px auto 0;
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid rgba(233, 199, 140, .5);
+  background: #241d2a;
+  box-shadow: inset 0 0 26px rgba(28, 14, 6, .55), 0 0 0 1px rgba(240, 217, 165, .08);
+  touch-action: none;
+}
+.sinsupang__canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.sinsupang__over {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  padding: 14px;
+  background: rgba(10, 10, 16, .74);
+  backdrop-filter: blur(3px);
+  animation: gdFade .22s ease both;
+}
+
+.sinsupang__actions {
+  flex: none;
+  display: grid;
+  grid-template-columns: 1.15fr 1fr;
+  gap: 6px;
+  padding: 8px 2px 0;
+}
+.sinsupang__hint {
+  flex: none;
+  min-height: 15px;
+  margin: 5px 2px 0;
+  font-size: 10px;
+  line-height: 1.5;
+  color: rgba(226, 205, 170, .72);
+  text-align: center;
+}
+.sinsupang__credit {
+  flex: none;
+  margin: 2px 6px 0;
+  font-size: 11px;
+  line-height: 1.45;
+  letter-spacing: -.01em;
+  color: rgba(226, 205, 170, .42);
+  text-align: center;
+  word-break: keep-all;
+}
+.sinsupang__sheet {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  padding: 14px 12px calc(14px + var(--safe-b));
+  border-radius: 22px;
+  background: linear-gradient(180deg, #161f38, #2c2119 72%, #402a1c);
+  overflow-y: auto;
+  scrollbar-width: none;
+  animation: gdFade .2s ease both;
+}
+.sinsupang__sheet::-webkit-scrollbar { display: none; }
 
 /* =========================================================
    ⚔️ 도술 효율 · 평타 빈 시간 계산기 — 하단 「도술」 탭
