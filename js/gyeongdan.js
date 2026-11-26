@@ -8,7 +8,8 @@
  *    - 경단의 충돌 경계는 그림(tier-*.png)의 몸통 외곽선을 24방향으로 그대로 재어 만듭니다
  *      (반지름 0.87~0.95배 — 그림과 같은 자리). 그래서 보이는 데로 맞닿고, 같은 단계는
  *      닿는 순간 합쳐집니다. 120Hz 고정 스텝 · 겹침 보정 8회 · 0.24초 잠들기.
- *    - 데드라인은 판 높이 8.5% — 쉬고 있는 경단이 넘으면 그 자리에서 끝.
+ *    - 데드라인은 판 높이 8.5% — 자리를 잡은(받쳐진 채 거의 멈춘) 경단이 선에 닿은 채
+ *      1초 버티면 끝. 떨어지거나 합쳐지며 잠깐 스치는 것은 끝나지 않습니다.
  *  · 경단 11단계(박쥐단 … 백운단)의 그림은 「도깨비의 세계」 인게임 화면에서 오려낸
  *    assets/gyeongdan/tier-1~11.png 를 기준 지름(2r)에 맞춰 그립니다(1~9단계는 고화질 화면에서 새로 뽑음).
  *    그림을 못 받으면 아래 Canvas 코드의 벡터 그림이 대신 나옵니다.
@@ -276,6 +277,7 @@
       supported: false,
       sleeping: false,
       quiet: 0,
+      overTime: 0,
       glow: 0
     };
   }
@@ -302,6 +304,7 @@
       dropCool: 0,
       maxTier: 1,
       warn: 0,
+      warnT: 0,
       shake: 0,
       lastMerge: 0
     };
@@ -370,6 +373,9 @@
   var FRIC_H = 0.43;
   var SLEEP_TIME = 0.24;
   var BAND = 0.085;         // 데드라인 — 판 높이의 8.5% 위
+  var OVER_TIME = 1.0;      // 데드라인에 걸린 채 이만큼 버티면 게임 오버 (초)
+  var OVER_SLOW = 0.5;      // 이보다 빠르게 움직이는 경단은 '아직 자리 잡는 중' — 시간이 쌓이지 않습니다 (판 크기/초)
+  var OVER_FADE = 2.5;      // 선에서 벗어나면 이 속도로 타이머가 줄어듭니다 (배/초)
   var DROP_COOL = 0.31;     // 경단 사이 쿨타임(초)
   var SEP_ITER = 8;         // 겹침 보정 · 충격 반복 횟수
   /* 같은 단계 둘은 보이는 외곽선이 이만큼 안쪽까지 오면 '닿은 것'으로 봅니다.
@@ -427,7 +433,7 @@
     var bodies = S.bodies;
     for (var i = 0; i < bodies.length; i++) {
       var b = bodies[i];
-      if (b.held || b.sleeping) { continue; }
+      if (b.held || b.pinned || b.sleeping) { continue; }
       var stand = !!b.supported;
       b.supported = false;
       b.vy = Math.min(H * VY_CAP, b.vy + H * (stand ? GRAV_REST : GRAV) * dt);
@@ -492,7 +498,7 @@
     var bodies = S.bodies;
     for (var i = 0; i < bodies.length; i++) {
       var o = bodies[i];
-      if (!o.sleeping || o.dead || o.held) { continue; }
+      if (!o.sleeping || o.dead || o.held || o.pinned) { continue; }
       var dx = o.x - x, dy = o.y - y;
       var reach = r + o.r + 2;
       if (dx * dx + dy * dy <= reach * reach) { o.sleeping = false; o.quiet = 0; }
@@ -679,7 +685,7 @@
 
     for (i = 0; i < bodies.length; i++) {
       var body = bodies[i], s = states[i];
-      if (body.held) { body.supported = true; continue; }   // 테스트용 고정 — 늘 버티는 것으로 봅니다
+      if (body.held || body.pinned) { body.supported = true; continue; }   // 테스트용 고정 — 늘 버티는 것으로 봅니다
       var stand = s.below && (s.flat || s.left + s.right > 0.04);
       body.supported = s.below;
       if (body.sleeping && stand) { continue; }
@@ -700,18 +706,31 @@
     }
   }
 
-  /** 데드라인 — 쉬고 있는 경단이 판 위 8.5% 선을 넘으면 그 자리에서 끝 */
-  function checkDeadline() {
+  /** 데드라인 — 자리를 잡은 경단이 판 위 8.5% 선에 닿은 채 OVER_TIME(1초) 동안 버티면 끝.
+      떨어지는 중이거나 합쳐지며 부풀어 오른 순간 잠깐 스치는 경단은 시간이 쌓이지 않습니다.
+      선 아래로 내려가면 쌓인 시간은 줄어들어, 잠깐 닿았다 빠지는 경우에는 끝나지 않습니다. */
+  function checkDeadline(dt) {
     if (S.over) { return; }
     var band = H * BAND;
-    var hot = 0;
+    var hot = 0, most = 0;
     for (var i = 0; i < S.bodies.length; i++) {
       var b = S.bodies[i];
-      if (!b.supported) { continue; }
-      if (b.y - b.r * shapeOf(b)[18] <= band) { hot += 1; }
+      if (b.dead || b.held) { continue; }
+      var touching = b.y - b.r * shapeOf(b)[18] <= band;   // 선에 닿아 있는가
+      if (touching && b.supported) { hot += 1; }
+      /* 받쳐진 채 거의 멈춰 있어야 '자리를 잡은 것'으로 봅니다 */
+      var settled = touching && b.supported &&
+        Math.abs(b.vy) < H * OVER_SLOW && Math.abs(b.vx) < W * OVER_SLOW;
+      if (settled) {
+        b.overTime = (b.overTime || 0) + dt;
+        if (b.overTime > most) { most = b.overTime; }
+      } else if (b.overTime) {
+        b.overTime = Math.max(0, b.overTime - dt * OVER_FADE);
+      }
     }
     S.warn = hot;
-    if (hot > 0) { gameOver('경단이 데드라인에 닿았어요'); }
+    S.warnT = Math.min(1, most / OVER_TIME);
+    if (most >= OVER_TIME) { gameOver('경단이 데드라인에 닿았어요'); }
   }
 
   /** 한 걸음의 물리 — 중력 · 접촉 · 겹침 보정 · 충격 */
@@ -727,7 +746,7 @@
     var fastest = 0;
     for (var i = 0; i < S.bodies.length; i++) {
       var o = S.bodies[i];
-      if (o.sleeping || o.held) { continue; }
+      if (o.sleeping || o.held || o.pinned) { continue; }
       var v = Math.abs(o.vy) > Math.abs(o.vx) ? Math.abs(o.vy) : Math.abs(o.vx);
       if (v > fastest) { fastest = v; }
     }
@@ -744,7 +763,7 @@
     stepParticles(dt);
     if (S.dropCool > 0) { S.dropCool = Math.max(0, S.dropCool - dt); }
     if (S.shake > 0) { S.shake = Math.max(0, S.shake - dt * 2.2); }
-    checkDeadline();
+    checkDeadline(dt);
   }
 
   /* ===================================================================
@@ -1863,13 +1882,16 @@
     ctx.stroke();
     ctx.restore();
 
-    /* 데드라인 — 가는 점선 */
+    /* 데드라인 — 가는 점선. 경단이 선에 걸려 시간이 쌓이는 동안 점점 붉고 굵게 깜빡입니다. */
     var hot = S && S.warn > 0;
+    var heat = S ? (S.warnT || 0) : 0;
     var bandY = H * BAND;
     ctx.save();
     ctx.setLineDash([4, 6]);
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = hot ? 'rgba(255, 160, 140, .95)' : 'rgba(255, 217, 143, .85)';
+    ctx.lineWidth = hot ? 1 + heat * 1.2 : 1;
+    ctx.strokeStyle = hot
+      ? 'rgba(255, 150, 128, ' + (0.6 + 0.35 * heat).toFixed(2) + ')'
+      : 'rgba(255, 217, 143, .85)';
     ctx.beginPath();
     ctx.moveTo(W * 0.08, bandY);
     ctx.lineTo(W * 0.92, bandY);
@@ -2663,13 +2685,13 @@
         drawGyeongdan(g, t, s2 / 2, s2 / 2, s2 * 0.3, 1);
         return c.toDataURL('image/png');
       },
-      add: function (tier, x, y, vx) {
+      add: function (tier, x, y, vx, vy) {
         if (!S) { return null; }
         var t = clampInt(tier, 1, LAST_TIER, 1);
         var rr = rad(t);
         var body = makeBody(t, clamp(x || W / 2, rr, W - rr),
           clamp(y === undefined ? H - rr - 4 : y, rr, H - rr),
-          Number(vx) || 0, 0);
+          Number(vx) || 0, Number(vy) || 0);
         body.age = 1;
         S.bodies.push(body);
         if (t > S.maxTier) { S.maxTier = t; }
@@ -2677,12 +2699,12 @@
       },
       setNext: function (tier) { if (S) { S.nextTier = clampInt(tier, 1, LAST_TIER, 1); } },
       clear: function () { if (S) { S.bodies = []; S.picks = []; S.dirty = true; } },
-      bodies: function () { return S ? S.bodies.map(function (b) { return { id: b.id, tier: b.tier, x: r2(b.x), y: r2(b.y), r: b.r, angle: b.angle, av: b.av, sleep: !!b.sleeping, sup: !!b.supported, held: !!b.held }; }) : []; },
+      bodies: function () { return S ? S.bodies.map(function (b) { return { id: b.id, tier: b.tier, x: r2(b.x), y: r2(b.y), r: b.r, angle: b.angle, av: b.av, sleep: !!b.sleeping, sup: !!b.supported, held: !!b.held, pin: !!b.pinned, over: r2(b.overTime || 0) }; }) : []; },
       state: function () {
         return S ? {
           score: S.score, best: S.best, maxTier: S.maxTier, over: S.over,
           tool: S.tool,
-          tool: S.tool, count: S.bodies.length, warn: S.warn, nextTier: S.nextTier
+          count: S.bodies.length, warn: S.warn, warnT: r2(S.warnT || 0), nextTier: S.nextTier
         } : null;
       },
       setScore: function (n) { if (S) { S.score = Math.max(0, Math.floor(n)); renderScore(); } },
@@ -2692,12 +2714,18 @@
         var id = this.add(tier, x, y);
         for (var i = 0; i < S.bodies.length; i++) {
           if (S.bodies[i].id === id) {
-            S.bodies[i].held = true;
+            S.bodies[i].pinned = true;
             S.bodies[i].supported = true;
             S.bodies[i].age = 2;
           }
         }
         return id;
+      },
+      /** 테스트용 — 고정해 둔 경단을 풀어 다시 떨어지게 합니다. */
+      unpin: function (id) {
+        for (var i = 0; S && i < S.bodies.length; i++) {
+          if (S.bodies[i].id === id) { S.bodies[i].pinned = false; }
+        }
       },
       world: function () { return { W: W, H: H, scale: view.scale, ox: view.ox, oy: view.oy }; },
       /** 테스트용 — 그림의 몸통(보이는 외곽선) 반지름이 기준 반지름의 몇 배인지 */
