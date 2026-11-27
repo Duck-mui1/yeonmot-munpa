@@ -82,12 +82,15 @@ private.survival_scores (member_id uuid PK, best_score int 0~100000000, updated_
   (`private.guest_game_links` · `private.guest_game_scores` 의 check 제약을 새 목록으로 다시 걸고,
   `create_guest_game_link` · `submit_guest_game_score` · `list_guest_game_ranking` 을 다시 만듭니다).
   이미 만든 링크·게스트 기록은 그대로입니다.
+- **체험 링크를 아직 설치하지 않은 DB**(`migration-guest-links.sql` 전)에서는 그 부분만 건너뛰고
+  안내를 띄웁니다 — 연못 생존기 랭킹은 그대로 설치됩니다. 체험 링크까지 쓰려면
+  `migration-guest-links.sql` 을 실행한 뒤 이 파일을 한 번 더 실행하세요(여러 번 실행해도 안전).
 
 ## 테스트
 
 | 무엇 | 어떻게 |
 | --- | --- |
-| DB | `yeonmot-tests/db_sv_run/run_tests.sh` — 옛 DB + 마이그레이션 / 새 설치본 / 멱등 / 회귀 10종 (`fail=0`) |
+| DB | `yeonmot-tests/db_sv_run/run_tests.sh` — 옛 DB + 마이그레이션 / 체험 링크 없는 옛 DB / 새 설치본 / 멱등 / 회귀 10종 (`fail=0`) |
 | DB 단위 | `yeonmot-tests/db_test_survival.sql` — 12묶음(첫 기록 · 최고만 갱신 · 순위 · limit · 22023 · 28000 · 강퇴 · anon · 체험 링크) |
 | 화면 | `LD_LIBRARY_PATH=… python3 yeonmot-tests/test_survival.py` (95개 확인) |
 | 스크린샷 | `python3 yeonmot-tests/shot_v47_survival.py` → `downloads/v47_*.png` |

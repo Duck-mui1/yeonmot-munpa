@@ -19,11 +19,14 @@
 --         랭킹 목록 { rank, member_id, nickname, role, avatar, best_score, updated_at }
 --         (오래 버틴 순 · 같으면 먼저 올린 사람이 위 · 활성 문파원만 · 최대 50명)
 --
---  ■ 무엇이 더해지나 ② 외부 체험 링크의 네 번째 게임
+--  ■ 무엇이 더해지나 ② 외부 체험 링크의 네 번째 게임 (체험 링크를 이미 쓰는 DB 라면)
 --     · private.guest_game_links.game · private.guest_game_scores.game 이 허용하는 게임에
 --       'survival'(연못 생존기)을 더합니다. (이미 만든 링크·게스트 기록은 그대로)
 --     · create_guest_game_link · submit_guest_game_score · list_guest_game_ranking 을
 --       'survival' 을 아는 판으로 다시 만듭니다. (동작·권한·거절 규칙은 v46 과 같습니다)
+--     · 체험 링크 표가 아직 없는 DB(마이그레이션 전)에서는 **이 부분만 건너뛰고 안내를 띄웁니다.**
+--       연못 생존기 랭킹은 그대로 설치되며, 체험 링크를 쓰려면 supabase/migration-guest-links.sql 을
+--       먼저(또는 이 파일 뒤에) 실행하면 됩니다.
 --
 --  ■ 게임은 마이그레이션 전에도 그대로 돕니다
 --     앱은 함수가 없으면(PGRST202) 이 기기(localStorage)의 최고 기록으로 계속 플레이하고,
@@ -38,17 +41,12 @@
 --       실패하면 아무것도 바뀌지 않고 오류로 알려 줍니다.
 -- ============================================================================
 
--- 0) 이미 설치된 DB 인지 먼저 확인 (체험 링크 표도 이 파일이 손보므로 함께 확인)
+-- 0) 이미 설치된 DB 인지 먼저 확인
 do $$
 begin
   if to_regclass('private.members') is null
      or to_regprocedure('private.current_member(text)') is null then
     raise exception '연못 DB 가 아직 준비되지 않았습니다. 먼저 supabase/schema.sql 을 실행해 주세요.';
-  end if;
-  if to_regclass('private.guest_game_links') is null
-     or to_regclass('private.guest_game_scores') is null
-     or to_regprocedure('public.create_guest_game_link(text,text,integer)') is null then
-    raise exception '외부 체험 링크가 아직 준비되지 않았습니다. 먼저 supabase/migration-guest-links.sql 을 실행해 주세요.';
   end if;
 end $$;
 
@@ -195,7 +193,17 @@ comment on function public.list_survival_ranking(text, integer) is
 -- ============================================================================
 -- ④ 외부 체험 링크 — 게임 목록에 'survival'(연못 생존기) 더하기
 --     · 표의 check 제약을 새 목록으로 다시 겁니다(이미 있는 행은 그대로 통과).
+--     · 체험 링크를 아직 설치하지 않은 DB 면 이 부분만 건너뜁니다(연못 생존기 랭킹은 그대로 설치).
 -- ============================================================================
+do $guest$
+begin
+  if to_regclass('private.guest_game_links') is null
+     or to_regclass('private.guest_game_scores') is null then
+    raise notice '외부 체험 링크 표가 아직 없어 [체험 링크의 네 번째 게임] 부분을 건너뜁니다. 연못 생존기 랭킹은 설치되었습니다. 체험 링크까지 쓰려면 supabase/migration-guest-links.sql 을 실행한 뒤 이 파일을 한 번 더 실행해 주세요.';
+    return;
+  end if;
+
+  execute $ddl$
 alter table private.guest_game_links
   drop constraint if exists guest_game_links_game_kind;
 alter table private.guest_game_links
@@ -429,6 +437,11 @@ begin
   return coalesce(v_result, '[]'::jsonb);
 end;
 $fn$;
+  $ddl$;
+
+  raise notice '외부 체험 링크 — 게임 목록에 survival(연못 생존기)을 더했습니다.';
+end $guest$;
+
 
 -- ============================================================================
 -- ⑧ 함수는 이름마다 하나씩 (PostgREST 가 고르지 못하는 상태가 아님)
@@ -456,13 +469,19 @@ grant execute on function public.submit_survival_score(text, integer) to anon, a
 revoke all on function public.list_survival_ranking(text, integer) from public;
 grant execute on function public.list_survival_ranking(text, integer) to anon, authenticated;
 
-/* 체험 링크 함수는 다시 만들었으므로 권한도 다시 겁니다 */
-revoke all on function public.create_guest_game_link(text, text, integer) from public;
-grant execute on function public.create_guest_game_link(text, text, integer) to anon, authenticated;
-revoke all on function public.submit_guest_game_score(text, text, text, integer, jsonb) from public;
-grant execute on function public.submit_guest_game_score(text, text, text, integer, jsonb) to anon, authenticated;
-revoke all on function public.list_guest_game_ranking(text, text, integer) from public;
-grant execute on function public.list_guest_game_ranking(text, text, integer) to anon, authenticated;
+/* 체험 링크 함수를 다시 만들었으므로 권한도 다시 겁니다 (표가 없는 DB 면 함수도 없으니 건너뜁니다) */
+do $grant$
+begin
+  if to_regprocedure('public.create_guest_game_link(text,text,integer)') is null then
+    return;
+  end if;
+  execute 'revoke all on function public.create_guest_game_link(text, text, integer) from public';
+  execute 'grant execute on function public.create_guest_game_link(text, text, integer) to anon, authenticated';
+  execute 'revoke all on function public.submit_guest_game_score(text, text, text, integer, jsonb) from public';
+  execute 'grant execute on function public.submit_guest_game_score(text, text, text, integer, jsonb) to anon, authenticated';
+  execute 'revoke all on function public.list_guest_game_ranking(text, text, integer) from public';
+  execute 'grant execute on function public.list_guest_game_ranking(text, text, integer) to anon, authenticated';
+end $grant$;
 
 
 -- ============================================================================
@@ -615,6 +634,12 @@ begin
       raise exception '강퇴된 문파원이 랭킹에 남았습니다: %', v_rows;
     end if;
 
+    -- ⑨~⑫ 체험 링크 — 표가 없는 DB(마이그레이션 전)라면 이 부분만 건너뜁니다
+    if to_regclass('private.guest_game_links') is null then
+      raise notice '연못 생존기 확인 — 체험 링크 표가 없어 [체험 링크 확인] 부분은 건너뜁니다.';
+      raise exception 'rollback-check';
+    end if;
+
     -- ⑨ 체험 링크 — '연못 생존기' 하나만 열린 링크로 게스트 기록이 쌓입니다
     v_link := public.create_guest_game_link(v_t_admin, 'survival', 30);
     if v_link->>'game' <> 'survival' then
@@ -669,6 +694,8 @@ begin
   end;
 
   raise notice '연못 생존기 확인 — 첫 기록 · 최고 기록만 갱신 · 순위 · 랭킹 목록 · 잘못된 값 거절이 모두 정상입니다. 확인용 행은 저장되지 않았습니다.';
-  raise notice '외부 체험 링크 확인 — survival 링크 발급·확인·게스트 기록·다른 게임 거절·전체 링크가 모두 정상입니다.';
+  if to_regclass('private.guest_game_links') is not null then
+    raise notice '외부 체험 링크 확인 — survival 링크 발급·확인·게스트 기록·다른 게임 거절·전체 링크가 모두 정상입니다.';
+  end if;
   raise notice '연못 마이그레이션 완료 — 🦆 연못 생존기 문파 랭킹을 쓸 수 있습니다.';
 end $$;
