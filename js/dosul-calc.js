@@ -50,6 +50,45 @@
   var TRANS6 = DATA.trans6 || {};
   var SPECIAL = DATA.special || { label: '특별', normalLabel: '일반', gradeMap: {}, effectIds: [] };
 
+  /* ---------------------------------------------------------
+     🏹 사냥 계산용 데이터 — 도술별 최대 타격 대상 수 · 다중 감소 · 적을수록 증가
+     (dosul-data.js hunt · 2026-11-27 덱깨비 도술 도감 확인값)
+     --------------------------------------------------------- */
+  var HUNT = DATA.hunt || { targets: {}, falloff: {}, focus: {} };
+
+  /* 한 번에 맞히는 최대 대상 수 — 공개값이 없으면 1명으로 봅니다 */
+  function huntTargets(id) {
+    var v = HUNT.targets ? HUNT.targets[String(id)] : 0;
+    var n = Math.round(Number(v) || 0);
+    return n > 0 ? n : 1;
+  }
+
+  /* 다중 타격 피해 감소 배수 — n명을 맞혔을 때의 피해 배율(1 = 감소 없음)
+     · from 인원에서 감소 0%, at 인원에서 pct% 까지 (사이 인원은 선형 추정)
+     · at 위로는 pct% 로 고정 */
+  function huntFalloffMul(id, n) {
+    var f = HUNT.falloff ? HUNT.falloff[String(id)] : null;
+    if (!f || !(n > 0)) { return 1; }
+    var from = Number(f.from) || 0;
+    var at = Number(f.at) || from;
+    var pct = Math.max(0, Math.min(100, Number(f.pct) || 0));
+    if (!from || n < from) { return 1; }
+    var span = Math.max(1, at - (from - 1));
+    var red = (pct / 100) * Math.min(1, (n - (from - 1)) / span);
+    return Math.max(1 - pct / 100, 1 - red);
+  }
+
+  /* 「타격 대상이 적을수록 피해 증가」 모양 — 1명 1.0 · upto명 이상 0 */
+  function huntFocusShape(id, n) {
+    var f = HUNT.focus ? HUNT.focus[String(id)] : null;
+    var upto = f ? (Number(f.upto) || 5) : 5;
+    var t = Math.max(1, Number(n) || 1);
+    if (t >= upto) { return 0; }
+    return (upto - t) / Math.max(1, upto - 1);
+  }
+
+  function huntData() { return HUNT; }
+
   function clamp(n, lo, hi) { return Math.max(lo, Math.min(hi, n)); }
 
   /* ---------------------------------------------------------
@@ -116,13 +155,17 @@
     /* k:'aura' — 그 도술 자신이 아니라 **버프가 돌아가는 동안의 모든 시전**에
        곱해지는 옵션입니다(용맹의 기운 6돌파 +20%(10초)). 시뮬레이터가 따로 곱합니다. */
     var aura = 0;
+    /* k:'one' — 「맞는 인원이 적을수록 피해 증가」(난타 +60% · 요기 폭발 +70%).
+       레이드(단일 보스)에서는 늘 최대치라 그대로 더하지만, 사냥 계산은 맞은 인원으로
+       환산해야 하므로 focusD 로 따로 넘겨 줍니다. */
+    var focusD = 0;
     var list = (t6 && t6.o ? t6.o : []).map(function (o) {
       var isOn = !!(o.id && on6 && (onList.indexOf(o.id) >= 0 || (o.def && !touched)));
       var calc = o.k !== 'text' && (o.d || 0) > 0;
       if (isOn && calc) {
         if (o.k === 'aura') { aura += o.d; }
         else if (o.when) { extraCond += o.d; conds.push({ when: o.when, d: o.d }); }
-        else { extra += o.d; }
+        else { extra += o.d; if (o.id === 'one') { focusD += o.d; } }
       }
       return { id: o.id || '', t: o.t || '', d: o.d || 0, n: o.n || '', k: o.k || '',
         calc: calc, on: isOn, when: o.when || '', def: !!o.def };
@@ -140,7 +183,8 @@
       extra: extra,
       extraCond: extraCond,
       conds: conds,
-      aura: aura
+      aura: aura,
+      focusD: focusD
     };
   }
 
@@ -330,9 +374,12 @@
       /* 돌파: 쿨타임은 그 도술만 줄고(최대 기본의 90%), 계수는 단계 누적 + 6돌파 효과 */
       var cdAfterTrans = Math.max(cdBase * 0.1, cdBase - Math.min(cdBase * 0.9, tr.cdSec));
       var cd = cdAfterTrans * cdMul;
-      var trMul = 1 + (tr.dmgPct + tr.d6 + tr.extra) / 100;
+      /* 사냥 계산(hunt)에서는 「맞는 인원이 적을수록 증가」 옵션을 실제 맞은 인원으로
+         환산하므로, 여기 고정 +% 에서는 빼 둡니다(레이드 계산은 그대로) */
+      var trExtra = (tr.extra || 0) - (config.hunt ? (tr.focusD || 0) : 0);
+      var trMul = 1 + (tr.dmgPct + tr.d6 + trExtra) / 100;
       /* 조건부 돌파 옵션(요기범람 +50%) — 그 상태에서만 곱합니다 */
-      var trMulCond = 1 + (tr.dmgPct + tr.d6 + tr.extra + (tr.extraCond || 0)) / 100;
+      var trMulCond = 1 + (tr.dmgPct + tr.d6 + trExtra + (tr.extraCond || 0)) / 100;
       var condRatio = trMul > 0 ? trMulCond / trMul : 1;
       /* 궁극기 = 상시 피해 + 궁극기 피해(화살촉 3개) / 저격 일반 도술 = 상시 피해 × 저격 +45% / 그 밖 = 상시 피해 */
       var styleMul = (sk.st === 'snipe' && sk.k !== 'ult') ? dmgMul * snipeDmgMul : dmgMul;
@@ -401,7 +448,9 @@
         gearPct: gearPct, gearAllPct: gearAllPct, gearStylePct: gearStylePct,
         trans: tr.step, transDmgPct: tr.dmgPct, transCd: tr.cdSec,
         tr6: tr.t6on, tr6Pct: tr.d6, tr6Text: tr.t6, hasTrans: tr.has,
-        tr6Extra: tr.extra, tr6ExtraCond: tr.extraCond || 0, tr6Opts: tr.opts, sp: isSpecial(sk.id), grade: gradeOf(sk.id),
+        tr6Extra: trExtra, tr6ExtraCond: tr.extraCond || 0, tr6Opts: tr.opts, sp: isSpecial(sk.id), grade: gradeOf(sk.id),
+        /* 사냥 계산용 — 한 번에 맞히는 최대 대상 수 · 「적을수록 증가」 값 */
+        tgt: huntTargets(sk.id), focusD: tr.focusD || 0,
         dbKey: db ? (db.k || '') : '', dbPct: db ? (Number(db.pct) || 0) : 0,
         dbTypes: (db && Array.isArray(db.types)) ? db.types.slice() : [],
         dbInflict: dbI ? (dbI.k || '') : '', dbInflictSec: dbI ? (Number(dbI.sec) || 0) : 0,
@@ -1493,6 +1542,417 @@
     };
   }
 
+  /* =========================================================
+     🏹 사냥터 분당 처치 시뮬레이션 — 2026-11-27
+     ---------------------------------------------------------
+     · 몹 체력 = 평타 N방 = N × 평타 1타 (계산 단위 「타」)
+     · 도술 1회가 한 마리에게 넣는 피해 = (계수 × 평균 배수 ÷ 평타 1타 계수) 타
+     · 맞는 대상 = 살아 있는 몹 가운데 남은 체력이 가장 적은 몹부터 최대 대상 수만큼
+     · 죽은 몹은 죽은 순간 + respawnSec 초에 그 몹만 풀피로 부활(개별 리스폰)
+     · 시작 시 maxMobs 마리가 모두 살아 있음
+     · 다중 감소(심판 6인↑ · 대폭발 4인↑)와 「적을수록 증가」(난타·요기 폭발)를 실제 맞은 인원으로 환산
+     · 도술별 평균 배수는 레이드 계산기(simulate)를 300초 돌려 얻은 시전당 평균 배수를 씁니다
+       (신식 게이지·용맹의 기운·요기범람·저격 화살촉·디버프가 평균으로 들어감)
+     ========================================================= */
+  function clampNum(v, lo, hi, dft) {
+    var n = Number(v);
+    if (!isFinite(n)) { return dft; }
+    return Math.max(lo, Math.min(hi, n));
+  }
+
+  function simulateHunt(config) {
+    var c = config || {};
+    var HD = HUNT.defaults || { killHits: 10, maxMobs: 13, respawnSec: 5, duration: 180 };
+    var cfg = {
+      slots: c.slots || [],
+      duration: clampNum(c.duration, 1, 600, HD.duration || 180),
+      cdReducePct: c.cdReducePct || 0,
+      castMode: c.castMode || 'delay',
+      castScale: c.castScale || 1,
+      chargeFull: c.chargeFull !== false,
+      autoInterval: c.autoInterval > 0 ? c.autoInterval : 1,
+      gap: c.gap > 0 ? c.gap : 0,
+      autoCoeff: c.autoCoeff >= 0 ? c.autoCoeff : 100,
+      ultFirst: c.ultFirst !== false,
+      useUlt: c.useUlt !== false,
+      castOrder: Array.isArray(c.castOrder) ? c.castOrder : null,
+      toggles: c.toggles || {},
+      override: c.override || {},
+      enhance: c.enhance || {},
+      trans: c.trans || {},
+      tr6: c.tr6 || {},
+      chain: c.chain || {},
+      debuffOn: (c.debuffOn && typeof c.debuffOn === 'object') ? c.debuffOn : {},
+      allDosulDmgPct: c.allDosulDmgPct || 0,
+      styleDmgPct: (c.styleDmgPct && typeof c.styleDmgPct === 'object') ? c.styleDmgPct : {},
+      hunt: true,
+      killHits: clampNum(c.killHits, 0.5, 2000, HD.killHits || 10),
+      maxMobs: Math.round(clampNum(c.maxMobs, 1, 60, HD.maxMobs || 13)),
+      respawnSec: clampNum(c.respawnSec, 0.5, 120, HD.respawnSec || 5),
+      huntAuto: clampNum(c.huntAutoCoeff != null ? c.huntAutoCoeff : (HUNT.autoCoeff || 300), 10, 3000, 300),
+      /* 치명타 — 기본 50%(2026-11-27 준형 님 지시) · 치명타 피해 증가 기본 +20%
+         평타 타수(몹 체력)는 「치명타 50% · 치타피해 +20%」에서 잰 기준이므로,
+         다른 확률로 바꾸면 그 기준 대비 기대 피해 배수로 환산합니다:
+           (1 + p × cd) ÷ (1 + 0.5 × 0.2) */
+      critPct: clampNum(c.critPct, 0, 100, 50),
+      critDmgPct: clampNum(c.critDmgPct, 0, 500, 20),
+      /* 생존 계산 — 내 최대 체력 · 몹 1방 피격 · 몹 공격 주기 (0이면 생존 계산 생략) */
+      maxHp: clampNum(c.maxHp, 0, 1e9, 0),
+      mobDmg: clampNum(c.mobDmg, 0, 1e9, 0),
+      mobAtkInterval: clampNum(c.mobAtkInterval, 0.2, 30, 2),
+      /* 헌신 회복 — 체력이 이 % 이하가 되면 회복 도술을 최우선으로 씁니다.
+         회복량 계수는 공개 자료에 없어 「최대 체력 %」로 받습니다(기본 30%). */
+      healAtPct: clampNum(c.healAtPct, 0, 99, 70),
+      healPct: clampNum(c.healPct, 0, 500, 30)
+    };
+    var critFactor = (1 + (cfg.critPct / 100) * (cfg.critDmgPct / 100)) /
+      (1 + 0.5 * 0.2);
+    var duration = cfg.duration;
+
+    var built = buildEntries(cfg);
+    var list = built.entries.slice();
+    if (built.ult) { list.push(built.ult); }
+    var n = list.length;
+    var i, k;
+    for (i = 0; i < n; i++) {
+      list[i].order = (list[i].ord != null ? list[i].ord : i);
+      list[i].readyAt = 0;
+      list[i].casts = 0;
+      list[i].kills = 0;
+      list[i].damage = 0;
+      list[i].targets = 0;
+      list[i].fallHits = 0;
+    }
+
+    /* 도술별 평균 배수 — 레이드 계산기 300초를 한 번 돌려 시전당 평균 배수를 씁니다 */
+    var avgMul = {};
+    var probeDps = null;
+    if (n) {
+      var pc = clone(cfg);
+      pc.hunt = true;
+      pc.duration = 300;
+      var pr = simulate(pc);
+      if (pr && pr.ok) {
+        probeDps = pr.dps;
+        pr.rows.forEach(function (r) {
+          var base = (r.coeff || 0) + (r.chain ? r.chain.coeff : 0);
+          if (base > 0 && r.casts > 0) { avgMul[r.id] = r.damage / (base * r.casts); }
+        });
+      }
+    }
+
+    /* 사냥터 상태 */
+    var mobHp = cfg.killHits;
+    var mobs = [];
+    for (i = 0; i < cfg.maxMobs; i++) {
+      mobs.push({ i: i, hp: mobHp, alive: true, deadAt: -1, respawnAt: 0 });
+    }
+    var EPS = 1e-9;
+    var t = 0;
+    var lastT = 0;
+    var kills = 0;
+    var autoCount = 0;
+    var autoMiss = 0;
+    var autoDamage = 0;
+    var autoKills = 0;
+    var skillDamage = 0;
+    var respawnCount = 0;
+    var aliveSec = 0;
+    var killLog = [];
+    var respawnLog = [];
+    var hitLog = [];
+    /* 버티기 — 체력 추적 (몹 1방 피격이 있어야 켜집니다) */
+    var hpTrack = cfg.mobDmg > 0 && cfg.maxHp > 0;
+    var hp = cfg.maxHp;
+    var hpMin = cfg.maxHp;
+    var diedAt = null;
+    var healed = 0;
+    var healCasts = 0;
+    var hpAt60 = null;
+    var guard = 0;
+
+    function aliveCountNow() {
+      var cA = 0;
+      for (var m = 0; m < mobs.length; m++) { if (mobs[m].alive) { cA += 1; } }
+      return cA;
+    }
+    function stepTo(now) {
+      if (now <= lastT + EPS) { return; }
+      var span = now - lastT;
+      /* 사망한 뒤에는 살아 있는 몹 수를 더 세지 않습니다 —
+         duration 까지 계속 쌓아 avgAlive 가 maxMobs 를 넘던 원인 */
+      if (diedAt != null) { lastT = now; return; }
+      var acNow = aliveCountNow();
+      if (hpTrack) {
+        var rate = acNow * cfg.mobDmg / cfg.mobAtkInterval;
+        if (rate > 0) {
+          var need = hp / rate;
+          if (need <= span + EPS) {
+            /* 이 구간 안에서 체력이 바닥 — 살아 있던 need 초까지만 셉니다 */
+            diedAt = lastT + need;
+            aliveSec += acNow * Math.max(0, need);
+            hp = 0;
+            hpMin = 0;
+            lastT = now;
+            return;
+          }
+          hp -= rate * span;
+          if (hp < hpMin) { hpMin = hp; }
+        }
+      }
+      aliveSec += acNow * span;
+      lastT = now;
+    }
+    function respawnUpTo(now) {
+      for (var m = 0; m < mobs.length; m++) {
+        var mb = mobs[m];
+        if (!mb.alive && mb.respawnAt <= now + EPS) {
+          mb.alive = true;
+          mb.hp = mobHp;
+          respawnCount += 1;
+          if (respawnLog.length < 200) {
+            respawnLog.push({ mob: mb.i, killAt: round(mb.deadAt, 3), at: round(now, 3) });
+          }
+        }
+      }
+    }
+    /* 남은 체력이 가장 적은 몹부터 — 같은 체력이면 먼저 나온 칸 */
+    function aliveList() {
+      var out = [];
+      for (var m = 0; m < mobs.length; m++) { if (mobs[m].alive) { out.push(mobs[m]); } }
+      out.sort(function (a, b) { return (a.hp - b.hp) || (a.i - b.i); });
+      return out;
+    }
+    function applyHit(targets, dmgPer, owner, now) {
+      var dealt = 0;
+      var killed = 0;
+      for (var m = 0; m < targets.length; m++) {
+        var mb = targets[m];
+        if (!mb.alive) { continue; }
+        var real = Math.min(mb.hp, dmgPer);
+        dealt += real;
+        mb.hp -= dmgPer;
+        if (mb.hp <= EPS) {
+          mb.alive = false;
+          mb.deadAt = now;
+          mb.respawnAt = now + cfg.respawnSec;
+          killed += 1;
+          kills += 1;
+          if (killLog.length < 3000) {
+            killLog.push({ t: round(now, 3), mob: mb.i, by: owner ? owner.name : '평타', id: owner ? owner.id : 0 });
+          }
+        }
+      }
+      if (owner) {
+        owner.damage += dealt;
+        owner.kills += killed;
+        skillDamage += dealt;
+      } else {
+        autoDamage += dealt;
+        autoKills += killed;
+      }
+      return killed;
+    }
+
+    while (t < duration - EPS && guard++ < 100000) {
+      respawnUpTo(t);
+      stepTo(t);
+      var pick = -1;
+      var pickOrder = Infinity;
+      var nextReady = Infinity;
+      var healPick = -1;
+      var healOrder = Infinity;
+      var healLine = cfg.maxHp * cfg.healAtPct / 100;
+      for (i = 0; i < n; i++) {
+        var e = list[i];
+        /* 회복 도술은 자사에서 「체력이 정한 % 이하」일 때만 씁니다 */
+        if (hpTrack && e.kind === 'heal' && hp > healLine + EPS) { continue; }
+        if (e.readyAt <= t + EPS) {
+          if (e.order < pickOrder) { pickOrder = e.order; pick = i; }
+          if (e.kind === 'heal' && e.order < healOrder) { healOrder = e.order; healPick = i; }
+        } else if (e.readyAt < nextReady) {
+          nextReady = e.readyAt;
+        }
+      }
+      /* 헌신 회복 — 체력이 정한 % 이하이고 회복 도술이 준비돼 있으면 맨 먼저 씁니다
+         (자사에서 헌신을 최우선으로 두는 운용 그대로 · 시전 시간만큼 다른 도술이 밀립니다) */
+      if (diedAt != null) { break; }
+      if (hpTrack && healPick >= 0) { pick = healPick; }
+
+      if (pick >= 0) {
+        var cur = list[pick];
+        var castLen = cur.cast + (cur.chain ? cur.chainCast : 0) + cfg.gap;
+        if (t + castLen > duration) { castLen = duration - t; }
+        if (castLen <= EPS) { break; }
+        var start = t;
+        var end = start + castLen;
+        stepTo(end);
+        respawnUpTo(end);
+        var alive = aliveList();
+        var cap = Math.min(cur.tgt || 1, alive.length);
+        var hits = cap > 0 ? alive.slice(0, cap) : [];
+        var baseDmg = ((cur.coeff || 0) + (cur.chain ? cur.chain.coeff : 0)) * (avgMul[cur.id] || 1) / cfg.huntAuto * critFactor;
+        var fallMul = huntFalloffMul(cur.id, hits.length);
+        var focMul = cur.focusD ? (1 + (cur.focusD / 100) * huntFocusShape(cur.id, hits.length)) : 1;
+        var perHit = baseDmg * fallMul * focMul;
+        if (hitLog.length < 200) {
+          hitLog.push({
+            t: round(end, 3), id: cur.id, name: cur.name,
+            targets: hits.map(function (mb) { return mb.i; }),
+            perHit: round(perHit, 4), fall: round(fallMul, 4), focus: round(focMul, 4)
+          });
+        }
+        applyHit(hits, perHit, cur, end);
+        if (hpTrack && cur.kind === 'heal' && diedAt == null) {
+          var beforeHp = hp;
+          hp = Math.min(cfg.maxHp, hp + cfg.maxHp * cfg.healPct / 100);
+          healed += hp - beforeHp;
+          healCasts += 1;
+          cur.healed = (cur.healed || 0) + (hp - beforeHp);
+        }
+        if (hpAt60 == null && end >= 60) { hpAt60 = round(hp, 0); }
+        cur.casts += 1;
+        cur.targets += hits.length;
+        cur.fallHits += 1;
+        cur.readyAt = start + Math.max(0.1, cur.cd);
+        t = end;
+        continue;
+      }
+
+      /* 쓸 도술이 없을 때 — nextReady(또는 다음 부활) 까지 평타 */
+      var nextRespawn = Infinity;
+      for (k = 0; k < mobs.length; k++) {
+        if (!mobs[k].alive && mobs[k].respawnAt > t + EPS && mobs[k].respawnAt < nextRespawn) { nextRespawn = mobs[k].respawnAt; }
+      }
+      var until = Math.min(duration, nextReady === Infinity ? duration : nextReady, nextRespawn);
+      /* 평타는 0초부터 autoInterval 초마다 오는 고정 박자입니다 — 시전 중에 걸린 박자는 건너뜁니다 */
+      var iv = cfg.autoInterval;
+      var at = Math.ceil((t - EPS) / iv) * iv;
+      var loopGuard = 0;
+      while (at < until - EPS && loopGuard++ < 100000) {
+        stepTo(at);
+        respawnUpTo(at);
+        var aliveA = aliveList();
+        autoCount += 1;
+        if (aliveA.length) { applyHit([aliveA[0]], critFactor, null, at); }
+        else { autoMiss += 1; }
+        at += iv;
+      }
+      stepTo(until);
+      t = until;
+    }
+    stepTo(duration);
+
+    /* 생존 — 살아 있는 몹 수의 시간 평균 × 몹 1방 피격 ÷ 공격 주기 = 받는 DPS.
+       (죽어서 리스폰을 기다리는 몹은 때리지 못하므로 평균 살아있는 몹으로 셉니다) */
+    var life = (diedAt != null && diedAt > 0) ? diedAt : duration;
+    var avgAliveMobs = aliveSec / (life || duration);
+    var survival = null;
+    if (cfg.mobDmg > 0) {
+      var inDps = avgAliveMobs * (cfg.mobDmg / cfg.mobAtkInterval);
+      var surviveSec = diedAt != null ? diedAt : ((cfg.maxHp > 0 && inDps > 0) ? Infinity : null);
+      var regen = life > 0 ? healed / life : 0;
+      survival = {
+        maxHp: cfg.maxHp, mobDmg: cfg.mobDmg, atkInterval: cfg.mobAtkInterval,
+        healAtPct: cfg.healAtPct, healPct: cfg.healPct,
+        healCasts: healCasts, healed: round(healed, 0),
+        avgAlive: round(avgAliveMobs, 2),
+        dps: round(inDps, 1),
+        dmg60: round(inDps * 60, 0),
+        surviveSec: surviveSec === Infinity ? null : (surviveSec != null ? round(surviveSec, 1) : null),
+        diedAt: diedAt != null ? round(diedAt, 1) : null,
+        life: round(life, 1),
+        hpEnd: round(hp, 0), hpMin: round(hpMin, 0), hpAt60: hpAt60,
+        regen: round(regen, 1),
+        sustain: cfg.maxHp > 0 ? (regen >= inDps && diedAt == null) : null,
+        level: diedAt != null ? 'danger' : (surviveSec === Infinity ? 'safe' : 'warn'),
+        needRegen60: cfg.maxHp > 0 ? round(Math.max(0, inDps - cfg.maxHp / 60), 1) : round(inDps, 1),
+        holdRegen: round(inDps, 1)
+      };
+    }
+    var theoretical = cfg.maxMobs * (duration / cfg.respawnSec);
+    var totalDamage = autoDamage + skillDamage;
+    var rows = [];
+    var skillKills = 0;
+    for (i = 0; i < n; i++) {
+      var en = list[i];
+      skillKills += en.kills;
+      if (en.casts > 0 || en.kind === 'ult') {
+        rows.push({
+          id: en.id, name: en.name, style: en.style, styleName: styleName(en.style),
+          color: styleColor(en.style), kind: en.kind, slot: en.kind === 'ult' ? 'R' : (en.slot + 1),
+          tgt: en.tgt || 1, casts: en.casts, kills: en.kills,
+          damage: round(en.damage, 1),
+          avgTargets: en.casts ? round(en.targets / en.casts, 2) : 0,
+          share: totalDamage > 0 ? round((en.damage / totalDamage) * 100, 1) : 0,
+          cd: round(en.cd, 2), cast: round(en.cast + (en.chain ? en.chain.castLen : 0), 2),
+          falloff: (HUNT.falloff && HUNT.falloff[String(en.id)]) ? (HUNT.falloff[String(en.id)].label || '') : '',
+          focus: en.focusD ? (HUNT.focus && HUNT.focus[String(en.id)] ? (HUNT.focus[String(en.id)].label || '') : '') : ''
+        });
+      }
+    }
+    rows.sort(function (a, b) { return b.damage - a.damage; });
+
+    var k1 = 0;
+    var k3 = 0;
+    for (i = 0; i < killLog.length; i++) {
+      if (killLog[i].t <= 60 + EPS) { k1 += 1; }
+      if (killLog[i].t <= 180 + EPS) { k3 += 1; }
+    }
+
+    return {
+      ok: true,
+      duration: duration,
+      killHits: round(cfg.killHits, 2),
+      maxMobs: cfg.maxMobs,
+      respawnSec: cfg.respawnSec,
+      autoCoeff: cfg.huntAuto,
+      autoInterval: cfg.autoInterval,
+      critPct: cfg.critPct,
+      critDmgPct: cfg.critDmgPct,
+      critFactor: round(critFactor, 4),
+      mobHpUnits: round(mobHp, 2),
+      kills: kills,
+      killsPerMin: round(kills / ((life || duration) / 60), 1),
+      kills1m: k1,
+      kills3m: k3,
+      theoretical: round(theoretical, 1),
+      waveUse: theoretical > 0 ? round((kills / theoretical) * 100, 1) : 0,
+      life: round(life || duration, 1),
+      avgAlive: round(avgAliveMobs, 2),
+      survival: survival,
+      respawns: respawnCount,
+      autoCount: autoCount, autoMiss: autoMiss,
+      autoDamage: round(autoDamage, 1), autoKills: autoKills,
+      skillDamage: round(skillDamage, 1), skillKills: skillKills,
+      totalDamage: round(totalDamage, 1),
+      autoShare: totalDamage > 0 ? round((autoDamage / totalDamage) * 100, 1) : 0,
+      skillShare: totalDamage > 0 ? round((skillDamage / totalDamage) * 100, 1) : 0,
+      probeDps: probeDps,
+      rows: rows,
+      killLog: killLog.slice(0, 400),
+      respawnLog: respawnLog.slice(0, 120),
+      hitLog: hitLog.slice(0, 200)
+    };
+  }
+
+  /* 프리셋·조합 비교 — 같은 사냥 조건에서 어느 세팅이 빠른지 */
+  function huntCompare(config) {
+    var cur = simulateHunt(config);
+    var rows = [{ id: 'current', name: '지금 세팅', current: true, kills: cur.kills, perMin: cur.killsPerMin }];
+    presets().forEach(function (p) {
+      var c = clone(config || {});
+      c.slots = p.slots.slice(0, 8);
+      c.castOrder = [];
+      var r = simulateHunt(c);
+      rows.push({ id: p.id, name: p.name, note: p.note || '', current: false, kills: r.kills, perMin: r.killsPerMin });
+    });
+    var best = 0;
+    rows.forEach(function (r) { if (r.perMin > best) { best = r.perMin; } });
+    rows.forEach(function (r) { r.best = best > 0 && Math.abs(r.perMin - best) < 1e-9; });
+    return { base: cur, rows: rows, best: best };
+  }
+
   global.YM_DOSUL = {
     data: DATA,
     enhanceBonus: enhanceBonus,
@@ -1520,6 +1980,12 @@
     syncCastOrder: syncCastOrder,
     kindLabel: function (k) { return KIND_LABEL[k] || k; },
     simulate: simulate,
-    optimize: optimize
+    optimize: optimize,
+    simulateHunt: simulateHunt,
+    huntCompare: huntCompare,
+    huntData: huntData,
+    huntTargets: huntTargets,
+    huntFalloffMul: huntFalloffMul,
+    huntFocusShape: huntFocusShape
   };
 })(window);

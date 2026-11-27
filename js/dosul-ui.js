@@ -142,10 +142,18 @@
       trans: {},
       tr6: {},
       chain: {},
+      /* 🏹 사냥터 분당 처치 — 몹 체력·젠·치명타 기준 (2026-11-27) */
+      hunt: {
+        killHits: 10, maxMobs: 13, respawnSec: 5,
+        autoCoeff: 285, critPct: 50, critDmgPct: 20, duration: 180,
+        maxHp: 160000, mobDmg: 0, mobAtkInterval: 2, healAtPct: 70, healPct: 30
+      },
       /* 디버프 — 파티가 걸어 주는 것으로 보는 보조 토글 */
       debuffOn: {},
       /* 나중에 더한 기본 ON 신식 토글을 기존 저장분에도 한 번만 켜기 위한 표시 */
       mig: {},
+      /* 화면 모드 — 'raid'(단일 보스 DPS) / 'hunt'(자사계산기) */
+      mode: 'raid',
       picker: { slot: -1, style: '', q: '' }
     };
   }
@@ -178,11 +186,19 @@
       base.trans = (base.trans && typeof base.trans === 'object') ? base.trans : {};
       base.tr6 = (base.tr6 && typeof base.tr6 === 'object') ? base.tr6 : {};
       base.chain = (base.chain && typeof base.chain === 'object') ? base.chain : {};
+      base.hunt = (base.hunt && typeof base.hunt === 'object') ? base.hunt : {};
+      var hd = defaults().hunt;
+      for (var hk in hd) {
+        if (Object.prototype.hasOwnProperty.call(hd, hk)) {
+          base.hunt[hk] = Number(base.hunt[hk]) >= 0 ? Number(base.hunt[hk]) : hd[hk];
+        }
+      }
       base.debuffOn = (base.debuffOn && typeof base.debuffOn === 'object') ? base.debuffOn : {};
       /* 무기·장비 도술 피해 — 예전 저장분에는 없으므로 없으면 0 / {} 로 읽습니다 */
       base.allDosulDmgPct = clampPct(base.allDosulDmgPct);
       base.styleDmgPct = cleanStyleDmg(base.styleDmgPct);
       base.picker = { slot: -1, style: '', q: '' };
+      base.mode = base.mode === 'hunt' ? 'hunt' : 'raid';
       base.castOrder = C.syncCastOrder(base.slots, base.castOrder, { ultFirst: base.ultFirst !== false });
     } catch (e) { /* 깨진 저장값은 기본값으로 */ }
     /* 저장된 신식 토글 중 지금 활성 계열이 아닌 것은 그대로 두되 화면에는 활성만 보입니다 */
@@ -198,7 +214,8 @@
         autoInterval: S.autoInterval, autoCoeff: S.autoCoeff, gap: S.gap,
         toggles: S.toggles, override: S.override,
         enhance: S.enhance, trans: S.trans, tr6: S.tr6, chain: S.chain, mig: S.mig,
-        debuffOn: S.debuffOn,
+        debuffOn: S.debuffOn, hunt: S.hunt,
+        mode: S.mode,
         allDosulDmgPct: S.allDosulDmgPct, styleDmgPct: S.styleDmgPct
       };
       global.localStorage.setItem(SAVE_KEY, JSON.stringify(out));
@@ -257,6 +274,25 @@
     };
   }
 
+  /* 🏹 사냥터 계산 조건 — 몹 체력·젠·치명타·평타 계수 */
+  function huntConfig() {
+    var h = S.hunt || defaults().hunt;
+    var base = config();
+    base.duration = Number(h.duration) || 180;
+    base.killHits = Number(h.killHits);
+    base.maxMobs = Number(h.maxMobs);
+    base.respawnSec = Number(h.respawnSec);
+    base.huntAutoCoeff = Number(h.autoCoeff);
+    base.critPct = Number(h.critPct);
+    base.critDmgPct = Number(h.critDmgPct);
+    base.maxHp = Number(h.maxHp) || 0;
+    base.mobDmg = Number(h.mobDmg) || 0;
+    base.mobAtkInterval = Number(h.mobAtkInterval) || 2;
+    base.healAtPct = Number(h.healAtPct);
+    base.healPct = Number(h.healPct);
+    return base;
+  }
+
   /* ---------------------------------------------------------
      뼈대
      --------------------------------------------------------- */
@@ -270,12 +306,17 @@
       '<path d="M20 4v5.1L11.3 17.8H6.9v-4.4L15.6 4.7z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>' +
       '<path d="M4.3 19.7 8 16M3.5 15.3l5.2 5.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>' +
       '도술 계산기</h2>',
-      '  <p class="ds-head__sub">쿨타임과 시전시간으로 <b>평타 치는 빈 시간</b>을 계산합니다</p>',
+      '  <p class="ds-head__sub"><b>단일 보스 DPS</b>와 자동사냥 <b>자사계산기</b>(분당 처치·버티기)를 따로 계산합니다</p>',
       '</div>',
 
       '<div class="ds-lead">',
       '  <p>도술마다 <b>쿨타임</b>과 <b>시전시간</b>이 달라서, 쿨이 비면 <b>평타</b>를 칩니다.',
       '  아래 8칸을 채우면 <b>평타 치는 빈 시간</b>과 <b>초당 피해</b>를 바로 계산합니다.</p>',
+      '</div>',
+
+      '<div class="ds-mode" role="tablist" aria-label="계산 모드">',
+      '  <button type="button" class="ds-mode__btn" role="tab" data-calc-mode="raid"><b>단일 보스 DPS</b><em>레이드 · 보스 한 마리</em></button>',
+      '  <button type="button" class="ds-mode__btn" role="tab" data-calc-mode="hunt"><b>자사계산기</b><em>자동사냥 · 분당 마릿수</em></button>',
       '</div>',
 
       '<section class="ds-sec ds-sec--gold">',
@@ -323,6 +364,12 @@
       '  <div class="ds-result" id="ds-result"></div>',
       '</section>',
 
+      '<section class="ds-sec ds-sec--hunt" id="ds-hunt-sec">',
+      '  <div class="ds-sec__head"><span class="ds-sec__num" id="ds-hunt-num">8</span><h3>자사계산기</h3><span class="ds-hint" id="ds-hunt-hint"></span></div>',
+      '  <p class="ds-sec__sub">자동사냥 사냥터에서 <b>분당 몇 마리</b> 잡는지 계산합니다. 몹이 <b>평타 몇 방</b>에 죽는지만 넣으면, 지금 8칸 세팅으로 마리별 체력을 따라가며 시뮬레이션합니다.</p>',
+      '  <div class="ds-hunt" id="ds-hunt"></div>',
+      '</section>',
+
       '<p class="ds-credit">' + esc((global.YM_DOSUL_ICONS && global.YM_DOSUL_ICONS.credit) ||
         '도술 아이콘의 저작권은 「도깨비의 세계」에 있으며, 권리자 요청 시 즉시 삭제될 수 있습니다.') + '</p>',
 
@@ -364,6 +411,8 @@
     el.tuneBody = $('#ds-tune-body');
     el.result = $('#ds-result');
     el.durQuick = $('#ds-dur-quick');
+    el.hunt = $('#ds-hunt');
+    el.huntHint = $('#ds-hunt-hint');
     el.shared = $('#ds-shared-list');
     el.sharedHint = $('#ds-shared-hint');
     el.shareBox = $('#ds-share');
@@ -1079,6 +1128,213 @@
     });
   }
 
+  /* ---------------------------------------------------------
+     🏹 사냥터 분당 처치 — 입력 · 결과
+     · 몹 체력은 「평타 몇 방」으로 넣습니다(방어력 공식 비공개 대신 체감값).
+     · 마릿수·부활 시간은 원터치 프리셋(비경 10·5초 / 사냥터 13·5초)과 직접 입력 둘 다.
+     · 치명타 확률(기본 50%)·치명타 피해(%)는 직접 적습니다 — 몹 체력 기준점이
+       치명타 50%이므로, 바꾸면 그 기준 대비 기대 피해로 환산합니다.
+     --------------------------------------------------------- */
+  var HUNT_DURS = [60, 180, 300];
+  var HUNT_DUR_LABEL = { 60: '1분', 180: '3분', 300: '5분' };
+  var HUNT_Q = [
+    { key: 'dungeon', name: '비경', mobs: 10, respawn: 5 },
+    { key: 'field', name: '사냥터', mobs: 13, respawn: 5 }
+  ];
+  var huntCache = { key: '', res: null, cmp: null };
+
+  function huntQuickActive() {
+    var h = S.hunt || {};
+    for (var i = 0; i < HUNT_Q.length; i++) {
+      if (Math.round(Number(h.maxMobs)) === HUNT_Q[i].mobs && Number(h.respawnSec) === HUNT_Q[i].respawn) {
+        return HUNT_Q[i].key;
+      }
+    }
+    return '';
+  }
+
+  function renderHuntForm() {
+    if (!el.hunt) { return; }
+    var h = S.hunt || defaults().hunt;
+    var act = huntQuickActive();
+    var qbtns = HUNT_Q.map(function (q) {
+      return '<button type="button" class="ds-hunt__qbtn' + (act === q.key ? ' is-on' : '') + '" data-hunt-preset="' + q.key + '">' +
+        esc(q.name) + ' <b>' + q.mobs + '마리 · ' + num(q.respawn, 0) + '초</b></button>';
+    }).join('');
+    var durBtns = HUNT_DURS.map(function (d) {
+      return '<button type="button" class="ds-seg' + (Number(h.duration) === d ? ' is-on' : '') + '" data-hunt-dur="' + d + '">' +
+        esc(HUNT_DUR_LABEL[d]) + '</button>';
+    }).join('');
+
+    el.hunt.innerHTML = [
+      '<div class="ds-hunt__quick" role="group" aria-label="사냥터 원터치 설정">' + qbtns + '</div>',
+      '<p class="ds-hunt__qnote">원터치로 <b>마릿수 · 부활 시간</b>이 바로 바뀝니다 — 아래 칸에서 직접 고쳐도 됩니다.</p>',
+      '<div class="ds-hunt__grid">',
+      '  <label class="ds-hunt__f ds-hunt__f--wide"><span>몹이 평타 <b>몇 방</b>에 죽음</span>',
+      '    <input type="number" min="1" max="2000" step="1" inputmode="numeric" data-hunt="killHits" value="' + num(h.killHits, 2) + '"></label>',
+      '  <label class="ds-hunt__f"><span>최대 마릿수</span>',
+      '    <input type="number" min="1" max="60" step="1" inputmode="numeric" data-hunt="maxMobs" value="' + num(h.maxMobs, 0) + '"></label>',
+      '  <label class="ds-hunt__f"><span>부활 시간(초)</span>',
+      '    <input type="number" min="0.5" max="120" step="0.5" inputmode="decimal" data-hunt="respawnSec" value="' + num(h.respawnSec, 1) + '"></label>',
+      '  <label class="ds-hunt__f"><span>치명타 확률 <em>기본 50%</em></span>',
+      '    <input type="number" min="0" max="100" step="1" inputmode="numeric" data-hunt="critPct" value="' + num(h.critPct, 1) + '"></label>',
+      '  <label class="ds-hunt__f"><span>치명타 피해 <em>기본 20%</em></span>',
+      '    <input type="number" min="0" max="500" step="0.1" inputmode="decimal" data-hunt="critDmgPct" value="' + num(h.critDmgPct, 1) + '"></label>',
+      '  <label class="ds-hunt__f ds-hunt__f--wide"><span>평타 1타 계수 <em>385K 실측 앵커에서 역산</em></span>',
+      '    <input type="number" min="50" max="2000" step="5" inputmode="numeric" data-hunt="autoCoeff" value="' + num(h.autoCoeff, 0) + '"></label>',
+      '</div>',
+      '<p class="ds-hunt__qnote"><b>버티기</b> — 내 체력과 <b>몹에게 맞는 한 방</b>을 적으면 살아 있는 몹 수만큼 맞는 피해로 버티는 시간을 계산합니다(비우면 생략). ' +
+        '체력이 <b>발동 %</b> 이하로 떨어지면 장착한 <b>헌신 회복 도술</b>(생명의 흐름·생명의 축복)을 <b>맨 먼저</b> 씁니다 — 자사에서 헌신을 최우선으로 두는 운용 그대로입니다.</p>',
+      '<div class="ds-hunt__grid ds-hunt__grid--hp">',
+      '  <label class="ds-hunt__f"><span>내 최대 체력 <em>HP</em></span>',
+      '    <input type="number" min="0" max="100000000" step="1000" inputmode="numeric" data-hunt="maxHp" value="' + num(h.maxHp, 0) + '"></label>',
+      '  <label class="ds-hunt__f"><span>몹 1방 피격 <em>비우면 생존 생략</em></span>',
+      '    <input type="number" min="0" max="100000000" step="1" inputmode="numeric" data-hunt="mobDmg" placeholder="예: 794" value="' + (Number(h.mobDmg) > 0 ? num(h.mobDmg, 0) : '') + '"></label>',
+      '  <label class="ds-hunt__f"><span>몹 공격 주기(초)</span>',
+      '    <input type="number" min="0.2" max="30" step="0.1" inputmode="decimal" data-hunt="mobAtkInterval" value="' + num(h.mobAtkInterval, 1) + '"></label>',
+      '  <label class="ds-hunt__f"><span>헌신 회복 발동 <em>체력 % 이하</em></span>',
+      '    <input type="number" min="0" max="99" step="1" inputmode="numeric" data-hunt="healAtPct" value="' + num(h.healAtPct, 0) + '"></label>',
+      '  <label class="ds-hunt__f"><span>회복량 <em>최대 체력 %</em></span>',
+      '    <input type="number" min="0" max="500" step="1" inputmode="numeric" data-hunt="healPct" value="' + num(h.healPct, 0) + '"></label>',
+      '</div>',
+      '<div class="ds-hunt__dur"><span class="ds-hunt__durlabel">계산 시간</span><div class="ds-segs">' + durBtns + '</div></div>',
+      '<p class="ds-hunt__qnote">평타 1타 계수 <b>' + num(h.autoCoeff, 0) + '%</b> — 385K 사냥터 실측(평타 2,475 · 하늘의 심판 10마리 감쇄 2,733 → 단일 환산 5,466 = 평타의 2.21배)에서 역산한 값입니다. ' +
+        '치명타는 <b>' + num(h.critPct, 0) + '%</b>를 기준(몹 체력도 이 기준)으로 보고, 바꾸면 그 기준 대비 기대 피해로 환산합니다. <b>치명타 피해</b>는 내 상세 탭의 치명타 피해 증가 수치를 적어 주세요.</p>',
+      '<div class="ds-hunt__out" id="ds-hunt-out"></div>'
+    ].join('\n');
+    renderHuntOut();
+  }
+
+  function huntCompute() {
+    var cfg = huntConfig();
+    var key = [cfg.killHits, cfg.maxMobs, cfg.respawnSec, cfg.huntAutoCoeff, cfg.critPct, cfg.critDmgPct, cfg.duration,
+      cfg.slots.join(','), cfg.castOrder.join(','), JSON.stringify(cfg.toggles), JSON.stringify(cfg.enhance),
+      JSON.stringify(cfg.trans), JSON.stringify(cfg.tr6), JSON.stringify(cfg.override), cfg.allDosulDmgPct,
+      JSON.stringify(cfg.styleDmgPct), cfg.cdReducePct, cfg.castMode, cfg.chargeFull, cfg.autoInterval,
+      cfg.gap, cfg.chain ? JSON.stringify(cfg.chain) : '', JSON.stringify(cfg.debuffOn),
+      cfg.maxHp, cfg.mobDmg, cfg.mobAtkInterval, cfg.healAtPct, cfg.healPct].join('|');
+    if (huntCache.key === key && huntCache.res) { return huntCache; }
+    var res = C.simulateHunt(cfg);
+    var cmp = null;
+    try { cmp = C.huntCompare(cfg); } catch (e) { cmp = null; }
+    huntCache = { key: key, res: res, cmp: cmp };
+    return huntCache;
+  }
+
+  function renderHuntOut() {
+    if (!el.hunt) { return; }
+    var out = $('#ds-hunt-out');
+    if (!out) { return; }
+    var h = S.hunt || defaults().hunt;
+    if (el.huntHint) {
+      el.huntHint.textContent = num(h.maxMobs, 0) + '마리 · ' + num(h.respawnSec, 1) + '초 · 치명타 ' + num(h.critPct, 0) + '%';
+    }
+    if (!C.simulateHunt) { out.innerHTML = '<p class="ds-hunt__empty">사냥 계산을 불러오지 못했어요.</p>'; return; }
+    var got = huntCompute();
+    var r = got.res;
+    if (!r || !r.ok) { out.innerHTML = '<p class="ds-hunt__empty">' + esc((r && r.message) || '계산하지 못했어요.') + '</p>'; return; }
+
+    var perMin = r.killsPerMin;
+    var k1 = r.duration >= 60 ? r.kills1m : Math.round(perMin);
+    var k3 = r.duration >= 180 ? r.kills3m : Math.round(perMin * 3);
+    var skillW = Math.max(0, Math.min(100, r.skillShare));
+    var autoW = 100 - skillW;
+    var maxRows = r.rows.length ? r.rows[0].damage : 1;
+
+    var rowsHtml = r.rows.map(function (x) {
+      var isUlt = x.kind === 'ult';
+      return '<div class="ds-hunt__row' + (isUlt ? ' is-ult' : '') + '">' +
+        '<span class="c-name">' + ico(x.id, 'ds-ico--row', 18) +
+        '<b>' + esc(x.name) + '</b>' +
+        '<small>' + (isUlt ? 'R' : x.slot + '번') + ' · ' + esc(x.styleName) +
+        ' · <em class="c-tgt">' + x.tgt + '명</em>' +
+        (x.falloff ? ' · 감소' : '') + (x.focus ? ' · 집중' : '') + '</small></span>' +
+        '<span class="c-num">' + x.casts + '회</span>' +
+        '<span class="c-num c-kill">' + x.kills + '</span>' +
+        '<span class="c-pct">' + num(x.share, 1) + '%</span>' +
+        '<span class="c-bar"><i style="width:' + Math.max(2, (x.damage / maxRows) * 100).toFixed(1) + '%;background:' + x.color + '"></i></span>' +
+        '</div>';
+    }).join('');
+
+    /* 버티기 — 받는 DPS · 버티는 시간 · 헌신 회복 · 안전도 */
+    var sv = r.survival;
+    var LV = { safe: { t: '여유', cls: 'is-safe' }, warn: { t: '주의', cls: 'is-warn' }, danger: { t: '위험', cls: 'is-danger' } };
+    var survHtml = '';
+    if (sv) {
+      var lv = LV[sv.level] || null;
+      var line = [];
+      if (sv.diedAt != null) {
+        line.push('체력이 <b>' + num(sv.diedAt, 1) + '초</b>에 바닥납니다' +
+          (sv.healCasts ? ' (헌신 회복 ' + sv.healCasts + '회로는 부족)' : ' — 헌신 회복 도술을 넣거나 물약이 필요합니다') + '.');
+      } else if (sv.maxHp > 0) {
+        line.push('체력 ' + num(sv.maxHp, 0) + ' ÷ 초당 ' + num(sv.dps, 0) + ' = <b>' + num(sv.life, 1) + '초</b> 이상 버팁니다' +
+          (sv.level === 'safe' ? ' — 1분 사냥은 넉넉합니다.' : ' — 1분은 빠듯합니다.'));
+      }
+      if (sv.healCasts > 0) {
+        line.push('헌신 회복 <b>' + sv.healCasts + '회</b> 발동(체력 ' + num(sv.healAtPct, 0) + '% 이하) · 총 <b>+' + num(sv.healed, 0) + ' HP</b> 회복 · 초당 평균 <b>' + num(sv.regen, 0) + ' HP</b>.');
+      } else if (sv.healAtPct != null) {
+        line.push('헌신 회복은 발동하지 않았습니다(체력이 ' + num(sv.healAtPct, 0) + '% 이하로 내려가지 않았거나 회복 도술이 없음).');
+      }
+      line.push(sv.sustain === true
+        ? '→ <b>무한 자사 가능</b> (회복이 받는 피해를 따라갑니다).'
+        : (sv.diedAt != null ? '→ <b>무한 자사 불가</b> — 초당 ' + num(sv.holdRegen, 0) + ' HP 이상 회복이 필요합니다.'
+          : (sv.sustain === false ? '→ 초당 <b>' + num(sv.holdRegen, 0) + ' HP</b> 회복이 있어야 계속 버팁니다.' : '')));
+      survHtml = '<div class="ds-hunt__surv">' +
+        '<p class="ds-hunt__survhead">버티기 <em>' + num(sv.avgAlive, 1) + '마리가 평균 · 몹 1방 ' + num(sv.mobDmg, 0) + ' · ' + num(sv.atkInterval, 1) + '초마다</em>' +
+        (lv ? '<b class="ds-hunt__lv ' + lv.cls + '">' + lv.t + '</b>' : '') + '</p>' +
+        '<div class="ds-cards ds-hunt__cards">' +
+        '  <div class="ds-card"><span>받는 피해(초당)</span><strong>' + num(sv.dps, 0) + '<small>HP/초</small></strong></div>' +
+        '  <div class="ds-card"><span>1분 동안 받는 피해</span><strong>' + num(sv.dmg60, 0) + '<small>HP</small></strong></div>' +
+        '  <div class="ds-card"><span>버티는 시간</span><strong>' + (sv.diedAt != null ? num(sv.diedAt, 1) : (sv.maxHp > 0 ? '60+' : '–')) + '<small>' + (sv.maxHp > 0 ? '초' : '') + '</small></strong></div>' +
+        '  <div class="ds-card"><span>헌신 회복</span><strong>' + sv.healCasts + '<small>회</small></strong></div>' +
+        '</div>' +
+        '<p class="ds-hunt__survnote">' + line.join(' ') + '</p>' +
+        '<p class="ds-hunt__survnote ds-hunt__survnote--dim">회복량 계수는 공개 자료에 없어 <b>최대 체력 ' + num(sv.healPct, 0) + '%</b>로 계산했습니다 — 내 회복 도술의 실제 회복량(내 체력 대비 %)을 적어 주세요. ' +
+        '물약·받는 피해 감소·보호막은 넣지 않았습니다.</p>' +
+        '</div>';
+    }
+    var cmp = got.cmp ? got.cmp.rows : [];
+    var cmpMax = got.cmp ? Math.max(1, got.cmp.best) : 1;
+    var cmpHtml = cmp.length ? '<div class="ds-hunt__cmp">' +
+      '<p class="ds-hunt__cmphead">프리셋 사냥 속도 비교 <em>같은 조건 · 프리셋 8칸으로 바꿔 계산</em></p>' +
+      cmp.map(function (c) {
+        return '<div class="ds-hunt__cmprow' + (c.current ? ' is-cur' : '') + '">' +
+          '<span class="c-name">' + esc(c.name) + (c.current ? '<em>지금</em>' : '') + '</span>' +
+          '<span class="c-num">' + num(c.perMin, 1) + '<small>마리/분</small></span>' +
+          '<span class="c-bar"><i style="width:' + Math.max(2, (c.perMin / cmpMax) * 100).toFixed(1) + '%"></i></span>' +
+          '</div>';
+      }).join('') + '</div>' : '';
+
+    out.innerHTML = [
+      '<div class="ds-hunt__hero">',
+      '  <p class="ds-hunt__cap">분당 처치 <em>' + num(r.maxMobs, 0) + '마리 · ' + num(r.respawnSec, 1) + '초 · 몹 체력 평타 ' + num(r.killHits, 1) + '방</em></p>',
+      '  <p class="ds-hunt__big">' + num(perMin, 1) + '<small>마리/분</small></p>',
+      '  <div class="ds-hunt__pair"><span>1분 <b>' + k1 + '</b>마리</span><span>3분 <b>' + k3 + '</b>마리</span></div>',
+      '  <div class="ds-hunt__bar"><i class="is-skill" style="width:' + skillW.toFixed(1) + '%"></i><i class="is-auto" style="width:' + autoW.toFixed(1) + '%"></i></div>',
+      '  <div class="ds-hunt__legend"><span><i class="is-skill"></i>도술 <b>' + num(r.skillShare, 1) + '%</b></span><span><i class="is-auto"></i>평타 <b>' + num(r.autoShare, 1) + '%</b></span></div>',
+      '</div>',
+      '<div class="ds-cards ds-hunt__cards">',
+      '  <div class="ds-card"><span>젠 소모율</span><strong>' + num(r.waveUse, 1) + '<small>%</small></strong></div>',
+      '  <div class="ds-card"><span>이론 최대</span><strong>' + num(r.theoretical / (r.duration / 60), 1) + '<small>마리/분</small></strong></div>',
+      '  <div class="ds-card"><span>평균 살아있는 몹</span><strong>' + num(r.avgAlive, 1) + '<small>마리</small></strong></div>',
+      '  <div class="ds-card"><span>평타 횟수</span><strong>' + r.autoCount + '<small>회</small></strong></div>',
+      '</div>',
+      '<div class="ds-block"><p class="ds-block__title">도술별 기여 · 처치</p>' +
+        '<div class="ds-hunt__tbl"><div class="ds-hunt__row ds-hunt__row--head">' +
+        '<span class="c-name">도술</span><span class="c-num">발동</span><span class="c-num c-kill">처치</span><span class="c-pct">비중</span></div>' +
+        rowsHtml + '</div></div>',
+      survHtml,
+      cmpHtml,
+      '<p class="ds-hunt__note"><b>계산 기준</b> — 몹 체력 = <b>평타 ' + num(r.killHits, 1) + '방</b>(치명타 ' + num(r.critPct, 0) + '% · 치명타 피해 +' + num(r.critDmgPct, 1) + '% 기준). ' +
+        '도술 피해는 <b>계수 × 레이드 계산기의 시전당 평균 배수 ÷ 평타 1타 계수(' + num(r.autoCoeff, 0) + '%)</b>이고, ' +
+        '맞는 대상은 <b>남은 체력이 가장 적은 몹부터</b> 최대 대상 수만큼입니다. ' +
+        '죽은 몹은 <b>죽은 순간 +' + num(r.respawnSec, 1) + '초</b>에 그 몹만 풀피로 돌아오고, 시작할 때는 ' + num(r.maxMobs, 0) + '마리가 모두 살아 있습니다.</p>',
+      '<p class="ds-hunt__note ds-hunt__note--dim"><b>빠진 것</b> — 이동 시간 · 몹에게 맞는 피해 · 화상 같은 지속 피해 · 적 처치로 차는 신식 영력 · 대상이 흩어진 정도. ' +
+        '다중 감소는 <b>하늘의 심판 6인↑(10인 50%) · 대폭발 4인↑(30인 20%)</b> 두 개만 공개돼 있고, 나머지 도술은 감소 없음으로 계산합니다. ' +
+        '「적을수록 증가」는 <b>난타·요기 폭발(6돌파)</b>을 실제 맞은 인원으로 환산합니다.</p>'
+    ].join('\n');
+  }
+
   /* 결과 상단의 1분 · 2분 · 5분 빠른 전환 */
   function renderDurQuick() {
     if (!el.durQuick) { return; }
@@ -1527,6 +1783,7 @@
     syncToggles();
     save();
     renderResult();
+    renderHuntOut();
   }
 
   function recomputeSoon() {
@@ -1640,6 +1897,47 @@
     el.root.addEventListener('click', function (e) {
       var t = e.target;
       if (!t || !t.closest) { return; }
+      /* ⑦/⑧ 모드 전환 — 단일 보스 DPS ↔ 자사계산기 */
+      var md = t.closest('[data-calc-mode]');
+      if (md) {
+        var mk = md.getAttribute('data-calc-mode') === 'hunt' ? 'hunt' : 'raid';
+        if (S.mode !== mk) {
+          S.mode = mk;
+          applyMode();
+          save();
+          var sec = mk === 'hunt' ? $('#ds-hunt-sec') : $('#ds-result-sec');
+          if (sec && sec.scrollIntoView) {
+            global.setTimeout(function () { sec.scrollIntoView({ block: 'start' }); }, 60);
+          }
+        }
+        return;
+      }
+      /* 🏹 사냥터 원터치 프리셋 · 계산 시간 */
+      var hq = t.closest('[data-hunt-preset]');
+      if (hq) {
+        var qk = hq.getAttribute('data-hunt-preset');
+        var qq = HUNT_Q.filter(function (x) { return x.key === qk; })[0];
+        if (qq) {
+          S.hunt.maxMobs = qq.mobs;
+          S.hunt.respawnSec = qq.respawn;
+          huntCache.key = '';
+          renderHuntForm();
+          recompute();
+        }
+        return;
+      }
+      var hd = t.closest('[data-hunt-dur]');
+      if (hd) {
+        S.hunt.duration = Number(hd.getAttribute('data-hunt-dur')) || 180;
+        huntCache.key = '';
+        var hsegs = el.hunt ? el.hunt.querySelectorAll('[data-hunt-dur]') : [];
+        for (var hi = 0; hi < hsegs.length; hi++) {
+          hsegs[hi].classList.toggle('is-on', Number(hsegs[hi].getAttribute('data-hunt-dur')) === S.hunt.duration);
+        }
+        renderHuntOut();
+        save();
+        return;
+      }
       var preset = t.closest('[data-preset]');
       if (preset) {
         var p = C.presets().filter(function (x) { return x.id === preset.getAttribute('data-preset'); })[0];
@@ -1774,6 +2072,17 @@
     el.root.addEventListener('input', function (e) {
       var t = e.target;
       if (!t) { return; }
+      /* 🏹 사냥터 조건 입력 */
+      var hk = t.getAttribute && t.getAttribute('data-hunt');
+      if (hk) {
+        var hv = Number(t.value);
+        if (isFinite(hv)) { S.hunt[hk] = hv; huntCache.key = ''; }
+        if (el.huntHint) {
+          el.huntHint.textContent = num(S.hunt.maxMobs, 0) + '마리 · ' + num(S.hunt.respawnSec, 1) + '초 · 치명타 ' + num(S.hunt.critPct, 0) + '%';
+        }
+        recomputeSoon();
+        return;
+      }
       if (t.id === 'ds-picker-q') {
         S.picker.q = t.value;
         renderPickerList();
@@ -1852,6 +2161,27 @@
     el.root.addEventListener('change', function (e) {
       var t = e.target;
       if (!t) { return; }
+      /* 🏹 사냥터 조건 — 칸을 벗어날 때 범위로 다듬습니다 */
+      var hck = t.getAttribute && t.getAttribute('data-hunt');
+      if (hck) {
+        var lim = { killHits: [0.5, 2000], maxMobs: [1, 60], respawnSec: [0.5, 120],
+          critPct: [0, 100], critDmgPct: [0, 500], autoCoeff: [10, 3000],
+          maxHp: [0, 100000000], mobDmg: [0, 100000000], mobAtkInterval: [0.2, 30],
+          healAtPct: [0, 99], healPct: [0, 500] };
+        var rg = lim[hck] || [0, 1000000];
+        var vv = Number(t.value);
+        if (!isFinite(vv)) { vv = S.hunt[hck]; }
+        if (hck === 'maxMobs') { vv = Math.round(vv); }
+        vv = Math.max(rg[0], Math.min(rg[1], vv));
+        S.hunt[hck] = vv;
+        t.value = num(vv, 2);
+        huntCache.key = '';
+        if (el.huntHint) {
+          el.huntHint.textContent = num(S.hunt.maxMobs, 0) + '마리 · ' + num(S.hunt.respawnSec, 1) + '초 · 치명타 ' + num(S.hunt.critPct, 0) + '%';
+        }
+        recompute();
+        return;
+      }
       var chId = t.getAttribute && t.getAttribute('data-chain');
       if (chId) {
         if (t.checked) { delete S.chain[chId]; } else { S.chain[chId] = false; }
@@ -1950,6 +2280,22 @@
     el.close = null;
   }
 
+  /* 화면 모드 — 단일 보스 DPS / 자사계산기 */
+  function applyMode() {
+    if (!el.body) { return; }
+    var hunt = !!(S && S.mode === 'hunt');
+    el.body.classList.toggle('ds-page--hunt', hunt);
+    el.body.classList.toggle('ds-page--raid', !hunt);
+    var btns = el.body.querySelectorAll('[data-calc-mode]');
+    for (var i = 0; i < btns.length; i++) {
+      var on = btns[i].getAttribute('data-calc-mode') === (hunt ? 'hunt' : 'raid');
+      btns[i].classList.toggle('is-on', on);
+      btns[i].setAttribute('aria-selected', on ? 'true' : 'false');
+    }
+    var num = document.getElementById('ds-hunt-num');
+    if (num) { num.textContent = hunt ? '7' : '8'; }
+  }
+
   function renderAll() {
     renderPresets();
     renderSlots();
@@ -1958,6 +2304,8 @@
     renderEnhance();
     renderTune();
     renderResult();
+    renderHuntForm();
+    applyMode();
   }
 
   function open(options) {

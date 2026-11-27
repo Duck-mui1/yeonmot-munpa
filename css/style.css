@@ -5516,3 +5516,311 @@ body.is-locked { overflow: hidden; }
   .guest { padding-top: 34px; }
   .guest__inner { margin: auto; max-width: 420px; }
 }
+
+/* =========================================================
+   🏹 사냥터 분당 처치 — 입력 · 결과 (2026-11-27)
+   ========================================================= */
+.ds-sec--hunt { --ds-sec-accent: rgba(150, 214, 255, .95); }
+.ds-hunt { display: flex; flex-direction: column; gap: 9px; }
+.ds-hunt__empty { margin: 0; font-size: 10.5px; color: var(--muted); }
+
+.ds-hunt__quick { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.ds-hunt__qbtn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 9px 11px;
+  border-radius: 12px;
+  border: 1px solid rgba(150, 214, 255, .28);
+  background: rgba(9, 33, 44, .72);
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #cfe6f5;
+  text-align: left;
+}
+.ds-hunt__qbtn b {
+  font-size: 11.5px;
+  font-weight: 800;
+  color: #eaf6ff;
+  font-variant-numeric: tabular-nums;
+}
+.ds-hunt__qbtn.is-on {
+  border-color: rgba(150, 214, 255, .72);
+  background: linear-gradient(180deg, rgba(96, 170, 226, .28), rgba(40, 100, 150, .2));
+  box-shadow: 0 0 0 1px rgba(150, 214, 255, .18) inset;
+}
+.ds-hunt__qbtn:active { transform: scale(.99); }
+.ds-hunt__qnote { margin: -2px 0 0; font-size: 9.5px; line-height: 1.55; color: var(--muted); }
+.ds-hunt__qnote b { color: #b8ecdd; }
+
+.ds-hunt__grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.ds-hunt__f {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(127, 209, 189, .16);
+  background: rgba(3, 24, 27, .62);
+}
+.ds-hunt__f--wide { grid-column: 1 / -1; }
+.ds-hunt__f > span { font-size: 9.5px; line-height: 1.35; color: var(--muted); }
+.ds-hunt__f > span b { color: #d8f2e8; }
+.ds-hunt__f > span em { font-style: normal; color: rgba(147, 183, 174, .78); }
+.ds-hunt__f input {
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(127, 209, 189, .24);
+  background: rgba(2, 16, 19, .8);
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 700;
+  color: #f1fbf7;
+  font-variant-numeric: tabular-nums;
+}
+.ds-hunt__f input:focus { outline: none; border-color: rgba(150, 214, 255, .7); }
+
+.ds-hunt__dur { display: flex; align-items: center; gap: 9px; }
+.ds-hunt__durlabel { flex: none; font-size: 9.5px; color: var(--muted); }
+.ds-hunt__dur .ds-segs { flex: 1; }
+
+.ds-hunt__out { display: flex; flex-direction: column; gap: 9px; }
+.ds-hunt__hero {
+  margin-top: 2px;
+  padding: 12px 13px 11px;
+  border-radius: 15px;
+  border: 1px solid rgba(150, 214, 255, .3);
+  background: linear-gradient(168deg, rgba(16, 45, 56, .94), rgba(5, 23, 26, .96));
+}
+.ds-hunt__cap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 6px;
+  margin: 0;
+  font-size: 9.5px;
+  color: var(--muted);
+}
+.ds-hunt__cap em { font-style: normal; color: rgba(147, 183, 174, .85); }
+.ds-hunt__big {
+  margin: 2px 0 0;
+  font-family: var(--sans);
+  font-size: 34px;
+  font-weight: 800;
+  line-height: 1.05;
+  color: #eaf8ff;
+  font-variant-numeric: tabular-nums;
+}
+.ds-hunt__big small {
+  margin-left: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(150, 214, 255, .9);
+}
+.ds-hunt__pair { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 3px; font-size: 10px; color: var(--muted); }
+.ds-hunt__pair b { color: #fff6e2; font-variant-numeric: tabular-nums; }
+.ds-hunt__bar {
+  display: flex;
+  height: 9px;
+  margin-top: 9px;
+  border-radius: 99px;
+  overflow: hidden;
+  background: rgba(2, 16, 19, .8);
+}
+.ds-hunt__bar i { display: block; height: 100%; }
+.ds-hunt__bar i.is-skill { background: linear-gradient(90deg, #5f9fe0, #a98cf0); }
+.ds-hunt__bar i.is-auto { background: rgba(147, 183, 174, .38); }
+.ds-hunt__legend {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 5px;
+  font-size: 9.5px;
+  color: var(--muted);
+}
+.ds-hunt__legend span { display: inline-flex; align-items: center; gap: 4px; }
+.ds-hunt__legend i { width: 7px; height: 7px; border-radius: 2px; display: inline-block; }
+.ds-hunt__legend i.is-skill { background: linear-gradient(90deg, #5f9fe0, #a98cf0); }
+.ds-hunt__legend i.is-auto { background: rgba(147, 183, 174, .5); }
+.ds-hunt__legend b { color: #eaf6ff; font-variant-numeric: tabular-nums; }
+
+.ds-hunt__cards .ds-card { padding: 7px 9px; }
+.ds-hunt__cards .ds-card strong { font-size: 16px; }
+
+.ds-hunt__tbl {
+  border-radius: 13px;
+  border: 1px solid rgba(127, 209, 189, .14);
+  background: rgba(5, 26, 30, .7);
+  overflow: hidden;
+}
+.ds-hunt__row {
+  display: grid;
+  grid-template-columns: 1fr 40px 34px 46px;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px 1px;
+  border-top: 1px solid rgba(127, 209, 189, .07);
+}
+.ds-hunt__row:first-child { border-top: 0; }
+.ds-hunt__row--head {
+  padding: 5px 10px 3px;
+  font-size: 8.5px;
+  letter-spacing: .1em;
+  color: rgba(147, 183, 174, .75);
+}
+.ds-hunt__row--head .c-name { display: block; font-size: 8.5px; font-weight: 500; color: inherit; }
+.ds-hunt__row--head .c-num, .ds-hunt__row--head .c-pct { text-align: right; }
+.ds-hunt__row .c-num, .ds-hunt__row .c-pct { text-align: right; }
+.ds-hunt__row .c-name {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  font-size: 11px;
+  color: #eaf6f1;
+}
+.ds-hunt__row .c-name b { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ds-hunt__row .c-name small { font-size: 8.5px; color: var(--muted); white-space: nowrap; }
+.ds-hunt__row .c-name small em { font-style: normal; color: rgba(150, 214, 255, .92); font-weight: 700; }
+.ds-hunt__row .c-num { font-size: 10.5px; color: #dff3ec; font-variant-numeric: tabular-nums; }
+.ds-hunt__row .c-kill { color: #ffe9b8; font-weight: 800; }
+.ds-hunt__row .c-pct { font-size: 10.5px; font-weight: 800; color: var(--gold-soft); font-variant-numeric: tabular-nums; }
+.ds-hunt__row .c-bar {
+  grid-column: 1 / -1;
+  display: block;
+  height: 3px;
+  margin: 2px 0 4px;
+  border-radius: 99px;
+  background: rgba(127, 209, 189, .1);
+  overflow: hidden;
+}
+.ds-hunt__row .c-bar i { display: block; height: 100%; border-radius: 99px; }
+.ds-hunt__row.is-ult .c-name b { color: #ffe9b8; }
+
+.ds-hunt__cmp {
+  padding: 10px 11px;
+  border-radius: 13px;
+  border: 1px dashed rgba(150, 214, 255, .3);
+  background: rgba(6, 30, 34, .68);
+}
+.ds-hunt__cmphead { margin: 0 0 6px; font-size: 10.5px; font-weight: 700; color: #d8eef8; }
+.ds-hunt__cmphead em { font-style: normal; font-size: 9px; font-weight: 500; color: var(--muted); margin-left: 4px; }
+.ds-hunt__cmprow {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 4px 7px;
+  padding: 5px 0;
+  border-top: 1px solid rgba(127, 209, 189, .08);
+}
+.ds-hunt__cmprow:first-of-type { border-top: 0; }
+.ds-hunt__cmprow .c-name { font-size: 10.5px; color: #dff3ec; }
+.ds-hunt__cmprow .c-name em {
+  font-style: normal;
+  margin-left: 5px;
+  padding: 1px 5px;
+  border-radius: 99px;
+  font-size: 8px;
+  font-weight: 800;
+  color: #04181b;
+  background: rgba(150, 214, 255, .82);
+}
+.ds-hunt__cmprow .c-num { font-size: 11px; font-weight: 800; color: #eaf6ff; font-variant-numeric: tabular-nums; }
+.ds-hunt__cmprow .c-num small { margin-left: 2px; font-size: 8.5px; font-weight: 600; color: var(--muted); }
+.ds-hunt__cmprow .c-bar {
+  grid-column: 1 / -1;
+  display: block;
+  height: 3px;
+  border-radius: 99px;
+  background: rgba(127, 209, 189, .1);
+  overflow: hidden;
+}
+.ds-hunt__cmprow .c-bar i { display: block; height: 100%; border-radius: 99px; background: rgba(147, 183, 174, .5); }
+.ds-hunt__cmprow.is-cur .c-bar i { background: linear-gradient(90deg, #5f9fe0, #a98cf0); }
+.ds-hunt__cmprow.is-cur .c-name { color: #ffe9b8; font-weight: 700; }
+
+.ds-hunt__note {
+  margin: 0;
+  font-size: 9px;
+  line-height: 1.65;
+  color: rgba(147, 183, 174, .9);
+  word-break: keep-all;
+}
+.ds-hunt__note b { color: #b8ecdd; }
+.ds-hunt__note--dim { color: rgba(147, 183, 174, .72); }
+
+/* =========================================================
+   계산 모드 전환 — 단일 보스 DPS / 자사계산기 (2026-11-27)
+   ========================================================= */
+.ds-mode { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin: 0 0 10px; }
+.ds-mode__btn {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 9px 11px;
+  border-radius: 12px;
+  border: 1px solid rgba(127, 209, 189, .18);
+  background: rgba(5, 26, 30, .66);
+  text-align: left;
+  color: rgba(200, 226, 218, .8);
+}
+.ds-mode__btn b { font-size: 12px; font-weight: 800; color: #dff3ec; }
+.ds-mode__btn em { font-style: normal; font-size: 8.5px; color: var(--muted); }
+.ds-mode__btn.is-on {
+  border-color: rgba(240, 217, 165, .62);
+  background: linear-gradient(180deg, rgba(240, 217, 165, .22), rgba(150, 120, 60, .12));
+  box-shadow: 0 0 0 1px rgba(240, 217, 165, .14) inset;
+}
+.ds-mode__btn.is-on b { color: #fff6e2; }
+.ds-mode__btn.is-on em { color: rgba(240, 217, 165, .8); }
+.ds-mode__btn[data-calc-mode="hunt"].is-on {
+  border-color: rgba(150, 214, 255, .62);
+  background: linear-gradient(180deg, rgba(96, 170, 226, .24), rgba(40, 100, 150, .16));
+  box-shadow: 0 0 0 1px rgba(150, 214, 255, .16) inset;
+}
+.ds-mode__btn[data-calc-mode="hunt"].is-on b { color: #eaf6ff; }
+.ds-mode__btn[data-calc-mode="hunt"].is-on em { color: rgba(150, 214, 255, .85); }
+
+#dosul-body.ds-page--hunt #ds-result-sec { display: none; }
+#dosul-body.ds-page--raid #ds-hunt-sec { display: none; }
+
+/* 자사계산기 — 버티기 */
+.ds-hunt__grid--hp { grid-template-columns: 1fr 1fr; }
+.ds-hunt__grid--hp .ds-hunt__f:last-child { grid-column: 1 / -1; }
+.ds-hunt__surv {
+  padding: 11px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(242, 162, 185, .26);
+  background: linear-gradient(168deg, rgba(46, 24, 34, .82), rgba(8, 22, 26, .9));
+}
+.ds-hunt__survhead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 7px;
+  margin: 0 0 7px;
+  font-size: 10.5px;
+  font-weight: 800;
+  color: #ffd7e2;
+}
+.ds-hunt__survhead em { font-style: normal; font-size: 9px; font-weight: 500; color: rgba(242, 162, 185, .8); }
+.ds-hunt__lv {
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: 99px;
+  font-size: 9.5px;
+  font-weight: 800;
+}
+.ds-hunt__lv.is-safe { background: rgba(127, 209, 189, .2); color: #b8ecdd; border: 1px solid rgba(127, 209, 189, .45); }
+.ds-hunt__lv.is-warn { background: rgba(240, 200, 120, .18); color: #ffe9b8; border: 1px solid rgba(240, 200, 120, .42); }
+.ds-hunt__lv.is-danger { background: rgba(242, 120, 120, .2); color: #ffc9c9; border: 1px solid rgba(242, 120, 120, .45); }
+.ds-hunt__survnote {
+  margin: 7px 0 0;
+  font-size: 9px;
+  line-height: 1.65;
+  color: rgba(242, 200, 210, .82);
+  word-break: keep-all;
+}
+.ds-hunt__survnote b { color: #ffe9f0; }

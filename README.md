@@ -159,7 +159,7 @@ var SUPABASE_KEY = 'sb_publishable_…';   // 공개용(publishable) 키 — 브
 
 - 홈 상단 배너는 `×` 로 닫을 수 있고, 닫은 상태는 이 기기에 기억됩니다(브라우저별로 따로 기억).
 - 설치 안내는 `js/app.js` 의 `installEnv()` · `installBannerHtml()` · `installCardHtml()` 에 모여 있습니다.
-- 서비스 워커 캐시는 `sw.js` 의 `CACHE_NAME`(현재 `v47`)으로 올려 새 화면이 바로 반영되게 합니다.
+- 서비스 워커 캐시는 `sw.js` 의 `CACHE_NAME`(현재 `v48`)으로 올려 새 화면이 바로 반영되게 합니다.
 
 ## 🍡 경단만들기 (미니게임)
 
@@ -372,7 +372,7 @@ python3 -m http.server 8000
 
 ## 고칠 때
 
-- 화면을 고친 뒤 `sw.js`의 `CACHE_NAME`(지금은 `yeonmot-munpa-v47`)을 올리면, 이미 앱을 설치한 기기도 새 화면을 받습니다.
+- 화면을 고친 뒤 `sw.js`의 `CACHE_NAME`(지금은 `yeonmot-munpa-v48`)을 올리면, 이미 앱을 설치한 기기도 새 화면을 받습니다.
 - 서버 규칙을 바꾸면 `supabase/schema.sql` 도 함께 고치고 SQL Editor에서 다시 실행해야 합니다.
 - 확인:
   ```bash
