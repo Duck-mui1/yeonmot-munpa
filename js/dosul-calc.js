@@ -89,6 +89,22 @@
 
   function huntData() { return HUNT; }
 
+  /* 🏹 사냥터 27곳 — 깨비지지 일반 사냥터의 권장 전투력·몹 체력 (dosul-data.js huntGrounds)
+     · 사냥터를 고르면 몹 체력 ÷ 내 기본 평타로 「평타 몇 방」을 만들어 같은 엔진에 넣습니다.
+     · 공개 사냥터가 27곳뿐이라 비경처럼 체력이 없는 곳은 「직접 입력」으로 계산합니다. */
+  var GROUNDS = Array.isArray(DATA.huntGrounds) ? DATA.huntGrounds : [];
+  var GROUND_BY_ID = {};
+  GROUNDS.forEach(function (g) { if (g && g.id) { GROUND_BY_ID[String(g.id)] = g; } });
+
+  function huntGrounds() { return GROUNDS; }
+  function huntGround() {
+    for (var i = 0; i < arguments.length; i += 1) {
+      var g = GROUND_BY_ID[String(arguments[i])];
+      if (g) { return g; }
+    }
+    return null;
+  }
+
   function clamp(n, lo, hi) { return Math.max(lo, Math.min(hi, n)); }
 
   /* ---------------------------------------------------------
@@ -1589,7 +1605,7 @@
       killHits: clampNum(c.killHits, 0.5, 2000, HD.killHits || 10),
       maxMobs: Math.round(clampNum(c.maxMobs, 1, 60, HD.maxMobs || 13)),
       respawnSec: clampNum(c.respawnSec, 0.5, 120, HD.respawnSec || 5),
-      huntAuto: clampNum(c.huntAutoCoeff != null ? c.huntAutoCoeff : (HUNT.autoCoeff || 300), 10, 3000, 300),
+      huntAuto: clampNum(c.huntAutoCoeff != null ? c.huntAutoCoeff : (HUNT.autoCoeff || 95), 10, 3000, 95),
       /* 치명타 — 기본 50%(2026-11-27 준형 님 지시) · 치명타 피해 증가 기본 +20%
          평타 타수(몹 체력)는 「치명타 50% · 치타피해 +20%」에서 잰 기준이므로,
          다른 확률로 바꾸면 그 기준 대비 기대 피해 배수로 환산합니다:
@@ -1604,8 +1620,10 @@
          회복량 계수는 공개 자료에 없어 「최대 체력 %」로 받습니다(기본 30%). */
       healAtPct: clampNum(c.healAtPct, 0, 99, 70),
       healPct: clampNum(c.healPct, 0, 500, 30),
-      /* 내 기본 평타 데미지 — 몹 체력 추정에만 쓰고 계산 자체는 평타 계수 그대로입니다 */
+      /* 내 기본 평타 데미지 — 몹 체력 추정에만 쓰고 계산 자체는 평타 계수 그대로입니다.
+         사냥터를 골랐을 때는 killHits 를 「몹 체력 ÷ 내 평타」로 만들어 넘깁니다. */
       myAutoDmg: clampNum(c.myAutoDmg, 0, 1e9, 0),
+      groundInfo: c.groundInfo || null,
       /* 체력 자연 회복 — 인게임처럼 5.0초마다 한 번, 입력한 만큼 즉시 회복합니다.
          (초당으로 나눠 붙이지 않고 5·10·15…초 시점에 한꺼번에) */
       hpRegen: clampNum(c.hpRegen, 0, 1e9, 0)
@@ -1942,6 +1960,8 @@
       /* 내 기본 평타 데미지를 적었으면 몹 1마리 체력을 어림합니다 (평타 몇 방 × 내 평타) */
       myAutoDmg: cfg.myAutoDmg,
       mobHpEstimate: cfg.myAutoDmg > 0 ? round(cfg.myAutoDmg * cfg.killHits, 0) : null,
+      /* 사냥터를 골라 계산했으면 그 이름·권장 전투력·몹 체력을 결과에 함께 남깁니다 */
+      ground: cfg.groundInfo || null,
       kills: kills,
       killsPerMin: round(kills / ((life || duration) / 60), 1),
       kills1m: k1,
@@ -2014,6 +2034,8 @@
     simulateHunt: simulateHunt,
     huntCompare: huntCompare,
     huntData: huntData,
+    huntGrounds: huntGrounds,
+    huntGround: huntGround,
     huntTargets: huntTargets,
     huntFalloffMul: huntFalloffMul,
     huntFocusShape: huntFocusShape

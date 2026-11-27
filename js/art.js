@@ -39,8 +39,12 @@
     );
   }
 
-  /* ---------- 홈 배너 ---------- */
-  function hero() {
+  /* ---------- 홈 배너 ----------
+     opts.back = true 이면 「홈 상단 제목 뒤 배경」으로 쓸 수 있게 아래쪽(물결·연꽃·잉어)이 남도록 잘라 보여 줍니다. */
+  function hero(opts) {
+    var o = opts || {};
+    var cls = o.back ? 'hero__svg hero__svg--back' : 'hero__svg';
+    var par = o.back ? 'xMidYMax slice' : 'xMidYMid slice';
     var g = uid('hr');
     var fireflies = '';
     var pts = [[92, 96], [138, 74], [206, 110], [262, 84], [330, 104], [402, 78], [452, 118], [58, 132], [176, 58]];
@@ -49,7 +53,7 @@
     }
 
     return (
-      '<svg class="hero__svg" viewBox="0 0 480 300" preserveAspectRatio="xMidYMid slice" aria-hidden="true" focusable="false">' +
+      '<svg class="' + cls + '" viewBox="0 0 480 300" preserveAspectRatio="' + par + '" aria-hidden="true" focusable="false">' +
       '<defs>' +
       '<linearGradient id="' + g + 's" x1="0" y1="0" x2="0" y2="1">' +
       '<stop offset="0" stop-color="#04191d"/><stop offset=".55" stop-color="#083231"/><stop offset="1" stop-color="#0b4441"/>' +

@@ -151,10 +151,12 @@
       /* 🏹 사냥터 분당 처치 — 몹 체력·젠·치명타 기준 (2026-11-27) */
       hunt: {
         killHits: 10, maxMobs: 13, respawnSec: 5,
-        autoCoeff: 285, critPct: 50, critDmgPct: 20, duration: 180,
+        autoCoeff: 95, critPct: 50, critDmgPct: 20, duration: 180,
         maxHp: 160000, mobDmg: 0, mobAtkInterval: 2, healAtPct: 70, healPct: 30,
         /* 내 기본 평타 데미지(몹 체력 추정용) · 체력 자연 회복(5초마다) */
-        myAutoDmg: 0, hpRegen: 0
+        myAutoDmg: 0, hpRegen: 0,
+        /* 몹 체력 넣는 방식 — 'hits'(직접 입력 몇 방, 기본) / 'ground'(사냥터 선택) */
+        hpMode: 'hits', groundId: ''
       },
       /* 디버프 — 파티가 걸어 주는 것으로 보는 보조 토글 */
       debuffOn: {},
@@ -196,11 +198,16 @@
       base.chain = (base.chain && typeof base.chain === 'object') ? base.chain : {};
       base.hunt = (base.hunt && typeof base.hunt === 'object') ? base.hunt : {};
       var hd = defaults().hunt;
+      /* 글자 칸(방식·사냥터)은 숫자 정리 전에 따로 넣어 둡니다 */
+      var rawHpMode = base.hunt.hpMode;
+      var rawGroundId = base.hunt.groundId;
       for (var hk in hd) {
         if (Object.prototype.hasOwnProperty.call(hd, hk)) {
           base.hunt[hk] = Number(base.hunt[hk]) >= 0 ? Number(base.hunt[hk]) : hd[hk];
         }
       }
+      base.hunt.hpMode = rawHpMode === 'ground' ? 'ground' : 'hits';
+      base.hunt.groundId = typeof rawGroundId === 'string' ? rawGroundId : '';
       base.debuffOn = (base.debuffOn && typeof base.debuffOn === 'object') ? base.debuffOn : {};
       /* 무기·장비 도술 피해 — 예전 저장분에는 없으므로 없으면 0 / {} 로 읽습니다 */
       base.allDosulDmgPct = clampPct(base.allDosulDmgPct);
@@ -287,7 +294,14 @@
     var h = S.hunt || defaults().hunt;
     var base = config();
     base.duration = Number(h.duration) || 180;
-    base.killHits = Number(h.killHits);
+    /* 몹 체력 넣는 방식 — 「사냥터 선택」이면 실제 몹 체력 ÷ 내 평타로 몇 방인지 만들어 넘깁니다 */
+    var gh = (h.hpMode === 'ground') ? huntGroundHits(h) : null;
+    base.killHits = gh ? gh.hits : Number(h.killHits);
+    base.groundInfo = gh ? {
+      id: gh.ground.id, name: gh.ground.name, region: gh.ground.region,
+      cp: gh.ground.cp, hp: gh.ground.hp, hpMin: gh.ground.hpMin, hpMax: gh.ground.hpMax,
+      auto: gh.auto, hits: Math.round(gh.hits * 100) / 100
+    } : null;
     base.maxMobs = Number(h.maxMobs);
     base.respawnSec = Number(h.respawnSec);
     base.huntAutoCoeff = Number(h.autoCoeff);
@@ -299,6 +313,8 @@
     base.healAtPct = Number(h.healAtPct);
     base.healPct = Number(h.healPct);
     base.myAutoDmg = Number(h.myAutoDmg) || 0;
+    /* 사냥터를 골랐을 때는 예시 평타(2,475)로 환산했더라도 그 값을 결과에 남깁니다 */
+    if (gh) { base.myAutoDmg = gh.auto; }
     base.hpRegen = Number(h.hpRegen) || 0;
     return base;
   }
@@ -1163,6 +1179,68 @@
     return '';
   }
 
+  /* 사냥터 선택 방식 — 사냥터(실제 몹 체력) / 직접 입력(몇 방)
+     · 기본은 「직접 입력」: 지금까지 쓰던 방식 그대로입니다.
+     · 「사냥터 선택」은 깨비지지 일반 사냥터 27곳의 몹 체력 ÷ 내 기본 평타로
+       몇 방인지 환산해 같은 엔진에 넣습니다. */
+  var HUNT_EXAMPLE_AUTO = 2475;   /* 평타를 안 적었을 때 쓰는 예시 값 — 385K 실측 앵커 */
+  var HUNT_DEFAULT_GROUND = '101012';   /* 역병의 부화장 385K — 준형 님 실측 사냥터 */
+
+  function huntGroundList() {
+    return (C.huntGrounds ? C.huntGrounds() : []).slice().sort(function (a, b) {
+      return (a.cp || 0) - (b.cp || 0);
+    });
+  }
+
+  function huntAutoUsed(h) {
+    var v = Number(h && h.myAutoDmg);
+    return v > 0 ? v : HUNT_EXAMPLE_AUTO;
+  }
+
+  /* 고른 사냥터로 「평타 몇 방」을 환산 — 사냥터가 없으면 null */
+  function huntGroundHits(h) {
+    var g = C.huntGround ? C.huntGround(h.groundId || HUNT_DEFAULT_GROUND) : null;
+    if (!g) { return null; }
+    return { ground: g, auto: huntAutoUsed(h), hits: g.hp / huntAutoUsed(h) };
+  }
+
+  function huntGroundSummary(g) {
+    if (!g) { return ''; }
+    var hp = g.hpMin && g.hpMax && g.hpMin !== g.hpMax
+      ? group(g.hpMin) + ' ~ ' + group(g.hpMax) + ' (대표 ' + group(g.hp) + ')'
+      : group(g.hp);
+    return '권장 전투력 ' + group(g.cp) + ' · Lv ' + esc(g.lv) + ' · 몹 ' + num(g.mobs, 0) + '종 · 몹 체력 ' + hp;
+  }
+
+  /* 「몹 체력 ÷ 내 평타 = 몇 방」 줄 — 사냥터를 고른 채 평타만 고쳐도 바로 바뀝니다 */
+  function updateHuntCalcLine() {
+    var box = document.getElementById('ds-hunt-calc');
+    if (!box) { return; }
+    var gh = huntGroundHits({ groundId: S.hunt.groundId || HUNT_DEFAULT_GROUND, myAutoDmg: S.hunt.myAutoDmg });
+    if (!gh) { box.textContent = '사냥터를 골라 주세요.'; return; }
+    box.innerHTML = '몹 체력 <b>' + group(gh.ground.hp) + '</b> ÷ 내 평타 <b>' + group(gh.auto) + '</b> = <b>' +
+      num(gh.hits, 2) + '방</b>' +
+      (Number(S.hunt.myAutoDmg) > 0 ? ''
+        : ' <em>· 평타를 적으면 내 값으로 바뀝니다 (지금은 예시 ' + group(HUNT_EXAMPLE_AUTO) + ')</em>');
+  }
+
+  function huntGroundOptions(sel) {
+    var list = huntGroundList();
+    var html = '';
+    var region = '';
+    list.forEach(function (g) {
+      if (g.region && g.region !== region) {
+        if (region) { html += '</optgroup>'; }
+        region = g.region;
+        html += '<optgroup label="' + esc(region) + '">';
+      }
+      html += '<option value="' + esc(g.id) + '"' + (String(g.id) === String(sel) ? ' selected' : '') + '>' +
+        esc(g.name) + ' · ' + group(g.cp) + '</option>';
+    });
+    if (region) { html += '</optgroup>'; }
+    return html;
+  }
+
   function renderHuntForm() {
     if (!el.hunt) { return; }
     var h = S.hunt || defaults().hunt;
@@ -1176,24 +1254,69 @@
         esc(HUNT_DUR_LABEL[d]) + '</button>';
     }).join('');
 
+    var groundMode = h.hpMode === 'ground';
+    var sel = h.groundId || HUNT_DEFAULT_GROUND;
+    var gh = groundMode ? huntGroundHits({ groundId: sel, myAutoDmg: h.myAutoDmg }) : null;
+    var modeBtns = [
+      { k: 'ground', t: '사냥터 선택', s: '실제 몹 체력으로' },
+      { k: 'hits', t: '직접 입력', s: '몹이 평타 몇 방에' }
+    ].map(function (m) {
+      return '<button type="button" class="ds-hunt__modebtn' + (groundMode === (m.k === 'ground') ? ' is-on' : '') + '"' +
+        ' role="tab" aria-selected="' + (groundMode === (m.k === 'ground') ? 'true' : 'false') + '"' +
+        ' data-hunt-hpmode="' + m.k + '"><b>' + esc(m.t) + '</b><em>' + esc(m.s) + '</em></button>';
+    }).join('');
+
+    var hpFields = '';
+    if (groundMode) {
+      hpFields = [
+        '<label class="ds-hunt__f ds-hunt__f--wide"><span>사냥터 <em>깨비지지 ' + huntGroundList().length + '곳</em></span>',
+        '  <select class="ds-hunt__select" data-hunt-ground="1" aria-label="사냥터 고르기">' + huntGroundOptions(sel) + '</select></label>',
+        '<p class="ds-hunt__gsum" id="ds-hunt-ground-sum">' + huntGroundSummary(gh ? gh.ground : null) + '</p>',
+        '<label class="ds-hunt__f"><span>내 기본 평타 데미지</span>',
+        '  <input type="number" min="0" max="100000000" step="1" inputmode="numeric" data-hunt="myAutoDmg" placeholder="예: ' + HUNT_EXAMPLE_AUTO + '" value="' + (Number(h.myAutoDmg) > 0 ? num(h.myAutoDmg, 0) : '') + '"></label>',
+        '<p class="ds-hunt__calc" id="ds-hunt-calc">' + (gh
+          ? '몹 체력 <b>' + group(gh.ground.hp) + '</b> ÷ 내 평타 <b>' + group(gh.auto) + '</b> = <b>' + num(gh.hits, 2) + '방</b>'
+            + (Number(h.myAutoDmg) > 0 ? '' : ' <em>· 평타를 적으면 내 값으로 바뀝니다 (지금은 예시 ' + group(HUNT_EXAMPLE_AUTO) + ')</em>')
+          : '사냥터를 골라 주세요.') + '</p>',
+        '<div class="ds-hunt__grid">',
+        '  <label class="ds-hunt__f"><span>최대 마릿수</span>',
+        '    <input type="number" min="1" max="60" step="1" inputmode="numeric" data-hunt="maxMobs" value="' + num(h.maxMobs, 0) + '"></label>',
+        '  <label class="ds-hunt__f"><span>부활 시간(초)</span>',
+        '    <input type="number" min="0.5" max="120" step="0.5" inputmode="decimal" data-hunt="respawnSec" value="' + num(h.respawnSec, 1) + '"></label>',
+        '  <label class="ds-hunt__f"><span>치명타 확률 <em>기본 50%</em></span>',
+        '    <input type="number" min="0" max="100" step="1" inputmode="numeric" data-hunt="critPct" value="' + num(h.critPct, 1) + '"></label>',
+        '  <label class="ds-hunt__f"><span>치명타 피해 <em>기본 20%</em></span>',
+        '    <input type="number" min="0" max="500" step="0.1" inputmode="decimal" data-hunt="critDmgPct" value="' + num(h.critDmgPct, 1) + '"></label>',
+        '</div>',
+        '<p class="ds-hunt__qnote">사냥터를 고르면 <b>깨비지지에 나온 그 사냥터 몹 체력</b>이 그대로 들어가고, ' +
+          '<b>몹 체력 ÷ 내 기본 평타</b>로 몇 방인지 계산합니다. 비경처럼 체력이 공개되지 않은 곳은 <b>직접 입력</b>에서 몇 방인지 적어 주세요.</p>'
+      ].join('\n');
+    } else {
+      hpFields = [
+        '<div class="ds-hunt__grid">',
+        '  <label class="ds-hunt__f"><span>몹이 평타 <b>몇 방</b>에 죽음</span>',
+        '    <input type="number" min="1" max="2000" step="1" inputmode="numeric" data-hunt="killHits" value="' + num(h.killHits, 2) + '"></label>',
+        '  <label class="ds-hunt__f"><span>내 기본 평타 데미지 <em>선택</em></span>',
+        '    <input type="number" min="0" max="100000000" step="1" inputmode="numeric" data-hunt="myAutoDmg" placeholder="예: 2475" value="' + (Number(h.myAutoDmg) > 0 ? num(h.myAutoDmg, 0) : '') + '"></label>',
+        '  <label class="ds-hunt__f"><span>최대 마릿수</span>',
+        '    <input type="number" min="1" max="60" step="1" inputmode="numeric" data-hunt="maxMobs" value="' + num(h.maxMobs, 0) + '"></label>',
+        '  <label class="ds-hunt__f"><span>부활 시간(초)</span>',
+        '    <input type="number" min="0.5" max="120" step="0.5" inputmode="decimal" data-hunt="respawnSec" value="' + num(h.respawnSec, 1) + '"></label>',
+        '  <label class="ds-hunt__f"><span>치명타 확률 <em>기본 50%</em></span>',
+        '    <input type="number" min="0" max="100" step="1" inputmode="numeric" data-hunt="critPct" value="' + num(h.critPct, 1) + '"></label>',
+        '  <label class="ds-hunt__f"><span>치명타 피해 <em>기본 20%</em></span>',
+        '    <input type="number" min="0" max="500" step="0.1" inputmode="decimal" data-hunt="critDmgPct" value="' + num(h.critDmgPct, 1) + '"></label>',
+        '</div>',
+        '<p class="ds-hunt__qnote"><b>내 기본 평타 데미지</b>는 선택이에요 — 적으면 몹 체력까지 <b>추정</b>해 드립니다(평타 몇 방 × 내 평타 데미지). ' +
+          '비경처럼 몹 체력이 공개되지 않은 곳에 쓰는 방식입니다.</p>'
+      ].join('\n');
+    }
+
     el.hunt.innerHTML = [
+      '<div class="ds-hunt__mode" role="tablist" aria-label="몹 체력 넣는 방식">' + modeBtns + '</div>',
       '<div class="ds-hunt__quick" role="group" aria-label="사냥터 원터치 설정">' + qbtns + '</div>',
       '<p class="ds-hunt__qnote">원터치로 <b>마릿수 · 부활 시간</b>이 바로 바뀝니다 — 아래 칸에서 직접 고쳐도 됩니다.</p>',
-      '<div class="ds-hunt__grid">',
-      '  <label class="ds-hunt__f"><span>몹이 평타 <b>몇 방</b>에 죽음</span>',
-      '    <input type="number" min="1" max="2000" step="1" inputmode="numeric" data-hunt="killHits" value="' + num(h.killHits, 2) + '"></label>',
-      '  <label class="ds-hunt__f"><span>내 기본 평타 데미지 <em>선택</em></span>',
-      '    <input type="number" min="0" max="100000000" step="1" inputmode="numeric" data-hunt="myAutoDmg" placeholder="예: 2475" value="' + (Number(h.myAutoDmg) > 0 ? num(h.myAutoDmg, 0) : '') + '"></label>',
-      '  <label class="ds-hunt__f"><span>최대 마릿수</span>',
-      '    <input type="number" min="1" max="60" step="1" inputmode="numeric" data-hunt="maxMobs" value="' + num(h.maxMobs, 0) + '"></label>',
-      '  <label class="ds-hunt__f"><span>부활 시간(초)</span>',
-      '    <input type="number" min="0.5" max="120" step="0.5" inputmode="decimal" data-hunt="respawnSec" value="' + num(h.respawnSec, 1) + '"></label>',
-      '  <label class="ds-hunt__f"><span>치명타 확률 <em>기본 50%</em></span>',
-      '    <input type="number" min="0" max="100" step="1" inputmode="numeric" data-hunt="critPct" value="' + num(h.critPct, 1) + '"></label>',
-      '  <label class="ds-hunt__f"><span>치명타 피해 <em>기본 20%</em></span>',
-      '    <input type="number" min="0" max="500" step="0.1" inputmode="decimal" data-hunt="critDmgPct" value="' + num(h.critDmgPct, 1) + '"></label>',
-      '</div>',
-      '<p class="ds-hunt__qnote"><b>내 기본 평타 데미지</b>는 선택이에요 — 적으면 몹 체력까지 <b>추정</b>해 드립니다(평타 몇 방 × 내 평타 데미지).</p>',
+      hpFields,
       '<p class="ds-hunt__qnote"><b>버티기</b> — 내 체력과 <b>몹 1마리 피격 데미지</b>를 적으면 살아 있는 몹 수만큼 맞는 피해로 버티는 시간을 계산합니다(비우면 생략). ' +
         '체력이 <b>발동 %</b> 이하로 떨어지면 장착한 <b>헌신 회복 도술</b>(생명의 흐름·생명의 축복)을 <b>맨 먼저</b> 씁니다. ' +
         '<b>체력 자연 회복</b>을 적으면 인게임처럼 <b>5초마다</b> 그만큼 즉시 회복합니다.</p>',
@@ -1226,7 +1349,8 @@
       JSON.stringify(cfg.trans), JSON.stringify(cfg.tr6), JSON.stringify(cfg.override), cfg.allDosulDmgPct,
       JSON.stringify(cfg.styleDmgPct), cfg.cdReducePct, cfg.castMode, cfg.chargeFull, cfg.autoInterval,
       cfg.gap, cfg.chain ? JSON.stringify(cfg.chain) : '', JSON.stringify(cfg.debuffOn),
-      cfg.maxHp, cfg.mobDmg, cfg.mobAtkInterval, cfg.healAtPct, cfg.healPct, cfg.myAutoDmg, cfg.hpRegen].join('|');
+      cfg.maxHp, cfg.mobDmg, cfg.mobAtkInterval, cfg.healAtPct, cfg.healPct, cfg.myAutoDmg, cfg.hpRegen,
+      (cfg.groundInfo ? cfg.groundInfo.id : '')].join('|');
     if (huntCache.key === key && huntCache.res) { return huntCache; }
     var res = C.simulateHunt(cfg);
     var cmp = null;
@@ -1327,7 +1451,10 @@
 
     out.innerHTML = [
       '<div class="ds-hunt__hero">',
-      '  <p class="ds-hunt__cap">분당 처치 <em>' + num(r.maxMobs, 0) + '마리 · ' + num(r.respawnSec, 1) + '초 · 몹 체력 평타 ' + num(r.killHits, 1) + '방</em></p>',
+      '  <p class="ds-hunt__cap">분당 처치 <em>' + num(r.maxMobs, 0) + '마리 · ' + num(r.respawnSec, 1) + '초 · ' +
+        (r.ground
+          ? esc(r.ground.name) + ' 몹 체력 ' + group(r.ground.hp) + ' ÷ 평타 ' + group(r.ground.auto) + ' = <b>' + num(r.ground.hits, 2) + '방</b>'
+          : '몹 체력 평타 ' + num(r.killHits, 1) + '방') + '</em></p>',
       '  <p class="ds-hunt__big">' + num(perMin, 1) + '<small>마리/분</small></p>',
       '  <div class="ds-hunt__pair"><span>1분 <b>' + k1 + '</b>마리</span><span>3분 <b>' + k3 + '</b>마리</span></div>',
       '  <div class="ds-hunt__bar"><i class="is-skill" style="width:' + skillW.toFixed(1) + '%"></i><i class="is-auto" style="width:' + autoW.toFixed(1) + '%"></i></div>',
@@ -1933,6 +2060,22 @@
         }
         return;
       }
+      /* 🏹 몹 체력 넣는 방식 — 사냥터 선택 ↔ 직접 입력 */
+      var hmode = t.closest('[data-hunt-hpmode]');
+      if (hmode) {
+        var want = hmode.getAttribute('data-hunt-hpmode') === 'ground' ? 'ground' : 'hits';
+        if (S.hunt.hpMode !== want) {
+          S.hunt.hpMode = want;
+          if (want === 'ground' && !(C.huntGround && C.huntGround(S.hunt.groundId || ''))) {
+            S.hunt.groundId = HUNT_DEFAULT_GROUND;
+          }
+          huntCache.key = '';
+          renderHuntForm();
+          recompute();
+          save();
+        }
+        return;
+      }
       /* 🏹 사냥터 원터치 프리셋 · 계산 시간 */
       var hq = t.closest('[data-hunt-preset]');
       if (hq) {
@@ -2098,6 +2241,8 @@
       if (hk) {
         var hv = Number(t.value);
         if (isFinite(hv)) { S.hunt[hk] = hv; huntCache.key = ''; }
+        /* 사냥터를 고른 채 평타만 고치면 「÷ 내 평타 = 몇 방」 줄도 바로 바뀝니다 */
+        if (hk === 'myAutoDmg' && S.hunt.hpMode === 'ground') { updateHuntCalcLine(); }
         if (el.huntHint) {
           el.huntHint.textContent = num(S.hunt.maxMobs, 0) + '마리 · ' + num(S.hunt.respawnSec, 1) + '초 · 치명타 ' + num(S.hunt.critPct, 0) + '%';
         }
@@ -2182,6 +2327,16 @@
     el.root.addEventListener('change', function (e) {
       var t = e.target;
       if (!t) { return; }
+      /* 🏹 사냥터 고르기 — 고르면 그 사냥터 몹 체력으로 다시 계산합니다 */
+      var hg = t.getAttribute && t.getAttribute('data-hunt-ground');
+      if (hg) {
+        S.hunt.groundId = t.value || '';
+        huntCache.key = '';
+        renderHuntForm();
+        recompute();
+        save();
+        return;
+      }
       /* 🏹 사냥터 조건 — 칸을 벗어날 때 범위로 다듬습니다 */
       var hck = t.getAttribute && t.getAttribute('data-hunt');
       if (hck) {

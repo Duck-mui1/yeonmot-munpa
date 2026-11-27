@@ -1376,6 +1376,40 @@
     }, 1300);
   }
 
+  /**
+   * 🏠 홈 상단 — 연못 일러스트(연꽃·잉어·물결)를 제목 뒤 배경으로 은은하게 깔고,
+   * 그 위에 「도깨비의 세계 · 문파 / 연못 / 물결이 모여…」를 놓습니다 (v50 시안).
+   */
+  function homeHead(clan) {
+    return '<header class="home-head" aria-label="연못">' +
+      '<div class="home-head__pond" aria-hidden="true">' + ART.hero({ back: true }) + '</div>' +
+      '<div class="home-head__text">' +
+      '<p class="kicker">도깨비의 세계' + (isLive() ? ' · 문파' : ' · 체험') + '</p>' +
+      '<h2 class="screen__title">' + esc(clan.name || '연못') + '</h2>' +
+      '<p class="screen__sub">' + esc(clan.motto || '') + '</p>' +
+      '</div>' +
+      '<div class="home-head__pills">' +
+      (clan.level ? '<span class="pill pill--gold">문파 레벨 ' + esc(clan.level) + '</span>' : '') +
+      '<span class="pill">문파원 ' + fmtNum(clan.member_count) + ' / ' + fmtNum(clan.capacity) + '</span>' +
+      '</div>' +
+      '</header>';
+  }
+
+  /**
+   * 🪷 오늘의 물결 — 예전 연못 배너 안에 있던 버튼을 통계 카드 아래 바로가기로 옮겼습니다.
+   * 하는 일은 그대로 (누르면 오늘의 물결을 남기고 연속 일수를 알려 줌).
+   */
+  function waveBar(wave) {
+    return '<button type="button" class="wave-btn wave-btn--bar' + (wave.today_done ? ' is-done' : '') + '" id="wave-btn"' +
+      (wave.today_done ? ' aria-pressed="true"' : ' aria-pressed="false"') + '>' +
+      '<span class="wave-btn__ring" aria-hidden="true"></span>' +
+      '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" focusable="false">' +
+      '<path d="M4 12.5c2.6 0 2.6-1.6 5.2-1.6s2.6 1.6 5.2 1.6 2.6-1.6 5.2-1.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>' +
+      '<path d="M5.5 17.5c2.2 0 2.2-1.3 4.4-1.3s2.2 1.3 4.4 1.3 2.2-1.3 4.4-1.3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" opacity=".55"/>' +
+      '</svg>' +
+      '<span id="wave-label">' + waveLabel(wave) + '</span></button>';
+  }
+
   function renderHome() {
     if (!S.ready || !S.clan) {
       $('#home-body').innerHTML = '<div class="empty">연못을 불러오는 중이에요…</div>';
@@ -1387,30 +1421,13 @@
     var admin = isAdmin();
     var html = '';
 
-    html += '<header class="screen__head">' +
-      '<p class="kicker">도깨비의 세계' + (isLive() ? ' · 문파' : ' · 체험') + '</p>' +
-      '<h2 class="screen__title">' + esc(clan.name || '연못') + '</h2>' +
-      '<p class="screen__sub">' + esc(clan.motto || '') + '</p>' +
-      '</header>';
+    /* 상단 — 연못 일러스트를 배경으로 깔아 랜딩 화면처럼 (v50) */
+    html += homeHead(clan);
 
-    html += '<section class="hero" aria-label="연못 배너">' + ART.hero() +
-      '<div class="hero__pills">' +
-      (clan.level ? '<span class="pill pill--gold">문파 레벨 ' + esc(clan.level) + '</span>' : '') +
-      '<span class="pill">문파원 ' + fmtNum(clan.member_count) + ' / ' + fmtNum(clan.capacity) + '</span>' +
-      '</div>' +
-      '<div class="hero__overlay">' +
-      '<div class="hero__caption"><strong>' + esc(clan.name || '연못') + '</strong><span>오늘도 고요한 연못에 물결을 남겨요</span></div>' +
-      '<button type="button" class="wave-btn' + (wave.today_done ? ' is-done' : '') + '" id="wave-btn"' +
-      (wave.today_done ? ' aria-pressed="true"' : ' aria-pressed="false"') + '>' +
-      '<span class="wave-btn__ring" aria-hidden="true"></span>' +
-      '<span id="wave-label">' + waveLabel(wave) + '</span>' +
-      '</button>' +
-      '</div></section>';
-
-    /* 오늘의 문파컨텐츠 — 연못 일러스트 배너 바로 아래에 이어지도록 (없으면 통째로 숨김) */
+    /* 오늘의 문파컨텐츠 — 연못 일러스트 바로 아래에 이어지도록 (없으면 통째로 숨김) */
     html += todayBar();
 
-    /* 시안처럼 배너와 통계 사이에 큰 마이홈 카드 */
+    /* 시안처럼 문파컨텐츠와 통계 사이에 큰 마이홈 카드 */
     html += myHomeCard();
 
     html += '<div class="stats">' +
@@ -1418,6 +1435,9 @@
       '<div class="stat"><strong>' + fmtNum(clan.week_waves) + '</strong><span>이번 주 출석</span></div>' +
       '<div class="stat"><strong>+' + fmtNum(clan.new_members_7d) + '</strong><span>새 문파원</span></div>' +
       '</div>';
+
+    /* 오늘의 물결 남기기 — 예전 연못 배너 안에 있던 버튼 (기능 유지) */
+    html += waveBar(wave);
 
     /* 바로가기 — 통계 카드 아래 · 공지 위에서 섹션으로 부드럽게 내려갑니다 */
     html += shortcutBar();
