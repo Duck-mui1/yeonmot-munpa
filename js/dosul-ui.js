@@ -8,6 +8,15 @@
   var C = global.YM_DOSUL;
   if (!C) { return; }
 
+  /* 🏹 평타 1타 계수 — 자사계산기의 고정 기준값입니다(사용자 입력 칸 없음).
+     v48·v49 때 285로 저장된 기기의 localStorage 값이 남아 v50 의 95 를 덮어썼습니다.
+     v51 부터는 읽어 들일 때도, 계산할 때도 언제나 이 값을 씁니다. */
+  var HUNT_AUTO_FIXED = (function () {
+    var h = (C.huntData && C.huntData()) || null;
+    var v = h ? Number(h.autoCoeff) : NaN;
+    return isFinite(v) && v > 0 ? v : 95;
+  })();
+
   var SAVE_KEY = 'ym.dosul.v1';
   var SHARE_KEY = 'ym.dosul.shared.v1';
   var el = {};
@@ -208,6 +217,8 @@
       }
       base.hunt.hpMode = rawHpMode === 'ground' ? 'ground' : 'hits';
       base.hunt.groundId = typeof rawGroundId === 'string' ? rawGroundId : '';
+      /* 옛 저장값(285 등)이 남아 있어도 평타 1타 계수는 고정값으로 교정합니다 (v51) */
+      base.hunt.autoCoeff = HUNT_AUTO_FIXED;
       base.debuffOn = (base.debuffOn && typeof base.debuffOn === 'object') ? base.debuffOn : {};
       /* 무기·장비 도술 피해 — 예전 저장분에는 없으므로 없으면 0 / {} 로 읽습니다 */
       base.allDosulDmgPct = clampPct(base.allDosulDmgPct);
@@ -222,6 +233,8 @@
 
   function save() {
     try {
+      /* 평타 1타 계수는 고정값만 저장합니다 — 옛 값이 다시 기록되지 않게 (v51) */
+      if (S.hunt) { S.hunt.autoCoeff = HUNT_AUTO_FIXED; }
       var out = {
         slots: S.slots, castOrder: S.castOrder,
         duration: S.duration, cdReducePct: S.cdReducePct,
@@ -304,7 +317,8 @@
     } : null;
     base.maxMobs = Number(h.maxMobs);
     base.respawnSec = Number(h.respawnSec);
-    base.huntAutoCoeff = Number(h.autoCoeff);
+    /* 저장값과 상관없이 고정값 — 옛 기기의 285가 새 기본값을 덮어쓰지 않게 (v51) */
+    base.huntAutoCoeff = HUNT_AUTO_FIXED;
     base.critPct = Number(h.critPct);
     base.critDmgPct = Number(h.critDmgPct);
     base.maxHp = Number(h.maxHp) || 0;
@@ -2038,6 +2052,15 @@
   /* ---------------------------------------------------------
      이벤트
      --------------------------------------------------------- */
+  /* 계산기 화면 맨 위로 — #screen-dosul 이 스크롤 컨테이너입니다(overflow-y:auto) */
+  function scrollDosulTop() {
+    if (el.root) {
+      if (typeof el.root.scrollTo === 'function') { el.root.scrollTo({ top: 0, behavior: 'auto' }); }
+      el.root.scrollTop = 0;
+    }
+    try { global.scrollTo({ top: 0, behavior: 'auto' }); } catch (e) { /* 창 스크롤이 없는 화면 */ }
+  }
+
   function bind() {
     if (bound) { return; }
     bound = true;
@@ -2053,10 +2076,9 @@
           S.mode = mk;
           applyMode();
           save();
-          var sec = mk === 'hunt' ? $('#ds-hunt-sec') : $('#ds-result-sec');
-          if (sec && sec.scrollIntoView) {
-            global.setTimeout(function () { sec.scrollIntoView({ block: 'start' }); }, 60);
-          }
+          /* v51 — 모드가 바뀌면 결과 중간이 아니라 계산기 맨 위부터 보이게 합니다 */
+          scrollDosulTop();
+          global.setTimeout(scrollDosulTop, 60);
         }
         return;
       }
