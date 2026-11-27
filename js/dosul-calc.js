@@ -1671,9 +1671,180 @@
       mobs.push({ i: i, hp: mobHp, alive: true, deadAt: -1, respawnAt: 0 });
     }
     var EPS = 1e-9;
+
+    /* ---------------------------------------------------------
+       쿨타임 신식 (v52) — 단일 보스 계산기(simulate)와 **같은 규칙**을 자사 루프에도 씁니다.
+       예전에는 자사계산기가 시전당 피해 배수(avgMul)만 가져오고 쿨타임은
+       「시전 시작 + 도술 쿨」만 계산해서, 아래 신식이 하나도 붙지 않았습니다.
+         · 기만 눈물(halfCdEvery 3)      : 궁극기를 뺀 도술 3회마다 쿨 중인 도술 1개 남은 쿨 -50%
+         · 파멸 요기범람(resetEvery 14)  : 14회마다 궁극기를 뺀 도술 쿨 초기화
+         · 평면 쿨감(fx.cd)              : 시전마다 다른 도술 남은 쿨 -초
+         · 신식 게이지 — 척결 중첩(남은 쿨 -20% · 궁극기 -10%) · 주술 구슬(-0.1/-0.2/-0.3초)
+           · 절명 형상 5개(궁극기 -6초) · 강타 강압(도술 쿨 초기화) · 기동 연쇄(궁극기 초기화)
+       시전 **빈도**만 바꾸고, 시전 1회의 피해 배수는 위 평균 배수(avgMul)를 그대로 씁니다.
+       토글은 buildEntries 가 simulate 와 똑같이 읽으므로, 켜 둔 신식만 붙습니다.
+       --------------------------------------------------------- */
+    var fx = built.fx;
+    var ult = built.ult || null;
+    var valour = built.valour || null;
+    var cdReducePerCast = fx.cd || 0;
+    var castsSinceReset = 0;
+    var castsSinceUltReset = 0;
+    var nonUltSeq = 0;
+    var cdFx = { halfTrig: 0, halfHit: 0, halfCoolSum: 0, resetTrig: 0, gaugeCuts: 0, ultResetTrig: 0, flatCdCuts: 0 };
+    /* 신식 게이지 상태 — 쿨에 영향을 주는 부분만 씁니다(피해 배수는 avgMul 몫) */
+    var gauges = (built.gauges || []).map(function (g) {
+      return { style: g.style, name: g.name, def: g.def, on: g.on || [], v: 0, lastT: 0, stacks: [] };
+    });
+    function gOn(g, id) { return !!id && g.on.indexOf(id) >= 0; }
+    function gDecay(g, now) {
+      var d = g.def.decayPerSec;
+      if (!d) { return; }
+      var dt = now - g.lastT;
+      if (dt > 0) { g.v = Math.max(0, g.v - d * dt); }
+    }
+    function liveStacks(g, now) {
+      var keep = [];
+      for (var q = 0; q < g.stacks.length; q++) {
+        if (now - g.stacks[q] <= g.def.stacks.sec + EPS) { keep.push(g.stacks[q]); }
+      }
+      g.stacks = keep;
+      return keep.length;
+    }
+    function tierIdx(g, now) {
+      var tiers = g.def.tiers;
+      if (!tiers) { return 0; }
+      var v = g.v;
+      if (g.def.decayPerSec) { v = Math.max(0, v - (g.def.decayPerSec * Math.max(0, now - g.lastT))); }
+      var idx = 0;
+      for (var q = 0; q < tiers.length; q++) { if (v >= tiers[q].at - EPS) { idx = q + 1; } }
+      return idx;
+    }
+    /* 방금 쓴 도술(exceptIdx)을 뺀 나머지 중 쿨이 도는 도술의 남은 쿨을 sec 만큼 줄입니다 */
+    function applyFlatCd(now, exceptIdx, sec) {
+      var amt = sec || cdReducePerCast;
+      if (!amt) { return; }
+      var cut = 0;
+      for (var q = 0; q < n; q++) {
+        if (q === exceptIdx) { continue; }
+        var e2 = list[q];
+        if (e2.readyAt > now) { e2.readyAt = Math.max(now, e2.readyAt - amt); cut += 1; }
+      }
+      if (cut) { cdFx.flatCdCuts += 1; }
+    }
+    /* 시전이 끝난 시점(tEnd)에 차는 신식 영력·중첩과 그 최대치 효과 가운데 쿨에 닿는 것만 */
+    function huntGaugeAfterCast(cur, tStart, len, pickIdx, killedNow) {
+      var tEnd = tStart + len;
+      for (var q = 0; q < gauges.length; q++) {
+        var g = gauges[q];
+        var d = g.def;
+        if (cur.kind === 'ult') {
+          /* 강타 — 영력 100에서 천벌을 쓰면 [강압] : 다른 도술 쿨 초기화 */
+          if (d.ultReset && d.ultReset.on === 'ult' && gOn(g, d.ultReset.gate) && g.v >= d.max - EPS) {
+            for (var a = 0; a < n; a++) {
+              if (list[a].kind !== 'ult') { list[a].readyAt = tEnd; }
+            }
+            g.v = 0;
+            cdFx.gaugeCuts += 1;
+          }
+          /* 절명 — 궁극기가 형상을 모두 소모합니다 */
+          if (d.ultTiers) { g.v = 0; }
+          continue;
+        }
+        if (d.decayPerSec) { gDecay(g, tStart); }
+        /* 연타 — 3초 동안 적중이 없으면 격노가 사라집니다 */
+        if (d.idleResetSec && tStart - g.lastT > d.idleResetSec + EPS) { g.v = 0; }
+        var hits = (cur.hits || 0) + (cur.chain ? cur.chain.hits * cur.chain.uses : 0);
+        /* 처치로 차는 영력(척살 등)은 자사에서 그 시전이 실제로 잡은 마릿수로 셉니다
+           (레이드 계산기는 단일 보스라 1마리로 보지만, 자사는 한 번에 여러 마리를 잡습니다) */
+        var gain = (d.perCast || 0) + (d.perHit || 0) * hits + (d.perKill || 0) * Math.max(1, killedNow || 0);
+        if (gain) { g.v = Math.min(d.max, g.v + gain); }
+        g.lastT = tStart;
+
+        /* 절명 — 형상이 최대일 때 도술마다 궁극기 남은 쿨 -6초 */
+        if (d.ultCdCut && gOn(g, d.ultCdCut.gate) && ult && g.v >= d.max - EPS) {
+          if (ult.readyAt > tEnd + EPS) {
+            ult.readyAt = Math.max(tEnd, ult.readyAt - d.ultCdCut.sec);
+            cdFx.gaugeCuts += 1;
+          }
+        }
+
+        /* 척살 — 척결 중첩을 얻을 때마다 남은 쿨 -20%(궁극기 -10%) */
+        if (d.stacks && gOn(g, d.stacks.gate) && g.v >= d.max - EPS) {
+          g.v = 0;
+          g.stacks.push(tEnd);
+          liveStacks(g, tEnd);
+          for (var b = 0; b < n; b++) {
+            if (b === pickIdx) { continue; }
+            var e3 = list[b];
+            if (e3.readyAt > tEnd + EPS) {
+              var cutPct = (e3.kind === 'ult') ? d.stacks.ultCdCut : d.stacks.cdCut;
+              e3.readyAt = tEnd + (e3.readyAt - tEnd) * (1 - cutPct);
+            }
+          }
+          cdFx.gaugeCuts += 1;
+        }
+
+        /* 주술 — 구슬 단계별로 다른 도술의 남은 쿨 -0.1/-0.2/-0.3초 */
+        if (d.tiers && gOn(g, d.gate)) {
+          var ti = tierIdx(g, tEnd);
+          if (ti > 0 && d.tiers[ti - 1].flatCd) {
+            applyFlatCd(tEnd, pickIdx, d.tiers[ti - 1].flatCd);
+            cdFx.gaugeCuts += 1;
+          }
+        }
+
+        /* 기동 — 영력 200에서 궁극기 쿨 초기화 */
+        if (d.ultReset && d.ultReset.on === 'max' && gOn(g, d.ultReset.gate) && ult && g.v >= d.max - EPS) {
+          ult.readyAt = tEnd;
+          g.v = 0;
+          cdFx.ultResetTrig += 1;
+        }
+      }
+    }
+
     var t = 0;
     var lastT = 0;
     var kills = 0;
+    /* 용맹의 기운 — 시전이 끝난 순간부터 10초간 내가 주는 피해(평타 포함) ×1.15~1.26.
+       도술 피해는 레이드 계산기의 평균 배수(avgMul)에 이미 들어 있으므로
+       자사 루프에서는 **평타**에만 버프 구간을 따라가며 곱합니다. */
+    var vFrom = -Infinity;
+    var vUntil = -Infinity;
+    var vSec = 0;
+    var vCasts = 0;
+    var vAutoHits = 0;
+    /* 저격 신식 — 화살촉은 **시간으로 차고**(1초에 25 · 최대 300) 시전할 때 소모되므로,
+       자사 루프에서도 시계를 따라가며 연속 조준 중첩을 세어 **평타**에 곱합니다.
+       (도술 피해에 붙는 화살촉·연속 조준 배수는 avgMul 에 이미 들어 있습니다) */
+    var snipe = built.snipe || null;
+    var sDef = snipe ? snipe.def : null;
+    var spE = 0;
+    var spT = 0;
+    var aimN = 0;
+    var aimUntil = -Infinity;
+    var aimSeen = 0;
+    var aimAutoHits = 0;
+    function spEnergyAt(now) {
+      return Math.max(0, Math.min(sDef.max, spE + (sDef.perSec || 0) * (now - spT)));
+    }
+    function spTakeArrows(now, cur) {
+      spE = spEnergyAt(now);
+      spT = now;
+      var per = sDef.arrowPer || 100;
+      var got = 0;
+      if (cur.kind === 'ult') {
+        got = Math.min(sDef.arrowMax || 3, Math.floor(spE / per + EPS));
+      } else if (cur.style === 'snipe' && spE >= per - EPS) {
+        got = 1;
+      }
+      if (got <= 0) { return; }
+      spE = Math.max(0, spE - got * per);
+      if (!snipe.aim) { return; }
+      aimN = Math.min(sDef.aimMax || 5, aimN + got);
+      aimUntil = now + (sDef.aimSec || 10);
+      if (aimN > aimSeen) { aimSeen = aimN; }
+    }
     var autoCount = 0;
     var autoMiss = 0;
     var autoDamage = 0;
@@ -1844,7 +2015,7 @@
             perHit: round(perHit, 4), fall: round(fallMul, 4), focus: round(focMul, 4)
           });
         }
-        applyHit(hits, perHit, cur, end);
+        var killedNow = applyHit(hits, perHit, cur, end);
         if (hpTrack && cur.kind === 'heal' && diedAt == null) {
           var beforeHp = hp;
           hp = Math.min(cfg.maxHp, hp + cfg.maxHp * cfg.healPct / 100);
@@ -1854,10 +2025,72 @@
         }
         if (hpAt60 == null && end >= 60) { hpAt60 = round(hp, 0); }
         cur.casts += 1;
+        /* 저격 — 시전 시작 순간에 화살촉을 소모하고 연속 조준 중첩을 쌓습니다(평타용) */
+        if (snipe && sDef) { spTakeArrows(start, cur); }
         cur.targets += hits.length;
         cur.fallHits += 1;
+        /* 기만 신식(눈물 2개 소모) — 궁극기를 뺀 도술 3회마다 「쿨이 도는 도술 1개」의 남은 쿨 -50%.
+           어느 도술이 걸릴지 모르므로 쿨 중인 k개의 남은 시간을 (1 - 0.5/k)배로 함께 줄여
+           무작위 1개의 평균 기댓값으로 계산합니다(simulate 와 같은 방식). */
+        if (fx.halfCdEvery > 0 && cur.kind !== 'ult') {
+          nonUltSeq += 1;
+          if (nonUltSeq % fx.halfCdEvery === 0) {
+            cdFx.halfTrig += 1;
+            var coolCount = 0;
+            for (k = 0; k < n; k++) {
+              if (k === pick || list[k].kind === 'ult') { continue; }
+              if (list[k].readyAt > start + EPS) { coolCount += 1; }
+            }
+            if (coolCount > 0) {
+              var keepRatio = 1 - 0.5 / coolCount;
+              for (k = 0; k < n; k++) {
+                if (k === pick || list[k].kind === 'ult') { continue; }
+                if (list[k].readyAt > start + EPS) {
+                  list[k].readyAt = start + (list[k].readyAt - start) * keepRatio;
+                }
+              }
+              cdFx.halfHit += 1;
+              cdFx.halfCoolSum += coolCount;
+            }
+          }
+        }
         cur.readyAt = start + Math.max(0.1, cur.cd);
+        /* 평면 쿨감 신식 — 시전할 때마다 다른 도술의 남은 쿨을 그만큼 줄입니다 */
+        applyFlatCd(start, pick);
+        /* 신식 게이지 — 척결 중첩·주술 구슬·절명 형상·강타 강압·기동 연쇄의 쿨 효과
+           (처치로 차는 영력은 이 시전이 잡은 마릿수로 셈니다) */
+        huntGaugeAfterCast(cur, start, castLen, pick, killedNow);
+        /* 용맹의 기운 — 이 시전이 끝나는 순간부터 10초 버프 (평타에 곱해집니다) */
+        if (valour && cur.id === valour.id) {
+          var vStart = Math.min(duration, end);
+          if (vUntil > vStart + EPS) {
+            /* 아직 버프가 남아 있으면 끝만 10초 더 */
+          } else {
+            if (vFrom > -Infinity) {
+              vSec += Math.max(0, Math.min(duration, vUntil) - vFrom);
+            }
+            vFrom = vStart;
+          }
+          vUntil = vStart + valour.sec;
+          vCasts += 1;
+        }
         t = end;
+        /* 일정 횟수마다 쿨 초기화 (파멸 요기범람 14회 등) */
+        if (cur.kind !== 'ult') {
+          castsSinceReset += 1;
+          castsSinceUltReset += 1;
+          if (fx.resetEvery && castsSinceReset >= fx.resetEvery) {
+            castsSinceReset = 0;
+            for (k = 0; k < n; k++) {
+              if (list[k].kind !== 'ult') { list[k].readyAt = t; }
+            }
+            cdFx.resetTrig += 1;
+          }
+          if (fx.ultResetEvery && ult && castsSinceUltReset >= fx.ultResetEvery) {
+            castsSinceUltReset = 0;
+            ult.readyAt = t;
+          }
+        }
         continue;
       }
 
@@ -1876,7 +2109,15 @@
         respawnUpTo(at);
         var aliveA = aliveList();
         autoCount += 1;
-        if (aliveA.length) { applyHit([aliveA[0]], critFactor, null, at); }
+        /* 용맹의 기운 버프가 걸린 평타만 그만큼 더 칩니다 */
+        var aMul = (valour && at >= vFrom - EPS && at < vUntil - EPS) ? valour.mul : 1;
+        if (aMul !== 1) { vAutoHits += 1; }
+        /* 저격 연속 조준 — 중첩당 평타 피해 +5% (10초 안에서만) */
+        if (snipe && snipe.aim && aimN > 0 && at < aimUntil - EPS) {
+          aMul *= 1 + (sDef.aimPerStack || 0) * aimN;
+          aimAutoHits += 1;
+        }
+        if (aliveA.length) { applyHit([aliveA[0]], critFactor * aMul, null, at); }
         else { autoMiss += 1; }
         at += iv;
       }
@@ -1884,6 +2125,9 @@
       t = until;
     }
     stepTo(duration);
+    if (vFrom > -Infinity) {
+      vSec += Math.max(0, Math.min(duration, vUntil) - vFrom);
+    }
 
     /* 생존 — 살아 있는 몹 수의 시간 평균 × 몹 1방 피격 ÷ 공격 주기 = 받는 DPS.
        (죽어서 리스폰을 기다리는 몹은 때리지 못하므로 평균 살아있는 몹으로 셉니다) */
@@ -1979,6 +2223,17 @@
       autoShare: totalDamage > 0 ? round((autoDamage / totalDamage) * 100, 1) : 0,
       skillShare: totalDamage > 0 ? round((skillDamage / totalDamage) * 100, 1) : 0,
       probeDps: probeDps,
+      /* 쿨타임 신식이 이번 사냥에서 몇 번 돌았는지 — 화면에는 쓰지 않고 회귀 테스트·확인용 */
+      cdFx: cdFx,
+      /* 용맹의 기운 — 평타에 붙은 버프 구간(헌신). 도술은 avgMul 에 이미 포함 */
+      valour: valour ? {
+        sec: valour.sec, mul: round(valour.mul, 4), lv: valour.lv,
+        casts: vCasts, buffSec: round(vSec, 1),
+        buffPct: duration > 0 ? round((vSec / duration) * 100, 1) : 0,
+        autoHits: vAutoHits
+      } : null,
+      /* 저격 — 평타에 붙은 연속 조준 중첩(10초 · 최대 5중첩 × +5%) */
+      snipeAim: snipe ? { on: !!snipe.aim, maxStack: aimSeen, autoHits: aimAutoHits } : null,
       rows: rows,
       killLog: killLog.slice(0, 400),
       respawnLog: respawnLog.slice(0, 120),
