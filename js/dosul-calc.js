@@ -56,6 +56,44 @@
      --------------------------------------------------------- */
   var HUNT = DATA.hunt || { targets: {}, falloff: {}, focus: {} };
 
+  /* ---------------------------------------------------------
+     💗 헌신 회복 — 공격력 비례 · 강화 단계별 % (2026-11-28)
+     · 인게임 실측: 생명의 축복(+39강 50.4% · +49강 55.4% 즉시 회복)
+                    생명의 흐름(+39강 초당 17.3% · +49강 19.0% × 5초 = 총 86.5% · 95.0%)
+     · 회복 %는 강화 1강마다 일정하게 올라 피해 계수 곡선(enhanceBonus)과 다릅니다.
+     --------------------------------------------------------- */
+  var HEAL = DATA.heal || {};
+
+  function healDef(id) { return HEAL[String(id)] || null; }
+
+  /* 강화 단계별 「공격력 대비 회복 %」 (회복 1회분) */
+  function healAtkPct(id, enhLevel) {
+    var d = healDef(id);
+    if (!d) { return 0; }
+    var lv = clamp(Math.round(Number(enhLevel) || 0), 0, ENH.max || 50);
+    return (Number(d.base) || 0) + (Number(d.perLv) || 0) * lv;
+  }
+
+  /* 회복 도술 1회 시전 계획 — 공격력 % · 회복 횟수 · 1회분 HP · 시전 1회 합계 HP
+     · 공격력(myAtk)이 0이면 회복량을 알 수 없으므로 on:false (계산에서 뺍니다) */
+  function healPlan(id, enhLevel, myAtk) {
+    var d = healDef(id);
+    if (!d) { return null; }
+    var lv = clamp(Math.round(Number(enhLevel) || 0), 0, ENH.max || 50);
+    var pct = (Number(d.base) || 0) + (Number(d.perLv) || 0) * lv;
+    var atk = Math.max(0, Number(myAtk) || 0);
+    var ticks = Math.max(1, Math.round(Number(d.ticks) || 1));
+    var per = atk * pct / 100;
+    return {
+      id: Number(id), name: d.name, enh: lv,
+      pct: round(pct, 2), pctPerTick: round(pct, 2),
+      ticks: ticks, tickSec: Number(d.tickSec) || 0, kind: d.kind || 'instant',
+      label: d.label || '', atk: atk,
+      perTick: round(per, 1), totalPct: round(pct * ticks, 2), total: round(per * ticks, 1),
+      on: atk > 0
+    };
+  }
+
   /* 한 번에 맞히는 최대 대상 수 — 공개값이 없으면 1명으로 봅니다 */
   function huntTargets(id) {
     var v = HUNT.targets ? HUNT.targets[String(id)] : 0;
@@ -1622,9 +1660,10 @@
          · 선공: 살아 있는 몹이 전부 나를 때립니다(예전 v52까지의 계산). */
       aggroMode: c.aggroMode === 'aggro' ? 'aggro' : 'passive',
       /* 헌신 회복 — 체력이 이 % 이하가 되면 회복 도술을 최우선으로 씁니다.
-         회복량 계수는 공개 자료에 없어 「최대 체력 %」로 받습니다(기본 30%). */
+         회복량은 인게임 실측대로 「내 공격력 × 강화 단계별 %」로 계산합니다(v54).
+         myAtk 를 비우면 회복량을 알 수 없어 회복 도술을 계산에서 뺍니다. */
       healAtPct: clampNum(c.healAtPct, 0, 99, 70),
-      healPct: clampNum(c.healPct, 0, 500, 30),
+      myAtk: clampNum(c.myAtk, 0, 1e9, 0),
       /* 내 기본 평타 데미지 — 몹 체력 추정에만 쓰고 계산 자체는 평타 계수 그대로입니다.
          사냥터를 골랐을 때는 killHits 를 「몹 체력 ÷ 내 평타」로 만들어 넘깁니다. */
       myAutoDmg: clampNum(c.myAutoDmg, 0, 1e9, 0),
@@ -1650,6 +1689,13 @@
       list[i].damage = 0;
       list[i].targets = 0;
       list[i].fallHits = 0;
+      /* 회복 도술 — 내 공격력 × 그 도술의 강화 단계(st 계열 강화)별 %
+         · 생명의 흐름 = 5초 지속(1초마다 1회) · 생명의 축복 = 즉시 1회 (v54) */
+      if (list[i].kind === 'heal') {
+        list[i].healPlan = healPlan(list[i].id, list[i].enh, cfg.myAtk);
+        list[i].healed = 0;
+        list[i].hotTicks = 0;
+      }
     }
 
     /* 도술별 평균 배수 — 레이드 계산기 300초를 한 번 돌려 시전당 평균 배수를 씁니다 */
@@ -1870,8 +1916,12 @@
     var diedAt = null;
     var healed = 0;
     var healCasts = 0;
+    var hotTicks = 0;
     var hpAt60 = null;
     var guard = 0;
+    /* 지속 회복(생명의 흐름) — 시전이 끝난 뒤 1초마다 들어갈 회복을 예약해 두고,
+       stepTo 가 구간을 그 시각에 끊어 차례대로 적용합니다 (죽으면 멈춤 · 최대 체력 상한) */
+    var hotQueue = [];
     /* 체력 자연 회복 (5초마다) */
     var REGEN_SEC = 5;
     var regenTicks = 0;
@@ -1900,6 +1950,10 @@
       while (lastT < now - EPS && steps++ < 100000) {
         var segEnd = now;
         if (doRegen && nextRegenAt > lastT + EPS && nextRegenAt < segEnd - EPS) { segEnd = nextRegenAt; }
+        /* 지속 회복이 들어올 시각도 구간을 끊어 정확히 그 시각에 적용합니다 */
+        if (hpTrack && hotQueue.length && hotQueue[0].at > lastT + EPS && hotQueue[0].at < segEnd - EPS) {
+          segEnd = hotQueue[0].at;
+        }
         var span = segEnd - lastT;
         /* 사망한 뒤에는 살아 있는 몹 수를 더 세지 않습니다.
            받는 피해는 「나를 때리는 몹」 수(acHit)로 셉니다 — 비선공이면 때린 몹만 (v53) */
@@ -1933,6 +1987,18 @@
           regenTotal += hp - beforeRegen;
           regenTicks += 1;
           nextRegenAt += REGEN_SEC;
+        }
+        /* 지속 회복 — 이 시각에 도달한 회복을 차례대로 (최대 체력 상한 · 죽으면 위에서 이미 멈춤) */
+        while (hpTrack && hotQueue.length && hotQueue[0].at <= lastT + EPS) {
+          var ht = hotQueue.shift();
+          var beforeHot = hp;
+          hp = Math.min(cfg.maxHp, hp + ht.amt);
+          healed += hp - beforeHot;
+          hotTicks += 1;
+          if (ht.entry) {
+            ht.entry.healed = (ht.entry.healed || 0) + (hp - beforeHot);
+            ht.entry.hotTicks = (ht.entry.hotTicks || 0) + 1;
+          }
         }
       }
     }
@@ -2002,8 +2068,12 @@
       var healLine = cfg.maxHp * cfg.healAtPct / 100;
       for (i = 0; i < n; i++) {
         var e = list[i];
-        /* 회복 도술은 자사에서 「체력이 정한 % 이하」일 때만 씁니다 */
-        if (hpTrack && e.kind === 'heal' && hp > healLine + EPS) { continue; }
+        /* 회복 도술은 자사에서 「체력이 정한 % 이하」일 때만 씁니다.
+           내 공격력이 없으면 회복량을 알 수 없어 회복 도술을 계산에서 뺍니다 (v54). */
+        if (e.kind === 'heal' && hpTrack) {
+          if (!e.healPlan || !e.healPlan.on) { continue; }
+          if (hp > healLine + EPS) { continue; }
+        }
         if (e.readyAt <= t + EPS) {
           if (e.order < pickOrder) { pickOrder = e.order; pick = i; }
           if (e.kind === 'heal' && e.order < healOrder) { healOrder = e.order; healPick = i; }
@@ -2040,12 +2110,23 @@
           });
         }
         var killedNow = applyHit(hits, perHit, cur, end);
-        if (hpTrack && cur.kind === 'heal' && diedAt == null) {
-          var beforeHp = hp;
-          hp = Math.min(cfg.maxHp, hp + cfg.maxHp * cfg.healPct / 100);
-          healed += hp - beforeHp;
+        if (hpTrack && cur.kind === 'heal' && diedAt == null && cur.healPlan && cur.healPlan.on) {
+          var pl = cur.healPlan;
           healCasts += 1;
-          cur.healed = (cur.healed || 0) + (hp - beforeHp);
+          cur.healCasts = (cur.healCasts || 0) + 1;
+          if (pl.ticks > 1) {
+            /* 생명의 흐름 — 시전이 끝난 뒤 1초마다 1회씩 ticks 회 (HoT) */
+            for (var hn = 0; hn < pl.ticks; hn++) {
+              hotQueue.push({ at: end + pl.tickSec * (hn + 1), amt: pl.perTick, id: cur.id, entry: cur });
+            }
+            hotQueue.sort(function (a2, b2) { return a2.at - b2.at; });
+          } else {
+            /* 생명의 축복 — 시전 즉시 1회 회복 */
+            var beforeHp = hp;
+            hp = Math.min(cfg.maxHp, hp + pl.perTick);
+            healed += hp - beforeHp;
+            cur.healed = (cur.healed || 0) + (hp - beforeHp);
+          }
         }
         if (hpAt60 == null && end >= 60) { hpAt60 = round(hp, 0); }
         cur.casts += 1;
@@ -2124,6 +2205,23 @@
         if (!mobs[k].alive && mobs[k].respawnAt > t + EPS && mobs[k].respawnAt < nextRespawn) { nextRespawn = mobs[k].respawnAt; }
       }
       var until = Math.min(duration, nextReady === Infinity ? duration : nextReady, nextRespawn);
+      /* 헌신 회복 — 체력이 발동 % 를 지나는 시각에 창을 끊습니다.
+         평타만 치는 긴 창에서 체력이 먼저 바닥나 버리면, 회복을 쓸 기회 자체가
+         없어 보이기 때문입니다(회복 도술이 준비돼 있을 때만). */
+      if (hpTrack && diedAt == null && hp > healLine + EPS) {
+        var healReadyNow = false;
+        for (k = 0; k < n; k++) {
+          var eh = list[k];
+          if (eh.kind === 'heal' && eh.healPlan && eh.healPlan.on && eh.readyAt <= t + EPS) { healReadyNow = true; break; }
+        }
+        if (healReadyNow) {
+          var rateH = aggroCountNow() * cfg.mobDmg / cfg.mobAtkInterval;
+          if (rateH > 0) {
+            var crossAt = t + Math.max(0.05, (hp - healLine) / rateH);
+            if (crossAt < until - EPS) { until = crossAt; }
+          }
+        }
+      }
       /* 평타는 0초부터 autoInterval 초마다 오는 고정 박자입니다 — 시전 중에 걸린 박자는 건너뜁니다 */
       var iv = cfg.autoInterval;
       var at = Math.ceil((t - EPS) / iv) * iv;
@@ -2153,6 +2251,20 @@
       vSec += Math.max(0, Math.min(duration, vUntil) - vFrom);
     }
 
+    /* 헌신 회복 도술 — 어떤 회복 도술이 몇 % · 몇 회로 들어갔는지 (v54) */
+    var healRows = [];
+    for (i = 0; i < n; i++) {
+      var he = list[i];
+      if (he.kind !== 'heal' || !he.healPlan) { continue; }
+      var hpl = he.healPlan;
+      healRows.push({
+        id: he.id, name: he.name, enh: hpl.enh, pct: hpl.pct, pctPerTick: hpl.pctPerTick,
+        ticks: hpl.ticks, tickSec: hpl.tickSec, kind: hpl.kind, atk: hpl.atk,
+        perTick: hpl.perTick, totalPct: hpl.totalPct, perCast: hpl.total, on: hpl.on,
+        casts: he.healCasts || 0, hotTicks: he.hotTicks || 0, healed: round(he.healed || 0, 0)
+      });
+    }
+
     /* 생존 — 살아 있는 몹 수의 시간 평균 × 몹 1방 피격 ÷ 공격 주기 = 받는 DPS.
        (죽어서 리스폰을 기다리는 몹은 때리지 못하므로 평균 살아있는 몹으로 셉니다) */
     var life = (diedAt != null && diedAt > 0) ? diedAt : duration;
@@ -2167,8 +2279,9 @@
       var natPerSec = life > 0 ? regenTotal / life : 0;
       survival = {
         maxHp: cfg.maxHp, mobDmg: cfg.mobDmg, atkInterval: cfg.mobAtkInterval,
-        healAtPct: cfg.healAtPct, healPct: cfg.healPct,
-        healCasts: healCasts, healed: round(healed, 0),
+        healAtPct: cfg.healAtPct, myAtk: cfg.myAtk,
+        healCasts: healCasts, healed: round(healed, 0), hotTicks: hotTicks,
+        healRows: healRows,
         hpRegen: cfg.hpRegen, regenInterval: REGEN_SEC,
         regenTicks: regenTicks, regenTotal: round(regenTotal, 0), regenNatural: round(natPerSec, 1),
         avgAlive: round(avgAliveMobs, 2),
@@ -2231,6 +2344,9 @@
       mobHpUnits: round(mobHp, 2),
       /* 내 기본 평타 데미지를 적었으면 몹 1마리 체력을 어림합니다 (평타 몇 방 × 내 평타) */
       myAutoDmg: cfg.myAutoDmg,
+      /* 내 공격력 · 헌신 회복 도술별 공격력 비례 % (v54) */
+      myAtk: cfg.myAtk,
+      healRows: healRows,
       mobHpEstimate: cfg.myAutoDmg > 0 ? round(cfg.myAutoDmg * cfg.killHits, 0) : null,
       /* 사냥터를 골라 계산했으면 그 이름·권장 전투력·몹 체력을 결과에 함께 남깁니다 */
       ground: cfg.groundInfo || null,
@@ -2316,6 +2432,8 @@
     kindLabel: function (k) { return KIND_LABEL[k] || k; },
     simulate: simulate,
     optimize: optimize,
+    healAtkPct: healAtkPct,
+    healPlan: healPlan,
     simulateHunt: simulateHunt,
     huntCompare: huntCompare,
     huntData: huntData,

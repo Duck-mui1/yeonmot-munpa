@@ -6017,7 +6017,9 @@ body.is-locked { overflow: hidden; }
 
 /* 자사계산기 — 버티기 */
 .ds-hunt__grid--hp { grid-template-columns: 1fr 1fr; }
-.ds-hunt__grid--hp .ds-hunt__f:last-child { grid-column: 1 / -1; }
+/* v54 — 「내 공격력」이 위쪽 칸으로 옮겨지고 버티기는 4칸만 남아 마지막 칸도 반폭 */
+.ds-hunt__healcalc { border-style: solid; border-color: rgba(242, 162, 185, .28); }
+.ds-hunt__healwarn { color: #ffd7e2; }
 .ds-hunt__surv {
   padding: 11px 12px;
   border-radius: 14px;
