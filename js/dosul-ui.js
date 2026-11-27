@@ -1491,7 +1491,10 @@
         line.push('체력이 <b>' + num(sv.diedAt, 1) + '초</b>에 바닥납니다' +
           (sv.healCasts ? ' (헌신 회복 ' + sv.healCasts + '회로는 부족)' : ' — 헌신 회복 도술을 넣거나 물약이 필요합니다') + '.');
       } else if (sv.maxHp > 0) {
-        line.push('체력 ' + num(sv.maxHp, 0) + ' ÷ 초당 ' + num(sv.dps, 0) + ' = <b>' + num(sv.life, 1) + '초</b> 이상 버팁니다' +
+        /* 회복을 빼고 «받는 피해만» 있을 때 버티는 시간 — 헌신 회복·자연 회복은 아래 줄에서 더합니다 */
+        var rawSec = sv.dps > 0 ? sv.maxHp / sv.dps : sv.life;
+        line.push('체력 ' + group(sv.maxHp) + ' ÷ 초당 ' + num(sv.dps, 0) + ' = <b>' + num(rawSec, 0) + '초</b>' +
+          (sv.healCasts || sv.regenTicks ? ' 이상' : '') + ' 버팁니다' +
           (sv.level === 'safe' ? ' — 1분 사냥은 넉넉합니다.' : ' — 1분은 빠듯합니다.'));
       }
       if (sv.healCasts > 0) {
@@ -1535,6 +1538,7 @@
         '<p class="ds-hunt__survnote">' + line.join(' ') + '</p>' +
         '<p class="ds-hunt__survnote ds-hunt__survnote--dim">헌신 회복은 인게임 실측대로 <b>내 공격력 × 강화 단계별 %</b>로 계산합니다 — ' +
         '<b>생명의 축복</b> 30.9 + 0.5 × 강화% 즉시 · <b>생명의 흐름</b> (10.67 + 0.17 × 강화)% × 5초. ' +
+        '회복은 <b>최대 체력을 넘지 않으므로</b> 체력이 거의 찬 상태에서 쓴 회복은 일부만 들어갑니다. ' +
         '하트 3개 「헌신 이로운 효과 +30%」·물약·받는 피해 감소·보호막은 넣지 않았습니다.</p>' +
         '</div>';
     }
