@@ -1603,7 +1603,12 @@
       /* 헌신 회복 — 체력이 이 % 이하가 되면 회복 도술을 최우선으로 씁니다.
          회복량 계수는 공개 자료에 없어 「최대 체력 %」로 받습니다(기본 30%). */
       healAtPct: clampNum(c.healAtPct, 0, 99, 70),
-      healPct: clampNum(c.healPct, 0, 500, 30)
+      healPct: clampNum(c.healPct, 0, 500, 30),
+      /* 내 기본 평타 데미지 — 몹 체력 추정에만 쓰고 계산 자체는 평타 계수 그대로입니다 */
+      myAutoDmg: clampNum(c.myAutoDmg, 0, 1e9, 0),
+      /* 체력 자연 회복 — 인게임처럼 5.0초마다 한 번, 입력한 만큼 즉시 회복합니다.
+         (초당으로 나눠 붙이지 않고 5·10·15…초 시점에 한꺼번에) */
+      hpRegen: clampNum(c.hpRegen, 0, 1e9, 0)
     };
     var critFactor = (1 + (cfg.critPct / 100) * (cfg.critDmgPct / 100)) /
       (1 + 0.5 * 0.2);
@@ -1670,6 +1675,11 @@
     var healCasts = 0;
     var hpAt60 = null;
     var guard = 0;
+    /* 체력 자연 회복 (5초마다) */
+    var REGEN_SEC = 5;
+    var regenTicks = 0;
+    var regenTotal = 0;
+    var nextRegenAt = REGEN_SEC;
 
     function aliveCountNow() {
       var cA = 0;
@@ -1678,30 +1688,44 @@
     }
     function stepTo(now) {
       if (now <= lastT + EPS) { return; }
-      var span = now - lastT;
-      /* 사망한 뒤에는 살아 있는 몹 수를 더 세지 않습니다 —
-         duration 까지 계속 쌓아 avgAlive 가 maxMobs 를 넘던 원인 */
       if (diedAt != null) { lastT = now; return; }
-      var acNow = aliveCountNow();
-      if (hpTrack) {
-        var rate = acNow * cfg.mobDmg / cfg.mobAtkInterval;
-        if (rate > 0) {
-          var need = hp / rate;
-          if (need <= span + EPS) {
-            /* 이 구간 안에서 체력이 바닥 — 살아 있던 need 초까지만 셉니다 */
-            diedAt = lastT + need;
-            aliveSec += acNow * Math.max(0, need);
-            hp = 0;
-            hpMin = 0;
-            lastT = now;
-            return;
+      var doRegen = hpTrack && cfg.hpRegen > 0;
+      var steps = 0;
+      /* 5초 회복 지점마다 구간을 끊어, 5·10·15…초에 정확히 한 번씩 회복합니다 */
+      while (lastT < now - EPS && steps++ < 100000) {
+        var segEnd = now;
+        if (doRegen && nextRegenAt > lastT + EPS && nextRegenAt < segEnd - EPS) { segEnd = nextRegenAt; }
+        var span = segEnd - lastT;
+        /* 사망한 뒤에는 살아 있는 몹 수를 더 세지 않습니다 */
+        var acNow = aliveCountNow();
+        if (hpTrack) {
+          var rate = acNow * cfg.mobDmg / cfg.mobAtkInterval;
+          if (rate > 0) {
+            var need = hp / rate;
+            if (need <= span + EPS) {
+              /* 이 구간 안에서 체력이 바닥 — 살아 있던 need 초까지만 셉니다 */
+              diedAt = lastT + need;
+              aliveSec += acNow * Math.max(0, need);
+              hp = 0;
+              hpMin = 0;
+              lastT = now;
+              return;
+            }
+            hp -= rate * span;
+            if (hp < hpMin) { hpMin = hp; }
           }
-          hp -= rate * span;
-          if (hp < hpMin) { hpMin = hp; }
+        }
+        aliveSec += acNow * span;
+        lastT = segEnd;
+        /* 이 시각이 5초 회복 지점이고 아직 살아 있으면 즉시 회복 (최대 체력 상한) */
+        if (doRegen && Math.abs(lastT - nextRegenAt) <= EPS) {
+          var beforeRegen = hp;
+          hp = Math.min(cfg.maxHp, hp + cfg.hpRegen);
+          regenTotal += hp - beforeRegen;
+          regenTicks += 1;
+          nextRegenAt += REGEN_SEC;
         }
       }
-      aliveSec += acNow * span;
-      lastT = now;
     }
     function respawnUpTo(now) {
       for (var m = 0; m < mobs.length; m++) {
@@ -1852,10 +1876,13 @@
       var inDps = avgAliveMobs * (cfg.mobDmg / cfg.mobAtkInterval);
       var surviveSec = diedAt != null ? diedAt : ((cfg.maxHp > 0 && inDps > 0) ? Infinity : null);
       var regen = life > 0 ? healed / life : 0;
+      var natPerSec = life > 0 ? regenTotal / life : 0;
       survival = {
         maxHp: cfg.maxHp, mobDmg: cfg.mobDmg, atkInterval: cfg.mobAtkInterval,
         healAtPct: cfg.healAtPct, healPct: cfg.healPct,
         healCasts: healCasts, healed: round(healed, 0),
+        hpRegen: cfg.hpRegen, regenInterval: REGEN_SEC,
+        regenTicks: regenTicks, regenTotal: round(regenTotal, 0), regenNatural: round(natPerSec, 1),
         avgAlive: round(avgAliveMobs, 2),
         dps: round(inDps, 1),
         dmg60: round(inDps * 60, 0),
@@ -1864,7 +1891,7 @@
         life: round(life, 1),
         hpEnd: round(hp, 0), hpMin: round(hpMin, 0), hpAt60: hpAt60,
         regen: round(regen, 1),
-        sustain: cfg.maxHp > 0 ? (regen >= inDps && diedAt == null) : null,
+        sustain: cfg.maxHp > 0 ? ((regen + natPerSec) >= inDps - 1e-9 && diedAt == null) : null,
         level: diedAt != null ? 'danger' : (surviveSec === Infinity ? 'safe' : 'warn'),
         needRegen60: cfg.maxHp > 0 ? round(Math.max(0, inDps - cfg.maxHp / 60), 1) : round(inDps, 1),
         holdRegen: round(inDps, 1)
@@ -1912,6 +1939,9 @@
       critDmgPct: cfg.critDmgPct,
       critFactor: round(critFactor, 4),
       mobHpUnits: round(mobHp, 2),
+      /* 내 기본 평타 데미지를 적었으면 몹 1마리 체력을 어림합니다 (평타 몇 방 × 내 평타) */
+      myAutoDmg: cfg.myAutoDmg,
+      mobHpEstimate: cfg.myAutoDmg > 0 ? round(cfg.myAutoDmg * cfg.killHits, 0) : null,
       kills: kills,
       killsPerMin: round(kills / ((life || duration) / 60), 1),
       kills1m: k1,

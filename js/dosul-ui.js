@@ -47,6 +47,12 @@
     return fixed.replace(/\.0+$/, '').replace(/(\.\d)0$/, '$1');
   }
 
+  /* 세 자리 콤마 — 몹 체력처럼 큰 수를 한눈에 읽도록 (24,750) */
+  function group(n) {
+    var s = num(n, 0);
+    return s.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  }
+
   /* 무기·장비 도술 피해 — 0~500% 범위로 안전하게 다듬습니다 */
   function clampPct(v) {
     var n = Number(v);
@@ -146,7 +152,9 @@
       hunt: {
         killHits: 10, maxMobs: 13, respawnSec: 5,
         autoCoeff: 285, critPct: 50, critDmgPct: 20, duration: 180,
-        maxHp: 160000, mobDmg: 0, mobAtkInterval: 2, healAtPct: 70, healPct: 30
+        maxHp: 160000, mobDmg: 0, mobAtkInterval: 2, healAtPct: 70, healPct: 30,
+        /* 내 기본 평타 데미지(몹 체력 추정용) · 체력 자연 회복(5초마다) */
+        myAutoDmg: 0, hpRegen: 0
       },
       /* 디버프 — 파티가 걸어 주는 것으로 보는 보조 토글 */
       debuffOn: {},
@@ -290,6 +298,8 @@
     base.mobAtkInterval = Number(h.mobAtkInterval) || 2;
     base.healAtPct = Number(h.healAtPct);
     base.healPct = Number(h.healPct);
+    base.myAutoDmg = Number(h.myAutoDmg) || 0;
+    base.hpRegen = Number(h.hpRegen) || 0;
     return base;
   }
 
@@ -1170,8 +1180,10 @@
       '<div class="ds-hunt__quick" role="group" aria-label="사냥터 원터치 설정">' + qbtns + '</div>',
       '<p class="ds-hunt__qnote">원터치로 <b>마릿수 · 부활 시간</b>이 바로 바뀝니다 — 아래 칸에서 직접 고쳐도 됩니다.</p>',
       '<div class="ds-hunt__grid">',
-      '  <label class="ds-hunt__f ds-hunt__f--wide"><span>몹이 평타 <b>몇 방</b>에 죽음</span>',
+      '  <label class="ds-hunt__f"><span>몹이 평타 <b>몇 방</b>에 죽음</span>',
       '    <input type="number" min="1" max="2000" step="1" inputmode="numeric" data-hunt="killHits" value="' + num(h.killHits, 2) + '"></label>',
+      '  <label class="ds-hunt__f"><span>내 기본 평타 데미지 <em>선택</em></span>',
+      '    <input type="number" min="0" max="100000000" step="1" inputmode="numeric" data-hunt="myAutoDmg" placeholder="예: 2475" value="' + (Number(h.myAutoDmg) > 0 ? num(h.myAutoDmg, 0) : '') + '"></label>',
       '  <label class="ds-hunt__f"><span>최대 마릿수</span>',
       '    <input type="number" min="1" max="60" step="1" inputmode="numeric" data-hunt="maxMobs" value="' + num(h.maxMobs, 0) + '"></label>',
       '  <label class="ds-hunt__f"><span>부활 시간(초)</span>',
@@ -1180,26 +1192,28 @@
       '    <input type="number" min="0" max="100" step="1" inputmode="numeric" data-hunt="critPct" value="' + num(h.critPct, 1) + '"></label>',
       '  <label class="ds-hunt__f"><span>치명타 피해 <em>기본 20%</em></span>',
       '    <input type="number" min="0" max="500" step="0.1" inputmode="decimal" data-hunt="critDmgPct" value="' + num(h.critDmgPct, 1) + '"></label>',
-      '  <label class="ds-hunt__f ds-hunt__f--wide"><span>평타 1타 계수 <em>385K 실측 앵커에서 역산</em></span>',
-      '    <input type="number" min="50" max="2000" step="5" inputmode="numeric" data-hunt="autoCoeff" value="' + num(h.autoCoeff, 0) + '"></label>',
       '</div>',
-      '<p class="ds-hunt__qnote"><b>버티기</b> — 내 체력과 <b>몹에게 맞는 한 방</b>을 적으면 살아 있는 몹 수만큼 맞는 피해로 버티는 시간을 계산합니다(비우면 생략). ' +
-        '체력이 <b>발동 %</b> 이하로 떨어지면 장착한 <b>헌신 회복 도술</b>(생명의 흐름·생명의 축복)을 <b>맨 먼저</b> 씁니다 — 자사에서 헌신을 최우선으로 두는 운용 그대로입니다.</p>',
+      '<p class="ds-hunt__qnote"><b>내 기본 평타 데미지</b>는 선택이에요 — 적으면 몹 체력까지 <b>추정</b>해 드립니다(평타 몇 방 × 내 평타 데미지).</p>',
+      '<p class="ds-hunt__qnote"><b>버티기</b> — 내 체력과 <b>몹 1마리 피격 데미지</b>를 적으면 살아 있는 몹 수만큼 맞는 피해로 버티는 시간을 계산합니다(비우면 생략). ' +
+        '체력이 <b>발동 %</b> 이하로 떨어지면 장착한 <b>헌신 회복 도술</b>(생명의 흐름·생명의 축복)을 <b>맨 먼저</b> 씁니다. ' +
+        '<b>체력 자연 회복</b>을 적으면 인게임처럼 <b>5초마다</b> 그만큼 즉시 회복합니다.</p>',
       '<div class="ds-hunt__grid ds-hunt__grid--hp">',
       '  <label class="ds-hunt__f"><span>내 최대 체력 <em>HP</em></span>',
       '    <input type="number" min="0" max="100000000" step="1000" inputmode="numeric" data-hunt="maxHp" value="' + num(h.maxHp, 0) + '"></label>',
-      '  <label class="ds-hunt__f"><span>몹 1방 피격 <em>비우면 생존 생략</em></span>',
-      '    <input type="number" min="0" max="100000000" step="1" inputmode="numeric" data-hunt="mobDmg" placeholder="예: 794" value="' + (Number(h.mobDmg) > 0 ? num(h.mobDmg, 0) : '') + '"></label>',
+      '  <label class="ds-hunt__f"><span>몹 1마리 피격 데미지</span>',
+      '    <input type="number" min="0" max="100000000" step="1" inputmode="numeric" data-hunt="mobDmg" placeholder="비우면 생존 생략 · 예: 794" value="' + (Number(h.mobDmg) > 0 ? num(h.mobDmg, 0) : '') + '"></label>',
       '  <label class="ds-hunt__f"><span>몹 공격 주기(초)</span>',
       '    <input type="number" min="0.2" max="30" step="0.1" inputmode="decimal" data-hunt="mobAtkInterval" value="' + num(h.mobAtkInterval, 1) + '"></label>',
+      '  <label class="ds-hunt__f"><span>체력 자연 회복 <em>5초마다</em></span>',
+      '    <input type="number" min="0" max="100000000" step="1" inputmode="numeric" data-hunt="hpRegen" placeholder="예: 4804" value="' + (Number(h.hpRegen) > 0 ? num(h.hpRegen, 0) : '') + '"></label>',
       '  <label class="ds-hunt__f"><span>헌신 회복 발동 <em>체력 % 이하</em></span>',
       '    <input type="number" min="0" max="99" step="1" inputmode="numeric" data-hunt="healAtPct" value="' + num(h.healAtPct, 0) + '"></label>',
       '  <label class="ds-hunt__f"><span>회복량 <em>최대 체력 %</em></span>',
       '    <input type="number" min="0" max="500" step="1" inputmode="numeric" data-hunt="healPct" value="' + num(h.healPct, 0) + '"></label>',
       '</div>',
       '<div class="ds-hunt__dur"><span class="ds-hunt__durlabel">계산 시간</span><div class="ds-segs">' + durBtns + '</div></div>',
-      '<p class="ds-hunt__qnote">평타 1타 계수 <b>' + num(h.autoCoeff, 0) + '%</b> — 385K 사냥터 실측(평타 2,475 · 하늘의 심판 10마리 감쇄 2,733 → 단일 환산 5,466 = 평타의 2.21배)에서 역산한 값입니다. ' +
-        '치명타는 <b>' + num(h.critPct, 0) + '%</b>를 기준(몹 체력도 이 기준)으로 보고, 바꾸면 그 기준 대비 기대 피해로 환산합니다. <b>치명타 피해</b>는 내 상세 탭의 치명타 피해 증가 수치를 적어 주세요.</p>',
+      '<p class="ds-hunt__qnote">치명타는 <b>' + num(h.critPct, 0) + '%</b> 기준(몹 체력도 이 기준)으로 보고, 바꾸면 그 기준 대비 기대 피해로 환산합니다. ' +
+        '<b>치명타 피해</b>는 내 상세 탭의 치명타 피해 증가 수치를 적어 주세요.</p>',
       '<div class="ds-hunt__out" id="ds-hunt-out"></div>'
     ].join('\n');
     renderHuntOut();
@@ -1212,7 +1226,7 @@
       JSON.stringify(cfg.trans), JSON.stringify(cfg.tr6), JSON.stringify(cfg.override), cfg.allDosulDmgPct,
       JSON.stringify(cfg.styleDmgPct), cfg.cdReducePct, cfg.castMode, cfg.chargeFull, cfg.autoInterval,
       cfg.gap, cfg.chain ? JSON.stringify(cfg.chain) : '', JSON.stringify(cfg.debuffOn),
-      cfg.maxHp, cfg.mobDmg, cfg.mobAtkInterval, cfg.healAtPct, cfg.healPct].join('|');
+      cfg.maxHp, cfg.mobDmg, cfg.mobAtkInterval, cfg.healAtPct, cfg.healPct, cfg.myAutoDmg, cfg.hpRegen].join('|');
     if (huntCache.key === key && huntCache.res) { return huntCache; }
     var res = C.simulateHunt(cfg);
     var cmp = null;
@@ -1275,6 +1289,11 @@
       } else if (sv.healAtPct != null) {
         line.push('헌신 회복은 발동하지 않았습니다(체력이 ' + num(sv.healAtPct, 0) + '% 이하로 내려가지 않았거나 회복 도술이 없음).');
       }
+      if (sv.hpRegen > 0) {
+        line.push('체력 자연 회복 <b>' + num(sv.hpRegen, 0) + ' HP</b> × <b>' + num(sv.regenInterval, 0) + '초마다</b> → <b>' +
+          sv.regenTicks + '회</b> · 총 <b>+' + num(sv.regenTotal, 0) + ' HP</b>' +
+          (sv.regenTicks ? ' (초당 평균 <b>' + num(sv.regenNatural, 0) + ' HP</b>)' : '') + '.');
+      }
       line.push(sv.sustain === true
         ? '→ <b>무한 자사 가능</b> (회복이 받는 피해를 따라갑니다).'
         : (sv.diedAt != null ? '→ <b>무한 자사 불가</b> — 초당 ' + num(sv.holdRegen, 0) + ' HP 이상 회복이 필요합니다.'
@@ -1287,6 +1306,7 @@
         '  <div class="ds-card"><span>1분 동안 받는 피해</span><strong>' + num(sv.dmg60, 0) + '<small>HP</small></strong></div>' +
         '  <div class="ds-card"><span>버티는 시간</span><strong>' + (sv.diedAt != null ? num(sv.diedAt, 1) : (sv.maxHp > 0 ? '60+' : '–')) + '<small>' + (sv.maxHp > 0 ? '초' : '') + '</small></strong></div>' +
         '  <div class="ds-card"><span>헌신 회복</span><strong>' + sv.healCasts + '<small>회</small></strong></div>' +
+        (sv.hpRegen > 0 ? '  <div class="ds-card"><span>자연 회복 (' + num(sv.regenInterval, 0) + '초마다)</span><strong>' + sv.regenTicks + '<small>회 · +' + num(sv.regenTotal, 0) + ' HP</small></strong></div>' : '') +
         '</div>' +
         '<p class="ds-hunt__survnote">' + line.join(' ') + '</p>' +
         '<p class="ds-hunt__survnote ds-hunt__survnote--dim">회복량 계수는 공개 자료에 없어 <b>최대 체력 ' + num(sv.healPct, 0) + '%</b>로 계산했습니다 — 내 회복 도술의 실제 회복량(내 체력 대비 %)을 적어 주세요. ' +
@@ -1318,6 +1338,7 @@
       '  <div class="ds-card"><span>이론 최대</span><strong>' + num(r.theoretical / (r.duration / 60), 1) + '<small>마리/분</small></strong></div>',
       '  <div class="ds-card"><span>평균 살아있는 몹</span><strong>' + num(r.avgAlive, 1) + '<small>마리</small></strong></div>',
       '  <div class="ds-card"><span>평타 횟수</span><strong>' + r.autoCount + '<small>회</small></strong></div>',
+      (r.mobHpEstimate ? '  <div class="ds-card ds-card--wide"><span>추정 몹 체력</span><strong>약 ' + group(r.mobHpEstimate) + '<small>HP</small></strong><em>평타 ' + num(r.killHits, 2) + '방 × 내 기본 평타 ' + group(r.myAutoDmg) + '</em></div>' : ''),
       '</div>',
       '<div class="ds-block"><p class="ds-block__title">도술별 기여 · 처치</p>' +
         '<div class="ds-hunt__tbl"><div class="ds-hunt__row ds-hunt__row--head">' +
@@ -2167,7 +2188,8 @@
         var lim = { killHits: [0.5, 2000], maxMobs: [1, 60], respawnSec: [0.5, 120],
           critPct: [0, 100], critDmgPct: [0, 500], autoCoeff: [10, 3000],
           maxHp: [0, 100000000], mobDmg: [0, 100000000], mobAtkInterval: [0.2, 30],
-          healAtPct: [0, 99], healPct: [0, 500] };
+          healAtPct: [0, 99], healPct: [0, 500],
+          myAutoDmg: [0, 100000000], hpRegen: [0, 100000000] };
         var rg = lim[hck] || [0, 1000000];
         var vv = Number(t.value);
         if (!isFinite(vv)) { vv = S.hunt[hck]; }

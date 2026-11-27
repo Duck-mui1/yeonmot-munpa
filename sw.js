@@ -1,5 +1,5 @@
 /* 연못 서비스 워커 — 오프라인에서도 연못이 열리도록 */
-var CACHE_NAME = 'yeonmot-munpa-v48';
+var CACHE_NAME = 'yeonmot-munpa-v49';
 var CORE_ASSETS = [
   './',
   './index.html',
@@ -33,6 +33,8 @@ var CORE_ASSETS = [
   './assets/gyeongdan/tier-9.png',
   './assets/gyeongdan/tier-10.png',
   './assets/gyeongdan/tier-11.png',
+  /* 홈 마이홈 카드 그림 (v49) */
+  './assets/img/myhome-starter.webp',
   /* 도술 아이콘 106개 — 도술 계산기 8칸·고르기·결과 표 */
   './assets/dosul/1010010.webp',
   './assets/dosul/1010011.webp',

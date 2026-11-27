@@ -302,6 +302,10 @@
     }, 2800);
   }
 
+  /* v49 — 🛍️ 포인트 샵 · 🏠 마이홈은 모양만 먼저. 누르면 이 안내만 띄웁니다 */
+  var SOON_NOTICE = '아직 기능 준비 중입니다. 추후 업데이트에서 열릴 예정이에요!';
+  function soonNotice() { toast(SOON_NOTICE); }
+
   function openModal(html) {
     var modal = $('#modal');
     $('#modal-body').innerHTML = html;
@@ -1342,6 +1346,20 @@
     return html;
   }
 
+  /**
+   * 🏠 마이홈 카드 (v49 시안) — 초기 마이홈 그림 위에 말풍선과 포인트 배지.
+   * 이번 버전은 모양만 먼저 보여 주고, 누르면 준비 중 안내만 띄웁니다.
+   */
+  function myHomeCard() {
+    return '<button type="button" class="myhome" id="myhome-card" aria-label="마이홈 — 아바타를 준비 중이에요">' +
+      '<img class="myhome__img" src="./assets/img/myhome-starter.webp" width="724" height="543" ' +
+      'alt="연못 마이홈 — 아직 아바타를 준비 중인 방" loading="lazy" decoding="async">' +
+      '<span class="myhome__veil" aria-hidden="true"></span>' +
+      '<span class="myhome__bubble">현재 마이홈 아바타 작업중입니다. 업데이트 이후에 사용 가능합니다</span>' +
+      '<span class="myhome__points">10,000 P</span>' +
+      '</button>';
+  }
+
   /** 바로가기 → 해당 섹션으로 부드럽게 스크롤 · 잠깐 테두리로 알려 줍니다 */
   function jumpToSection(btn) {
     var target = document.getElementById(btn.getAttribute('data-jump'));
@@ -1375,9 +1393,6 @@
       '<p class="screen__sub">' + esc(clan.motto || '') + '</p>' +
       '</header>';
 
-    /* 오늘의 문파컨텐츠 — 홈에 들어오자마자 맨 위에서 보이도록 연못 배너 바로 위에 (없으면 통째로 숨김) */
-    html += todayBar();
-
     html += '<section class="hero" aria-label="연못 배너">' + ART.hero() +
       '<div class="hero__pills">' +
       (clan.level ? '<span class="pill pill--gold">문파 레벨 ' + esc(clan.level) + '</span>' : '') +
@@ -1391,6 +1406,12 @@
       '<span id="wave-label">' + waveLabel(wave) + '</span>' +
       '</button>' +
       '</div></section>';
+
+    /* 오늘의 문파컨텐츠 — 연못 일러스트 배너 바로 아래에 이어지도록 (없으면 통째로 숨김) */
+    html += todayBar();
+
+    /* 시안처럼 배너와 통계 사이에 큰 마이홈 카드 */
+    html += myHomeCard();
 
     html += '<div class="stats">' +
       '<div class="stat"><strong>' + fmtNum(clan.today_waves) + '</strong><span>오늘의 물결</span></div>' +
@@ -1608,6 +1629,9 @@
         markAttendance(waveBtn);
       });
     }
+
+    var myHomeEl = $('#myhome-card');
+    if (myHomeEl) { myHomeEl.addEventListener('click', soonNotice); }
 
     $$('.notice__head', $('#home-body')).forEach(function (head) {
       head.addEventListener('click', function () {
@@ -4574,6 +4598,11 @@
   function bindGameMenu() {
     var btn = $('#game-btn');
     var menu = $('#game-menu');
+    /* 🛍️ 포인트 샵 · 🏠 마이홈 — v49에서는 준비 중 안내만 */
+    ['#shop-btn', '#myhome-btn'].forEach(function (sel) {
+      var b = $(sel);
+      if (b) { b.addEventListener('click', function (e) { e.stopPropagation(); soonNotice(); }); }
+    });
     if (btn) {
       btn.addEventListener('click', function (e) {
         e.stopPropagation();
