@@ -4521,7 +4521,34 @@
   }
 
   /* ============================================================
-     🎮 미니게임 고르기 메뉴 (경단만들기 · 신수팡 · 신수모아)
+     🦆 연못 생존기 (미니게임)
+     ============================================================ */
+  /** 🎮 미니게임 메뉴의 🦆 연못 생존기 → 도깨비불을 피하는 닷지 게임을 엽니다.
+   *  점수는 생존 시간(센티초 정수, 4285 = 42.85초)으로 저장하고 랭킹판에는 초로 보여 줍니다. */
+  function openSurvival() {
+    var G = window.YM_SURVIVAL;
+    if (!G) {
+      toast('연못 생존기를 불러오지 못했어요. 새로고침해 주세요.');
+      return;
+    }
+    var options = {
+      live: isLive(),
+      nickname: myNick(),
+      onToast: toast,
+      /* 랭킹 아바타 — 프로필 그림(preset:...)은 SVG, 사진(data:image/...)은 <img> 로 그립니다. */
+      avatarHtml: function (name, avatar) {
+        return (presetName(avatar) || isImageAvatar(avatar)) ? avatarSpan('gd-rank__avatar', name, avatar) : '';
+      }
+    };
+    if (isLive()) {
+      options.submitScore = function (score) { return DB.submitSurvivalScore(score); };
+      options.listRanking = function () { return DB.listSurvivalRanking(20); };
+    }
+    G.open(options);
+  }
+
+  /* ============================================================
+     🎮 미니게임 고르기 메뉴 (경단만들기 · 신수팡 · 신수모아 · 연못 생존기)
      ============================================================ */
   var gameMenuOpen = false;
 
@@ -4541,6 +4568,7 @@
     if (which === 'gyeongdan') { openGyeongdan(); return; }
     if (which === 'sinsupang') { openSinsupang(); return; }
     if (which === 'sinsumoa') { openSinsumoa(); return; }
+    if (which === 'survival') { openSurvival(); return; }
   }
 
   function bindGameMenu() {
@@ -4588,7 +4616,7 @@
      ------------------------------------------------------------
      · 링크를 연 사람에게는 문파 화면을 아예 그리지 않습니다.
        (로그인·공지·채팅·앨범·문파원·문파 랭킹·초대 코드 모두 보이지 않고, 서버로도 묻지 않습니다)
-     · 미니게임 3종과 '게스트 전용 랭킹'만 보여 줍니다.
+     · 미니게임 4종과 '게스트 전용 랭킹'만 보여 줍니다.
      · 유효기간이 지나도 하던 놀이를 강제로 끊지 않습니다 — 타이머 글자만 '체험 시간이 끝났어요'로
        바뀌고, 새로 열거나 새로고침하면 그때 만료 안내가 뜹니다.
      ============================================================ */
@@ -4596,9 +4624,10 @@
   var GUEST_GAMES = [
     { key: 'gyeongdan', mark: '🍡', name: '경단만들기', desc: '경단을 쌓아 합치는 11단계' },
     { key: 'sinsupang', mark: '🐾', name: '신수팡', desc: '세 개를 맞추는 60초 퍼즐' },
-    { key: 'sinsumoa', mark: '🫧', name: '신수모아', desc: '네 개 이상 모아 터뜨리는 60초 퍼즐' }
+    { key: 'sinsumoa', mark: '🫧', name: '신수모아', desc: '네 개 이상 모아 터뜨리는 60초 퍼즐' },
+    { key: 'survival', mark: '🦆', name: '연못 생존기', desc: '도깨비불을 피하는 한 번의 목숨' }
   ];
-  var GUEST_GAME_LABEL = { all: '전체 3종', gyeongdan: '경단만들기', sinsupang: '신수팡', sinsumoa: '신수모아' };
+  var GUEST_GAME_LABEL = { all: '전체 4종', gyeongdan: '경단만들기', sinsupang: '신수팡', sinsumoa: '신수모아', survival: '연못 생존기' };
   var GUEST_MINUTES = [10, 30, 60, 1440];
   var GUEST_MINUTE_LABEL = { 10: '10분', 30: '30분', 60: '1시간', 1440: '24시간' };
 
@@ -4873,7 +4902,7 @@
   function openGuestSession(token, game, remainMs, demo) {
     guest = {
       token: token,
-      game: (game === 'gyeongdan' || game === 'sinsupang' || game === 'sinsumoa') ? game : 'all',
+      game: (game === 'gyeongdan' || game === 'sinsupang' || game === 'sinsumoa' || game === 'survival') ? game : 'all',
       expiresAt: Date.now() + Math.max(0, Number(remainMs) || 0),
       demo: !!demo,
       timer: null
@@ -4943,6 +4972,12 @@
       var M = window.YM_SINSUMOA;
       if (!M) { toast('신수모아를 불러오지 못했어요. 새로고침해 주세요.'); return; }
       M.open(guestGameOptions('sinsumoa'));
+      return;
+    }
+    if (gameKey === 'survival') {
+      var V = window.YM_SURVIVAL;
+      if (!V) { toast('연못 생존기를 불러오지 못했어요. 새로고침해 주세요.'); return; }
+      V.open(guestGameOptions('survival'));
     }
   }
 
@@ -4955,7 +4990,7 @@
 
   function guestLinksCardHtml() {
     var demo = !isLive();
-    var gameChips = ['all', 'sinsumoa', 'sinsupang', 'gyeongdan'].map(function (key) {
+    var gameChips = ['all', 'survival', 'sinsumoa', 'sinsupang', 'gyeongdan'].map(function (key) {
       var on = glPick.game === key;
       return '<button type="button" class="chip' + (on ? ' is-active' : '') + '" data-gl-game="' + key +
         '" aria-pressed="' + on + '">' + esc(GUEST_GAME_LABEL[key]) + '</button>';

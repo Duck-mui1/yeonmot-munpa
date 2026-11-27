@@ -3380,59 +3380,252 @@ body.is-locked { overflow: hidden; }
 .sinsumoa__sheet::-webkit-scrollbar { display: none; }
 
 /* =========================================================
+   🦆 연못 생존기 — 도깨비불을 피하는 한 번의 목숨
+   (신수모아와 같은 한지 · 테두리, 밤 연못의 푸른 물빛)
+   ========================================================= */
+.survival {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    radial-gradient(120% 62% at 50% 0%, rgba(26, 62, 82, .55), transparent 62%),
+    radial-gradient(90% 55% at 50% 100%, rgba(60, 156, 150, .22), transparent 72%),
+    rgba(3, 10, 14, .9);
+  backdrop-filter: blur(6px);
+  padding: max(8px, env(safe-area-inset-top, 0px)) 8px max(8px, var(--safe-b));
+}
+.survival__panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 440px;
+  height: auto;
+  max-height: 100%;
+  padding: 10px 12px calc(10px + var(--safe-b));
+  border-radius: 22px;
+  border: 1px solid rgba(150, 220, 216, .42);
+  background:
+    radial-gradient(120% 42% at 50% 102%, rgba(58, 150, 148, .34), transparent 72%),
+    linear-gradient(180deg, #0b1a2a 0%, #0f2432 28%, #143036 66%, #1d443e 100%);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, .62), inset 0 1px 0 rgba(206, 246, 240, .12);
+  overflow: hidden;
+  animation: gdIn .28s ease both;
+}
+.survival__panel::after {
+  content: "";
+  position: absolute;
+  inset: 5px;
+  border-radius: 18px;
+  border: 1px solid rgba(180, 236, 228, .14);
+  pointer-events: none;
+}
+.survival__head {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 2px 6px;
+}
+.survival__title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 17px;
+  letter-spacing: .04em;
+  color: #eefaf7;
+}
+.survival__title em {
+  font-style: normal;
+  font-family: var(--sans);
+  font-size: 9.5px;
+  letter-spacing: .06em;
+  color: rgba(178, 232, 224, .8);
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(150, 220, 216, .3);
+}
+.survival__mark { font-size: 18px; line-height: 1; }
+.survival__close {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid rgba(150, 220, 216, .3);
+  background: rgba(12, 26, 40, .72);
+  color: rgba(198, 240, 234, .85);
+}
+.survival__close:hover { color: #f2fffc; }
+
+.survival__hud {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.survival__hud .gd-stat { padding: 6px 10px; }
+.survival__hud .gd-stat__value { font-size: 20px; font-variant-numeric: tabular-nums; }
+
+/* ---- 놀이판 (정사각) ---- */
+.survival__stage {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 auto;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  aspect-ratio: 1 / 1;
+  margin: 6px auto 0;
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid rgba(150, 220, 216, .5);
+  background: #0d2b30;
+  box-shadow: inset 0 0 26px rgba(4, 20, 26, .65), 0 0 0 1px rgba(180, 236, 228, .08);
+  touch-action: none;
+}
+.survival__canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  cursor: grab;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.survival__canvas:active { cursor: grabbing; }
+.survival__over {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  padding: 14px;
+  background: rgba(4, 12, 16, .76);
+  backdrop-filter: blur(3px);
+  animation: gdFade .22s ease both;
+}
+.survival__actions {
+  flex: none;
+  display: grid;
+  grid-template-columns: 1.15fr 1fr;
+  gap: 6px;
+  padding: 8px 2px 0;
+}
+.survival__hint {
+  flex: none;
+  min-height: 15px;
+  margin: 5px 2px 0;
+  font-size: 10px;
+  line-height: 1.5;
+  color: rgba(200, 232, 226, .72);
+  text-align: center;
+}
+.survival__credit {
+  flex: none;
+  margin: 2px 6px 0;
+  font-size: 11px;
+  line-height: 1.45;
+  letter-spacing: -.01em;
+  color: rgba(200, 232, 226, .42);
+  text-align: center;
+  word-break: keep-all;
+}
+.survival__sheet {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  padding: 14px 12px calc(14px + var(--safe-b));
+  border-radius: 22px;
+  background: linear-gradient(180deg, #0f2030, #16302f 72%, #1e453e);
+  overflow-y: auto;
+  scrollbar-width: none;
+  animation: gdFade .2s ease both;
+}
+.survival__sheet::-webkit-scrollbar { display: none; }
+
+/* =========================================================
    🍡🐾 낮은 창(PC PWA 등) — 여백과 글자를 조금 줄여 놀이판 자리를 벌어 줍니다
    판 비율은 JS 가 444:480 · 정사각으로 지킵니다.
    ========================================================= */
 @media (max-height: 620px) {
   .gyeongdan__panel,
   .sinsupang__panel,
-  .sinsumoa__panel {
+  .sinsumoa__panel,
+  .survival__panel {
     padding: 8px 10px calc(8px + var(--safe-b));
   }
   .gyeongdan__head,
   .sinsupang__head,
-  .sinsumoa__head { padding: 0 2px 4px; }
+  .sinsumoa__head,
+  .survival__head { padding: 0 2px 4px; }
   .gyeongdan__title,
   .sinsupang__title,
-  .sinsumoa__title { font-size: 15px; gap: 6px; }
+  .sinsumoa__title,
+  .survival__title { font-size: 15px; gap: 6px; }
   .gyeongdan__mark,
   .sinsupang__mark,
-  .sinsumoa__mark { font-size: 16px; }
+  .sinsumoa__mark,
+  .survival__mark { font-size: 16px; }
   .gyeongdan__close,
   .sinsupang__close,
-  .sinsumoa__close { width: 28px; height: 28px; }
+  .sinsumoa__close,
+  .survival__close { width: 28px; height: 28px; }
   .gyeongdan__hud,
   .sinsupang__hud,
-  .sinsumoa__hud { margin-bottom: 5px; }
+  .sinsumoa__hud,
+  .survival__hud { margin-bottom: 5px; }
   .gyeongdan .gd-stat,
   .sinsupang .gd-stat,
-  .sinsumoa .gd-stat { padding: 4px 10px; }
+  .sinsumoa .gd-stat,
+  .survival .gd-stat { padding: 4px 10px; }
   .gyeongdan .gd-stat__label,
   .sinsupang .gd-stat__label,
-  .sinsumoa .gd-stat__label { font-size: 9px; }
+  .sinsumoa .gd-stat__label,
+  .survival .gd-stat__label { font-size: 9px; }
   .gyeongdan .gd-stat__value { font-size: 17px; }
   .sinsupang .gd-stat__value,
-  .sinsumoa .gd-stat__value { font-size: 16px; }
+  .sinsumoa .gd-stat__value,
+  .survival .gd-stat__value { font-size: 16px; }
   .sinsupang__timer,
   .sinsumoa__timer { height: 15px; }
   .sp-timer__text,
   .sm-timer__text { line-height: 15px; font-size: 9px; }
   .gyeongdan__stage,
   .sinsupang__stage,
-  .sinsumoa__stage { border-radius: 14px; }
+  .sinsumoa__stage,
+  .survival__stage { border-radius: 14px; }
   .gyeongdan__tools { padding: 5px 2px 0; }
   .gd-tools__label { margin-bottom: 3px; font-size: 9px; }
   .gd-tool { padding: 6px 6px; font-size: 10.5px; }
   .gyeongdan__actions,
   .sinsupang__actions,
-  .sinsumoa__actions { padding: 5px 2px 0; }
+  .sinsumoa__actions,
+  .survival__actions { padding: 5px 2px 0; }
   .gd-btn { padding: 6px 6px; font-size: 10.5px; }
   .gyeongdan__hint,
   .sinsupang__hint,
-  .sinsumoa__hint { margin-top: 3px; font-size: 9.5px; }
+  .sinsumoa__hint,
+  .survival__hint { margin-top: 3px; font-size: 9.5px; }
   .gyeongdan__credit,
   .sinsupang__credit,
-  .sinsumoa__credit { margin-top: 1px; font-size: 9.5px; line-height: 1.35; }
+  .sinsumoa__credit,
+  .survival__credit { margin-top: 1px; font-size: 9.5px; line-height: 1.35; }
 }
 
 /* =========================================================

@@ -476,6 +476,22 @@ comment on column private.sinsumoa_scores.best_combo is '그 문파원이 한 �
 create index if not exists sinsumoa_scores_best_idx
   on private.sinsumoa_scores (best_score desc, updated_at asc);
 
+-- 2-9e-2. 연못 생존기 문파 랭킹 (🦆 미니게임 · 한 번 맞으면 끝나는 닷지) — 문파원 한 명에 최고 기록 한 줄
+--   · 게임은 브라우저(js/survival.js)에서만 돌고, 서버에는 버틴 시간(센티초)만 남습니다.
+--   · 읽기/쓰기는 RPC(submit_survival_score · list_survival_ranking)만.
+create table if not exists private.survival_scores (
+  member_id  uuid primary key references private.members (id) on delete cascade,
+  best_score integer not null default 0
+               constraint survival_scores_score_range check (best_score between 0 and 100000000),
+  updated_at timestamptz not null default now()
+);
+
+comment on table private.survival_scores is '연못 생존기 문파 랭킹 — 문파원마다 최고 기록 한 줄. 랭킹 RPC 로만 읽고 씁니다.';
+comment on column private.survival_scores.best_score is '가장 오래 버틴 시간(센티초) — 4285 = 42.85초.';
+
+create index if not exists survival_scores_best_idx
+  on private.survival_scores (best_score desc, updated_at asc);
+
 -- 2-9f. 기간제한 외부 체험 링크 (🔗 ?guest=TOKEN) — 링크 한 줄에 하나
 --   · 문파원이 아닌 사람에게 미니게임만 열어 주는 주소입니다. 문파 자료는 하나도 보이지 않습니다.
 --   · 읽기/쓰기는 RPC(create_guest_game_link · list_guest_game_links · revoke_guest_game_link · verify_guest_game_link)만.
@@ -486,7 +502,7 @@ create table if not exists private.guest_game_links (
                check (token ~ '^[A-Za-z0-9_-]{16,64}$'),
   game       text not null default 'all'
                constraint guest_game_links_game_kind
-               check (game in ('all', 'gyeongdan', 'sinsupang', 'sinsumoa')),
+               check (game in ('all', 'gyeongdan', 'sinsupang', 'sinsumoa', 'survival')),
   expires_at timestamptz not null,
   revoked    boolean not null default false,
   created_by uuid references private.members (id) on delete set null,
@@ -498,7 +514,7 @@ comment on table private.guest_game_links is
 comment on column private.guest_game_links.token is
   'URL 에 들어가는 무작위 문자열(난수 UUID 122비트 → 32자). 이 값만으로는 문파 자료에 닿을 수 없습니다.';
 comment on column private.guest_game_links.game is
-  'all = 세 게임 모두 · gyeongdan = 경단만들기 · sinsupang = 신수팡 · sinsumoa = 신수모아.';
+  'all = 네 게임 모두 · gyeongdan = 경단만들기 · sinsupang = 신수팡 · sinsumoa = 신수모아 · survival = 연못 생존기.';
 comment on column private.guest_game_links.revoked is
   '운영진이 만료시키기를 누르면 true — 기간이 남아 있어도 바로 못 씁니다.';
 
@@ -513,7 +529,7 @@ create table if not exists private.guest_game_scores (
   id         uuid primary key default gen_random_uuid(),
   game       text not null
                constraint guest_game_scores_game_kind
-               check (game in ('gyeongdan', 'sinsupang', 'sinsumoa')),
+               check (game in ('gyeongdan', 'sinsupang', 'sinsumoa', 'survival')),
   nickname   text not null
                constraint guest_game_scores_nickname_len
                check (char_length(btrim(nickname)) between 1 and 12)
@@ -531,7 +547,7 @@ create table if not exists private.guest_game_scores (
 comment on table private.guest_game_scores is
   '게스트 전용 랭킹 — 체험 링크로 놀러 온 사람들의 게임별 최고 점수. 문파 랭킹 표와 섞이지 않습니다.';
 comment on column private.guest_game_scores.meta is
-  '곁들임 값 — 경단만들기는 { tier }, 신수팡·신수모아는 { combo }. 2KB 를 넘지 않습니다.';
+  '곁들임 값 — 경단만들기는 { tier }, 신수팡·신수모아는 { combo }, 연못 생존기는 쓰지 않습니다. 2KB 를 넘지 않습니다.';
 
 create unique index if not exists guest_game_scores_nick_uniq
   on private.guest_game_scores (game, lower(nickname));
@@ -647,6 +663,7 @@ alter table private.admin_audit     enable row level security;
 alter table private.gyeongdan_scores enable row level security;
 alter table private.sinsupang_scores enable row level security;
 alter table private.sinsumoa_scores enable row level security;
+alter table private.survival_scores enable row level security;
 alter table private.guest_game_links enable row level security;
 alter table private.guest_game_scores enable row level security;
 
@@ -659,6 +676,7 @@ revoke all on table public.member_absences from public, anon, authenticated;
 revoke all on table private.gyeongdan_scores from public, anon, authenticated;
 revoke all on table private.sinsupang_scores from public, anon, authenticated;
 revoke all on table private.sinsumoa_scores from public, anon, authenticated;
+revoke all on table private.survival_scores from public, anon, authenticated;
 revoke all on table private.guest_game_links from public, anon, authenticated;
 revoke all on table private.guest_game_scores from public, anon, authenticated;
 grant select on table public.chat_messages to anon, authenticated;
@@ -3405,6 +3423,120 @@ comment on function public.list_sinsumoa_ranking(text, integer) is
   '신수모아 문파 랭킹 — 점수 높은 순(같으면 먼저 올린 사람이 위). 활성 문파원만, 최대 50명.';
 
 
+-- 점수 올리기 — 로그인한 문파원의 최고 기록일 때만 갱신합니다.
+--   · 점수는 **생존 시간(센티초 정수)** — 4285 = 42.85초.
+create or replace function public.submit_survival_score(
+  p_token text,
+  p_score integer
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $fn$
+declare
+  v_actor private.session_actor := private.current_member(p_token);
+  v_prev  private.survival_scores;
+  v_best  integer;
+  v_new   boolean := false;
+  v_rank  integer;
+begin
+  if p_score is null or p_score < 0 or p_score > 100000000 then
+    raise exception '생존 시간이 올바르지 않아요.' using errcode = '22023';
+  end if;
+
+  select * into v_prev
+    from private.survival_scores s
+   where s.member_id = v_actor.member_id;
+
+  if not found then
+    v_best := p_score;
+    v_new  := p_score > 0;
+    insert into private.survival_scores (member_id, best_score)
+    values (v_actor.member_id, v_best);
+  else
+    v_best := greatest(v_prev.best_score, p_score);
+    v_new  := p_score > v_prev.best_score;
+    if v_best <> v_prev.best_score then
+      update private.survival_scores
+         set best_score = v_best,
+             updated_at = now()
+       where member_id = v_actor.member_id;
+    end if;
+  end if;
+
+  select count(*) + 1
+    into v_rank
+    from private.survival_scores s
+    join private.members m on m.id = s.member_id
+   where m.status = 'active'
+     and s.best_score > v_best;
+
+  return jsonb_build_object(
+    'ok', true,
+    'best_score', v_best,
+    'is_new_best', v_new,
+    'rank', v_rank
+  );
+end;
+$fn$;
+
+comment on function public.submit_survival_score(text, integer) is
+  '연못 생존기 점수 제출(센티초) — 로그인한 문파원의 최고 기록만 갱신하고 { ok, best_score, is_new_best, rank } 를 돌려줍니다.';
+
+-- 문파 랭킹 — 오래 버틴 순(같으면 먼저 올린 사람이 위) · 활성 문파원만 · 최대 50명
+create or replace function public.list_survival_ranking(
+  p_token text,
+  p_limit integer default 20
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $fn$
+declare
+  v_actor  private.session_actor := private.current_member(p_token);
+  v_limit  integer := least(greatest(coalesce(p_limit, 20), 1), 50);
+  v_result jsonb;
+begin
+  select coalesce(jsonb_agg(s.item order by s.rank_no, s.nickname), '[]'::jsonb)
+    into v_result
+    from (
+      select jsonb_build_object(
+               'rank', r.rank_no,
+               'member_id', r.id,
+               'nickname', r.nickname,
+               'role', r.member_role,
+               'avatar', r.avatar,
+               'best_score', r.best_score,
+               'updated_at', r.updated_at
+             ) as item,
+             r.rank_no,
+             r.nickname
+        from (
+          select m.id,
+                 m.nickname,
+                 m.member_role,
+                 m.avatar,
+                 s.best_score,
+                 s.updated_at,
+                 rank() over (order by s.best_score desc, s.updated_at asc) as rank_no
+            from private.survival_scores s
+            join private.members m on m.id = s.member_id
+           where m.status = 'active'
+        ) r
+       order by r.rank_no, r.nickname
+       limit v_limit
+    ) s;
+
+  return v_result;
+end;
+$fn$;
+
+comment on function public.list_survival_ranking(text, integer) is
+  '연못 생존기 문파 랭킹 — 오래 버틴 순(같으면 먼저 올린 사람이 위). 활성 문파원만, 최대 50명.';
+
+
 -- ===========================================================================
 -- 10-16. 🔗 기간제한 외부 체험 링크 · 게스트 전용 랭킹
 --     · 문파원이 아닌 사람에게 미니게임만 열어 주는 주소(?guest=TOKEN)와,
@@ -3541,8 +3673,8 @@ begin
     raise exception '문주·운영진만 체험 링크를 만들 수 있어요.' using errcode = '42501';
   end if;
 
-  if v_game not in ('all', 'gyeongdan', 'sinsupang', 'sinsumoa') then
-    raise exception '게임을 골라 주세요. (all · gyeongdan · sinsupang · sinsumoa)' using errcode = '22023';
+  if v_game not in ('all', 'gyeongdan', 'sinsupang', 'sinsumoa', 'survival') then
+    raise exception '게임을 골라 주세요. (all · gyeongdan · sinsupang · sinsumoa · survival)' using errcode = '22023';
   end if;
 
   if v_minutes < 1 or v_minutes > 10080 then
@@ -3698,7 +3830,7 @@ declare
 begin
   v_link := private.guest_link_for_score(p_token);
 
-  if v_game not in ('gyeongdan', 'sinsupang', 'sinsumoa') then
+  if v_game not in ('gyeongdan', 'sinsupang', 'sinsumoa', 'survival') then
     raise exception '게임 이름이 올바르지 않아요.' using errcode = '22023';
   end if;
 
@@ -3791,7 +3923,7 @@ declare
 begin
   v_link := private.guest_link_for_score(p_token);
 
-  if v_game not in ('gyeongdan', 'sinsupang', 'sinsumoa') then
+  if v_game not in ('gyeongdan', 'sinsupang', 'sinsumoa', 'survival') then
     raise exception '게임 이름이 올바르지 않아요.' using errcode = '22023';
   end if;
 
@@ -3963,6 +4095,7 @@ begin
          'submit_gyeongdan_score', 'list_gyeongdan_ranking',
          'submit_sinsupang_score', 'list_sinsupang_ranking',
          'submit_sinsumoa_score', 'list_sinsumoa_ranking',
+         'submit_survival_score', 'list_survival_ranking',
          'verify_guest_game_link', 'create_guest_game_link', 'list_guest_game_links',
          'revoke_guest_game_link', 'submit_guest_game_score', 'list_guest_game_ranking',
          'bootstrap_admin'
