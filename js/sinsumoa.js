@@ -115,7 +115,11 @@
      =================================================================== */
 
   var S = null;            // 현재 판
-  var opts = {};           // { live, nickname, best, submitScore, listRanking, onToast, avatarHtml }
+  var opts = {};           // { live, nickname, best, submitScore, listRanking, onToast, avatarHtml, guestMode, submitGuestScore, listGuestRanking }
+
+  /* 🔗 체험 링크(?guest=TOKEN)로 연 판 — 문파 랭킹 대신 '체험 랭킹'(게스트 전용)을 씁니다. */
+  function guestRank() { return !!opts.guestMode && typeof opts.submitGuestScore === 'function'; }
+  function rankWord() { return guestRank() ? '체험 랭킹' : '문파 랭킹'; }
   var ranking = { status: 'idle', rows: [], message: '' };
   var opened = false;
   var running = false;
@@ -1575,16 +1579,18 @@
     setLocalBest(S.score);
     renderScore();
     showOver();
-    if (opts.live && typeof opts.submitScore === 'function' && S.score > 0) {
-      submitScore();
+    if ((opts.live && typeof opts.submitScore === 'function') || guestRank()) {
+      if (S.score > 0) { submitScore(); }
     }
   }
 
   function submitScore() {
     if (!S || S.submitState.pending) { return; }
+    var submit = guestRank() ? opts.submitGuestScore : opts.submitScore;
+    if (typeof submit !== 'function') { return; }
     S.submitState.pending = true;
     S.submitState.failed = '';
-    opts.submitScore(S.score, S.maxCombo).then(function (res) {
+    submit(S.score, S.maxCombo).then(function (res) {
       S.submitState.pending = false;
       S.submitState.result = res || null;
       if (res && Number(res.best_score) > S.best) {
@@ -1610,7 +1616,7 @@
 
   function currentResultHtml() {
     if (!S) { return ''; }
-    if (!opts.live) {
+    if (!opts.live && !guestRank()) {
       return '체험 모드예요 · 이 기기의 최고 기록 <b>' + fmtNum(S.best) + '점</b>으로 남아요';
     }
     if (S.submitState.failed === 'pending') {
@@ -1623,9 +1629,9 @@
     var res = S.submitState.result;
     if (res && res.rank) {
       return (res.is_new_best ? '🎉 <b>새 최고 기록</b> · ' : '') +
-        '문파 랭킹 <b>' + res.rank + '위</b> · 문파 최고 ' + fmtNum(res.best_score) + '점';
+        rankWord() + ' <b>' + res.rank + '위</b> · 최고 ' + fmtNum(res.best_score) + '점';
     }
-    if (S.submitState.pending) { return '문파 랭킹에 올리는 중이에요…'; }
+    if (S.submitState.pending) { return rankWord() + '에 올리는 중이에요…'; }
     return '';
   }
 
@@ -1645,7 +1651,7 @@
           (S.maxCombo || 0) + ' 연쇄</b></p>' +
         '<p class="gd-over__result" id="sm-over-result">' + currentResultHtml() + '</p>' +
         '<div class="gd-over__row">' +
-          '<button type="button" class="btn btn--ghost btn--small" id="sm-over-rank">🏆 문파 랭킹</button>' +
+          '<button type="button" class="btn btn--ghost btn--small" id="sm-over-rank">🏆 ' + rankWord() + '</button>' +
           '<button type="button" class="btn btn--primary btn--small" id="sm-over-restart">다시하기</button>' +
         '</div>' +
       '</div>';
@@ -1667,8 +1673,10 @@
      =================================================================== */
 
   function rankingMarkup() {
-    var html = '<div class="gd-sheet__head"><h3>🏆 신수모아 문파 랭킹</h3>' +
+    var html = '<div class="gd-sheet__head"><h3>🏆 ' + (guestRank() ? '신수모아 체험 랭킹' : '신수모아 문파 랭킹') + '</h3>' +
       '<button type="button" class="gd-sheet__close" data-sheet-close="1" aria-label="닫기">×</button></div>';
+
+    if (guestRank()) { return html + guestRankingBody(); }
 
     if (!opts.live) {
       html += '<div class="gd-rank__empty">체험 모드예요.<br>이 기기의 최고 점수 <b>' + fmtNum(localBest()) +
@@ -1756,6 +1764,38 @@
     loadRanking();
     pause();
   }
+  /* 🔗 게스트 전용 랭킹 — 이 체험 링크로 놀러 온 사람들만. 문파 랭킹과 별개입니다. */
+  function guestRankingBody() {
+    var html = '<p class="gd-sheet__note gd-sheet__note--guest">체험 링크로 놀러 온 분들만의 랭킹이에요 · <b>연못 문파 랭킹과는 따로</b> 쌓여요</p>';
+    if (ranking.status === 'loading' || ranking.status === 'idle') {
+      return html + '<div class="gd-rank__empty">체험 랭킹을 불러오는 중이에요…</div>';
+    }
+    if (ranking.status === 'error') {
+      return html + '<div class="gd-rank__empty">체험 랭킹을 불러오지 못했어요.<br>' + escapeHtml(ranking.message || '') + '</div>';
+    }
+    if (!ranking.rows || !ranking.rows.length) {
+      return html + '<div class="gd-rank__empty">아직 올라온 기록이 없어요 · 첫 기록을 남겨 보세요!</div>';
+    }
+    var me = opts.nickname ? String(opts.nickname).toLowerCase() : '';
+    html += '<ol class="gd-rank">';
+    ranking.rows.forEach(function (row) {
+      var mine = me && String(row.nickname || '').toLowerCase() === me;
+      var combo = Number((row.meta || {}).combo) || 0;
+      html += '<li class="gd-rank__row' + (mine ? ' is-mine' : '') + '">' +
+        '<span class="gd-rank__no">' + (row.rank || '-') + '</span>' +
+        '<span class="gd-rank__avatar gd-rank__avatar--initial">' + escapeHtml(String(row.nickname || '?').slice(0, 1)) + '</span>' +
+        '<span class="gd-rank__who"><b>' + escapeHtml(row.nickname || '') + '</b>' +
+        '<span class="gd-rank__role">체험' + (combo > 0 ? ' · 최대 ' + combo + ' 연쇄' : '') + '</span></span>' +
+        '<span class="gd-rank__score">' + fmtNum(row.score) + '</span>' +
+        '</li>';
+    });
+    html += '</ol>';
+    if (me && !ranking.rows.some(function (r) { return String(r.nickname || '').toLowerCase() === me; })) {
+      html += '<p class="gd-sheet__note">내 기록이 아직 없어요 · 한 판 마치면 체험 랭킹에 올라요</p>';
+    }
+    return html;
+  }
+
   function bindSheetClose() {
     var close = $('[data-sheet-close]', el.sheet);
     if (close) { close.addEventListener('click', closeSheet); }
@@ -1770,7 +1810,9 @@
   function openRanking() { openSheet('rank'); }
 
   function loadRanking() {
-    if (!opts.live || typeof opts.listRanking !== 'function') {
+    var source = guestRank() ? (typeof opts.listGuestRanking === 'function' ? opts.listGuestRanking : null)
+                             : (opts.live && typeof opts.listRanking === 'function' ? opts.listRanking : null);
+    if (!source) {
       ranking.status = 'trial';
       return Promise.resolve(null);
     }
@@ -1780,16 +1822,17 @@
       el.sheet.innerHTML = rankingMarkup();
       bindSheetClose();
     }
-    ranking.promise = opts.listRanking().then(function (rows) {
+    ranking.promise = source().then(function (rows) {
       ranking.status = 'ready';
       ranking.rows = Array.isArray(rows) ? rows : [];
       ranking.message = '';
       var mine = null;
       ranking.rows.forEach(function (r) {
-        if (opts.nickname && r.nickname === opts.nickname) { mine = r; }
+        if (opts.nickname && String(r.nickname).toLowerCase() === String(opts.nickname).toLowerCase()) { mine = r; }
       });
-      if (mine && Number(mine.best_score) > (S ? S.best : 0)) {
-        if (S) { S.best = Number(mine.best_score); renderScore(); }
+      var mineScore = mine ? Number(mine.best_score || mine.score || 0) : 0;
+      if (mine && mineScore > (S ? S.best : 0)) {
+        if (S) { S.best = mineScore; renderScore(); }
       }
       if (el.sheet && el.sheet.getAttribute('data-kind') === 'rank' && !el.sheet.hidden) {
         el.sheet.innerHTML = rankingMarkup();
@@ -1882,10 +1925,11 @@
       opened = true;
     }
     ranking = { status: 'idle', rows: [], message: '' };
+    if (el.rankBtn) { el.rankBtn.textContent = '🏆 ' + rankWord(); }
     if (el.root) { el.root.hidden = false; }
     document.body.classList.add('is-locked');
     startGame(true);
-    if (opts.live) { loadRanking(); }
+    if (opts.live || guestRank()) { loadRanking(); }
     window.setTimeout(function () {
       if (!S) { return; }
       resize();

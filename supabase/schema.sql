@@ -476,6 +476,69 @@ comment on column private.sinsumoa_scores.best_combo is '그 문파원이 한 �
 create index if not exists sinsumoa_scores_best_idx
   on private.sinsumoa_scores (best_score desc, updated_at asc);
 
+-- 2-9f. 기간제한 외부 체험 링크 (🔗 ?guest=TOKEN) — 링크 한 줄에 하나
+--   · 문파원이 아닌 사람에게 미니게임만 열어 주는 주소입니다. 문파 자료는 하나도 보이지 않습니다.
+--   · 읽기/쓰기는 RPC(create_guest_game_link · list_guest_game_links · revoke_guest_game_link · verify_guest_game_link)만.
+create table if not exists private.guest_game_links (
+  id         uuid primary key default gen_random_uuid(),
+  token      text not null unique
+               constraint guest_game_links_token_shape
+               check (token ~ '^[A-Za-z0-9_-]{16,64}$'),
+  game       text not null default 'all'
+               constraint guest_game_links_game_kind
+               check (game in ('all', 'gyeongdan', 'sinsupang', 'sinsumoa')),
+  expires_at timestamptz not null,
+  revoked    boolean not null default false,
+  created_by uuid references private.members (id) on delete set null,
+  created_at timestamptz not null default now()
+);
+
+comment on table private.guest_game_links is
+  '기간제한 외부 체험 링크 — 문파원이 아닌 사람에게 미니게임만 열어 주는 주소(?guest=TOKEN). RPC 로만 읽고 씁니다.';
+comment on column private.guest_game_links.token is
+  'URL 에 들어가는 무작위 문자열(난수 UUID 122비트 → 32자). 이 값만으로는 문파 자료에 닿을 수 없습니다.';
+comment on column private.guest_game_links.game is
+  'all = 세 게임 모두 · gyeongdan = 경단만들기 · sinsupang = 신수팡 · sinsumoa = 신수모아.';
+comment on column private.guest_game_links.revoked is
+  '운영진이 만료시키기를 누르면 true — 기간이 남아 있어도 바로 못 씁니다.';
+
+create index if not exists guest_game_links_created_idx
+  on private.guest_game_links (created_at desc);
+
+-- 2-9g. 게스트 전용 랭킹 (🔗 체험 링크로 놀러 온 사람들) — 문파 랭킹과 완전히 따로
+--   · 문파원 표(members)와 이어지지 않습니다 — 닉네임 글자만 남습니다.
+--   · 한 게임 · 같은 닉네임(대소문자 무시)은 한 줄. 최고 점수만 갱신됩니다.
+--   · 읽기/쓰기는 RPC(submit_guest_game_score · list_guest_game_ranking)만.
+create table if not exists private.guest_game_scores (
+  id         uuid primary key default gen_random_uuid(),
+  game       text not null
+               constraint guest_game_scores_game_kind
+               check (game in ('gyeongdan', 'sinsupang', 'sinsumoa')),
+  nickname   text not null
+               constraint guest_game_scores_nickname_len
+               check (char_length(btrim(nickname)) between 1 and 12)
+               constraint guest_game_scores_nickname_trim
+               check (nickname = btrim(nickname)),
+  score      integer not null default 0
+               constraint guest_game_scores_score_range
+               check (score between 0 and 100000000),
+  meta       jsonb not null default '{}'::jsonb
+               constraint guest_game_scores_meta_size
+               check (octet_length(meta::text) <= 2000),
+  created_at timestamptz not null default now()
+);
+
+comment on table private.guest_game_scores is
+  '게스트 전용 랭킹 — 체험 링크로 놀러 온 사람들의 게임별 최고 점수. 문파 랭킹 표와 섞이지 않습니다.';
+comment on column private.guest_game_scores.meta is
+  '곁들임 값 — 경단만들기는 { tier }, 신수팡·신수모아는 { combo }. 2KB 를 넘지 않습니다.';
+
+create unique index if not exists guest_game_scores_nick_uniq
+  on private.guest_game_scores (game, lower(nickname));
+
+create index if not exists guest_game_scores_best_idx
+  on private.guest_game_scores (game, score desc, created_at asc);
+
 -- 2-10. 관리자 행동 기록
 create table if not exists private.admin_audit (
   id          bigint generated always as identity primary key,
@@ -584,6 +647,8 @@ alter table private.admin_audit     enable row level security;
 alter table private.gyeongdan_scores enable row level security;
 alter table private.sinsupang_scores enable row level security;
 alter table private.sinsumoa_scores enable row level security;
+alter table private.guest_game_links enable row level security;
+alter table private.guest_game_scores enable row level security;
 
 -- 테이블 직접 권한 정리: anon/authenticated 는 세 테이블의 SELECT 만.
 revoke all on table public.chat_messages from public, anon, authenticated;
@@ -594,6 +659,8 @@ revoke all on table public.member_absences from public, anon, authenticated;
 revoke all on table private.gyeongdan_scores from public, anon, authenticated;
 revoke all on table private.sinsupang_scores from public, anon, authenticated;
 revoke all on table private.sinsumoa_scores from public, anon, authenticated;
+revoke all on table private.guest_game_links from public, anon, authenticated;
+revoke all on table private.guest_game_scores from public, anon, authenticated;
 grant select on table public.chat_messages to anon, authenticated;
 grant select on table public.notices       to anon, authenticated;
 grant select on table public.events        to anon, authenticated;
@@ -3339,6 +3406,433 @@ comment on function public.list_sinsumoa_ranking(text, integer) is
 
 
 -- ===========================================================================
+-- 10-16. 🔗 기간제한 외부 체험 링크 · 게스트 전용 랭킹
+--     · 문파원이 아닌 사람에게 미니게임만 열어 주는 주소(?guest=TOKEN)와,
+--       그 사람들만의 랭킹판입니다. 문파 자료·문파 랭킹과 완전히 따로 둡니다.
+-- ===========================================================================
+
+-- 토큰 만들기 — 난수 UUID 를 URL 에 안전한 글자로
+--   (pgcrypto 는 extensions 스키마에 있으므로 search_path 를 지정합니다)
+--   · PostgreSQL 13+ 의 내장 난수 UUID(122비트)를 하이픈만 빼서 32자로 씁니다.
+--     (pgcrypto 의 gen_random_bytes 를 쓰지 않아 설치 환경에 상관없이 동작합니다)
+create or replace function private.guest_link_token()
+returns text
+language sql
+volatile
+set search_path = ''
+as $fn$
+  select replace(gen_random_uuid()::text, '-', '');
+$fn$;
+
+comment on function private.guest_link_token() is
+  '체험 링크 토큰 — 내장 난수 UUID(122비트)에서 하이픈을 뺀 32자. URL 에 그대로 쓸 수 있습니다.';
+
+
+-- 게스트 함수 공통 확인 — 유효한 체험 링크 한 줄을 돌려주고, 아니면 28000 으로 거절
+create or replace function private.guest_link_for_score(p_token text)
+returns private.guest_game_links
+language plpgsql
+security definer
+set search_path = ''
+as $fn$
+declare
+  v_link private.guest_game_links;
+begin
+  if p_token is null or char_length(btrim(p_token)) < 16 or char_length(p_token) > 64 then
+    raise exception '체험 링크를 확인하지 못했어요. 받은 주소를 다시 열어 주세요.' using errcode = '28000';
+  end if;
+
+  select * into v_link
+    from private.guest_game_links g
+   where g.token = btrim(p_token);
+
+  if not found then
+    raise exception '체험 링크를 확인하지 못했어요. 받은 주소를 다시 열어 주세요.' using errcode = '28000';
+  end if;
+
+  if v_link.revoked then
+    raise exception '이 체험 링크는 만료되었어요. 새 링크를 받아 주세요.' using errcode = '28000';
+  end if;
+
+  /* 새로 접속·새로고침은 verify_guest_game_link 가 expires_at 그대로 막습니다.
+     이미 들어와 놀던 사람이 한 판을 마칠 수 있도록, 점수·랭킹만 만료 뒤 10분 여유를 둡니다
+     (만료된 링크를 새로 열면 여전히 만료 화면 · '만료시키기'한 링크는 여유 없이 즉시 막힘). */
+  if v_link.expires_at + interval '10 minutes' <= now() then
+    raise exception '체험 기간이 끝났어요. 새 링크를 받아 주세요.' using errcode = '28000';
+  end if;
+
+  return v_link;
+end;
+$fn$;
+
+comment on function private.guest_link_for_score(text) is
+  '게스트 점수 함수 공통 확인 — 유효한 체험 링크 한 줄을 돌려주고, 아니면 28000 으로 거절합니다. 시간 만료만 10분 여유(한 판 마무리).';
+
+
+-- 링크 확인 — 로그인 없이(anon) 부를 수 있는 함수
+--   유효: { valid:true, game, expires_at, remaining_seconds }
+--   무효: { valid:false, reason } → 'expired' | 'revoked' | 'invalid'
+--   ※ 문파 이름·문파원·랭킹·초대 코드 등 문파 안쪽 정보는 절대 담지 않습니다.
+create or replace function public.verify_guest_game_link(p_token text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $fn$
+declare
+  v_link      private.guest_game_links;
+  v_remaining integer;
+begin
+  if p_token is null or char_length(btrim(p_token)) < 16 or char_length(p_token) > 64 then
+    return jsonb_build_object('valid', false, 'reason', 'invalid');
+  end if;
+
+  select * into v_link
+    from private.guest_game_links g
+   where g.token = btrim(p_token);
+
+  if not found then
+    return jsonb_build_object('valid', false, 'reason', 'invalid');
+  end if;
+
+  if v_link.revoked then
+    return jsonb_build_object('valid', false, 'reason', 'revoked');
+  end if;
+
+  v_remaining := ceil(extract(epoch from (v_link.expires_at - now())))::integer;
+
+  if v_link.expires_at <= now() then
+    return jsonb_build_object('valid', false, 'reason', 'expired');
+  end if;
+
+  return jsonb_build_object(
+    'valid', true,
+    'game', v_link.game,
+    'expires_at', v_link.expires_at,
+    'remaining_seconds', greatest(v_remaining, 1)
+  );
+end;
+$fn$;
+
+comment on function public.verify_guest_game_link(text) is
+  '체험 링크 확인 — 유효하면 { valid:true, game, expires_at, remaining_seconds }, 아니면 { valid:false, reason }. 문파 자료는 돌려주지 않습니다.';
+
+
+-- 링크 발급 — 문주·운영진만 · 기간 1분 ~ 10080분(7일)
+create or replace function public.create_guest_game_link(
+  p_session text,
+  p_game    text,
+  p_minutes integer
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $fn$
+declare
+  v_actor   private.session_actor := private.current_member(p_session);
+  v_game    text := lower(btrim(coalesce(p_game, '')));
+  v_minutes integer := coalesce(p_minutes, 0);
+  v_link    private.guest_game_links;
+  v_token   text;
+  v_try     integer := 0;
+begin
+  if v_actor.member_role not in ('admin', 'officer') then
+    raise exception '문주·운영진만 체험 링크를 만들 수 있어요.' using errcode = '42501';
+  end if;
+
+  if v_game not in ('all', 'gyeongdan', 'sinsupang', 'sinsumoa') then
+    raise exception '게임을 골라 주세요. (all · gyeongdan · sinsupang · sinsumoa)' using errcode = '22023';
+  end if;
+
+  if v_minutes < 1 or v_minutes > 10080 then
+    raise exception '기간은 1분에서 10080분(7일) 사이로 정해 주세요.' using errcode = '22023';
+  end if;
+
+  loop
+    v_try := v_try + 1;
+    v_token := private.guest_link_token();
+    begin
+      insert into private.guest_game_links (token, game, expires_at, created_by, created_at)
+      values (v_token, v_game, now() + make_interval(mins => v_minutes), v_actor.member_id,
+              clock_timestamp())
+      returning * into v_link;
+      exit;
+    exception when unique_violation then
+      if v_try >= 5 then
+        raise exception '체험 링크 주소를 만들지 못했어요. 잠시 뒤 다시 시도해 주세요.' using errcode = '22023';
+      end if;
+    end;
+  end loop;
+
+  return jsonb_build_object(
+    'ok', true,
+    'id', v_link.id,
+    'token', v_link.token,
+    'game', v_link.game,
+    'expires_at', v_link.expires_at,
+    'minutes', v_minutes
+  );
+end;
+$fn$;
+
+comment on function public.create_guest_game_link(text, text, integer) is
+  '체험 링크 발급 — 문주·운영진만, 1~10080분. { ok, id, token, game, expires_at, minutes } 를 돌려줍니다.';
+
+
+-- 링크 목록 — 문주·운영진만 · 최근 발급 순
+create or replace function public.list_guest_game_links(
+  p_session text,
+  p_limit   integer default 20
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $fn$
+declare
+  v_actor  private.session_actor := private.current_member(p_session);
+  v_limit  integer := least(greatest(coalesce(p_limit, 20), 1), 50);
+  v_result jsonb;
+begin
+  if v_actor.member_role not in ('admin', 'officer') then
+    raise exception '문주·운영진만 체험 링크를 볼 수 있어요.' using errcode = '42501';
+  end if;
+
+  select coalesce(jsonb_agg(g.item order by g.created_at desc), '[]'::jsonb)
+    into v_result
+    from (
+      select jsonb_build_object(
+               'id', l.id,
+               'token', l.token,
+               'game', l.game,
+               'expires_at', l.expires_at,
+               'created_at', l.created_at,
+               'revoked', l.revoked,
+               'active', (not l.revoked and l.expires_at > now()),
+               'remaining_seconds',
+                 case when not l.revoked and l.expires_at > now()
+                      then ceil(extract(epoch from (l.expires_at - now())))::integer
+                      else 0 end
+             ) as item,
+             l.created_at
+        from private.guest_game_links l
+       order by l.created_at desc
+       limit v_limit
+    ) g;
+
+  return v_result;
+end;
+$fn$;
+
+comment on function public.list_guest_game_links(text, integer) is
+  '체험 링크 목록 — 문주·운영진만, 새것부터 최대 50개. active · remaining_seconds 포함.';
+
+
+-- 링크 만료시키기 — 문주·운영진만 · 기간이 남아 있어도 바로 못 쓰게
+create or replace function public.revoke_guest_game_link(
+  p_session text,
+  p_id      uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $fn$
+declare
+  v_actor   private.session_actor := private.current_member(p_session);
+  v_link    private.guest_game_links;
+  v_already boolean;
+begin
+  if v_actor.member_role not in ('admin', 'officer') then
+    raise exception '문주·운영진만 체험 링크를 만료시킬 수 있어요.' using errcode = '42501';
+  end if;
+
+  select * into v_link
+    from private.guest_game_links l
+   where l.id = p_id
+   for update;
+
+  if not found then
+    raise exception '체험 링크를 찾지 못했어요. 새로고침한 뒤 다시 시도해 주세요.' using errcode = '22023';
+  end if;
+
+  v_already := v_link.revoked;
+
+  if not v_already then
+    update private.guest_game_links
+       set revoked = true
+     where id = p_id;
+  end if;
+
+  return jsonb_build_object('ok', true, 'id', p_id, 'revoked', true, 'already', v_already);
+end;
+$fn$;
+
+comment on function public.revoke_guest_game_link(text, uuid) is
+  '체험 링크 만료시키기 — 문주·운영진만. 기간이 남아 있어도 즉시 못 쓰게 만듭니다. { ok, id, revoked, already }.';
+
+
+-- 게스트 점수 올리기 — 체험 링크가 허용한 게임일 때만. 같은 닉네임은 최고 점수 한 줄
+create or replace function public.submit_guest_game_score(
+  p_token    text,
+  p_game     text,
+  p_nickname text,
+  p_score    integer,
+  p_meta     jsonb default '{}'::jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $fn$
+declare
+  v_link  private.guest_game_links;
+  v_game  text := lower(btrim(coalesce(p_game, '')));
+  v_nick  text := regexp_replace(btrim(coalesce(p_nickname, '')), '[[:cntrl:]]', '', 'g');
+  v_meta  jsonb := coalesce(p_meta, '{}'::jsonb);
+  v_prev  private.guest_game_scores;
+  v_best  integer;
+  v_new   boolean := false;
+  v_rank  integer;
+begin
+  v_link := private.guest_link_for_score(p_token);
+
+  if v_game not in ('gyeongdan', 'sinsupang', 'sinsumoa') then
+    raise exception '게임 이름이 올바르지 않아요.' using errcode = '22023';
+  end if;
+
+  if v_link.game <> 'all' and v_link.game <> v_game then
+    raise exception '이 체험 링크로는 그 게임을 할 수 없어요.' using errcode = '42501';
+  end if;
+
+  if char_length(v_nick) < 1 or char_length(v_nick) > 12 then
+    raise exception '이름은 1~12자로 적어 주세요.' using errcode = '22023';
+  end if;
+
+  if p_score is null or p_score < 0 or p_score > 100000000 then
+    raise exception '점수가 올바르지 않아요.' using errcode = '22023';
+  end if;
+
+  if jsonb_typeof(v_meta) <> 'object' or octet_length(v_meta::text) > 2000 then
+    raise exception '기록에 담을 값이 올바르지 않아요.' using errcode = '22023';
+  end if;
+
+  select * into v_prev
+    from private.guest_game_scores s
+   where s.game = v_game
+     and lower(s.nickname) = lower(v_nick);
+
+  if not found then
+    v_best := p_score;
+    v_new  := p_score > 0;
+    insert into private.guest_game_scores (game, nickname, score, meta)
+    values (v_game, v_nick, v_best, v_meta);
+  else
+    v_best := greatest(v_prev.score, p_score);
+    v_new  := p_score > v_prev.score;
+    if v_new then
+      update private.guest_game_scores
+         set score = v_best,
+             meta = v_meta,
+             created_at = clock_timestamp()
+       where id = v_prev.id;
+    end if;
+  end if;
+
+  select count(*) + 1
+    into v_rank
+    from private.guest_game_scores s
+   where s.game = v_game
+     and s.score > v_best;
+
+  /* 게스트 판이 끝없이 불어나지 않도록 — 한 게임 300줄까지만 남깁니다
+     (아주 낮은 점수의 옛 기록부터 정리, 문파 랭킹과는 무관) */
+  delete from private.guest_game_scores d
+   where d.game = v_game
+     and d.id not in (
+       select t.id from private.guest_game_scores t
+        where t.game = v_game
+        order by t.score desc, t.created_at asc
+        limit 300
+     );
+
+  return jsonb_build_object(
+    'ok', true,
+    'nickname', v_nick,
+    'score', v_best,
+    'best_score', v_best,
+    'is_new_best', v_new,
+    'rank', v_rank
+  );
+end;
+$fn$;
+
+comment on function public.submit_guest_game_score(text, text, text, integer, jsonb) is
+  '게스트 점수 올리기 — 유효한 체험 링크가 허용한 게임일 때만. 같은 닉네임은 최고 점수 한 줄. { ok, nickname, score, best_score, is_new_best, rank }.';
+
+
+-- 게스트 랭킹 — 유효한 체험 링크의 토큰일 때만, 그 게임의 게스트 기록만
+create or replace function public.list_guest_game_ranking(
+  p_token text,
+  p_game  text,
+  p_limit integer default 20
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $fn$
+declare
+  v_link   private.guest_game_links;
+  v_game   text := lower(btrim(coalesce(p_game, '')));
+  v_limit  integer := least(greatest(coalesce(p_limit, 20), 1), 50);
+  v_result jsonb;
+begin
+  v_link := private.guest_link_for_score(p_token);
+
+  if v_game not in ('gyeongdan', 'sinsupang', 'sinsumoa') then
+    raise exception '게임 이름이 올바르지 않아요.' using errcode = '22023';
+  end if;
+
+  if v_link.game <> 'all' and v_link.game <> v_game then
+    raise exception '이 체험 링크로는 그 게임을 할 수 없어요.' using errcode = '42501';
+  end if;
+
+  select coalesce(jsonb_agg(t.item order by t.rank_no, t.nickname), '[]'::jsonb)
+    into v_result
+    from (
+      select jsonb_build_object(
+               'rank', s.rank_no,
+               'nickname', s.nickname,
+               'score', s.score,
+               'meta', s.meta,
+               'created_at', s.created_at
+             ) as item,
+             s.rank_no,
+             s.nickname
+        from (
+          select g.nickname,
+                 g.score,
+                 g.meta,
+                 g.created_at,
+                 rank() over (order by g.score desc, g.created_at asc) as rank_no
+            from private.guest_game_scores g
+           where g.game = v_game
+        ) s
+       where s.rank_no <= v_limit
+       order by s.rank_no, s.nickname
+    ) t;
+
+  return coalesce(v_result, '[]'::jsonb);
+end;
+$fn$;
+
+comment on function public.list_guest_game_ranking(text, text, integer) is
+  '게스트 랭킹 — 유효한 체험 링크의 토큰만. 그 게임의 게스트 기록 상위(점수 높은 순, 같으면 먼저 올린 사람). 문파원 정보 없음.';
+
+
+-- ===========================================================================
 -- 11. 초기 문주(관리자) 확보
 --    · 첫 가입자 규칙: 문주가 한 명도 없을 때 register_member 로 들어온 첫 사람이
 --      자동으로 admin 이 됩니다. (배포 직후 본인이 먼저 가입하세요.)
@@ -3469,6 +3963,8 @@ begin
          'submit_gyeongdan_score', 'list_gyeongdan_ranking',
          'submit_sinsupang_score', 'list_sinsupang_ranking',
          'submit_sinsumoa_score', 'list_sinsumoa_ranking',
+         'verify_guest_game_link', 'create_guest_game_link', 'list_guest_game_links',
+         'revoke_guest_game_link', 'submit_guest_game_score', 'list_guest_game_ranking',
          'bootstrap_admin'
        )
   loop
@@ -3576,9 +4072,18 @@ where not exists (select 1 from public.chat_messages c);
 -- drop function if exists private.pin_hash(text);
 -- drop function if exists private.token_hash(text);
 -- drop function if exists private.today_kst();
+-- drop function if exists public.list_guest_game_ranking(text, text, integer);
+-- drop function if exists public.submit_guest_game_score(text, text, text, integer, jsonb);
+-- drop function if exists public.revoke_guest_game_link(text, uuid);
+-- drop function if exists public.list_guest_game_links(text, integer);
+-- drop function if exists public.create_guest_game_link(text, text, integer);
+-- drop function if exists public.verify_guest_game_link(text);
+-- drop function if exists private.guest_link_for_score(text);
+-- drop function if exists private.guest_link_token();
 -- drop table if exists private.admin_audit, private.album_likes, private.album_images,
 --   private.album_posts, private.coupons, public.member_absences, public.events, public.notices,
 --   public.chat_messages, private.attendance, private.member_sessions,
+--   private.guest_game_scores, private.guest_game_links,
 --   private.members, private.clan_settings cascade;
 -- drop type if exists private.session_actor;
 -- drop schema if exists private cascade;

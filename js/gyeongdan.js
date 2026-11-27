@@ -248,7 +248,12 @@
      =================================================================== */
 
   var S = null;          // 현재 판
-  var opts = {};         // { live, nickname, best, submitScore, listRanking, onToast, avatarHtml }
+  var opts = {};         // { live, nickname, best, submitScore, listRanking, onToast, avatarHtml, guestMode, submitGuestScore, listGuestRanking }
+
+  /* 🔗 체험 링크(?guest=TOKEN)로 연 판 — 문파 랭킹 대신 '체험 랭킹'(게스트 전용)을 씁니다.
+     문파원 닉네임·아바타·직위는 이 화면에 절대 나오지 않습니다. */
+  function guestRank() { return !!opts.guestMode && typeof opts.submitGuestScore === 'function'; }
+  function rankWord() { return guestRank() ? '체험 랭킹' : '문파 랭킹'; }
   var raf = 0;
   var lastT = 0;
   var acc = 0;
@@ -2150,8 +2155,9 @@
   var submitState = { pending: false, last: null, failed: '' };
 
   function submitScore() {
-    if (!opts.live || typeof opts.submitScore !== 'function') { return; }
     if (!S || S.score <= 0) { return; }
+    if (guestRank()) { submitGuestScore(); return; }
+    if (!opts.live || typeof opts.submitScore !== 'function') { return; }
     submitState.pending = true;
     var payload = { score: Math.floor(S.score), tier: S.maxTier };
     opts.submitScore(payload.score, payload.tier).then(function (res) {
@@ -2396,10 +2402,11 @@
       '<h3 class="gd-over__title">' + (isBest ? '새 최고 기록! 🍡' : '한 판 마쳤어요') + '</h3>' +
       '<p class="gd-over__score"><strong>' + fmtNum(S.score) + '</strong><span>점</span></p>' +
       '<p class="gd-over__meta">최고 ' + fmtNum(S.best) + '점 · 가장 높은 경단 <b>' + TIERS[S.maxTier].name + '</b></p>' +
-      '<p class="gd-over__result" id="gd-over-result">' + (opts.live ? '문파 랭킹에 기록하는 중…' : '이 기기에 최고 점수를 남겼어요') + '</p>' +
+      '<p class="gd-over__result" id="gd-over-result">' + (guestRank() ? '체험 랭킹에 기록하는 중…'
+        : opts.live ? '문파 랭킹에 기록하는 중…' : '이 기기에 최고 점수를 남겼어요') + '</p>' +
       '<div class="gd-over__row">' +
       '<button type="button" class="btn btn--primary btn--small" id="gd-over-retry">다시하기</button>' +
-      '<button type="button" class="btn btn--ghost btn--small" id="gd-over-rank">🏆 문파 랭킹</button>' +
+      '<button type="button" class="btn btn--ghost btn--small" id="gd-over-rank">🏆 ' + rankWord() + '</button>' +
       '<button type="button" class="btn btn--ghost btn--small" id="gd-over-close">닫기</button>' +
       '</div></div>';
     el.over.hidden = false;
@@ -2420,13 +2427,15 @@
     if (!box) { return; }
     if (res && res.rank) {
       box.innerHTML = (res.is_new_best ? '🎉 <b>새 최고 기록</b> · ' : '') +
-        '문파 랭킹 <b>' + res.rank + '위</b> · 문파 최고 ' + fmtNum(res.best_score) + '점';
+        rankWord() + ' <b>' + res.rank + '위</b> · 최고 ' + fmtNum(res.best_score) + '점';
     } else if (submitState.failed === 'pending') {
       box.textContent = '서버에 랭킹이 아직 준비되지 않았어요 · 이 기기에 최고 점수를 남겼어요';
     } else if (submitState.failed === 'error') {
-      box.textContent = '점수를 문파에 보내지 못했어요 · 이 기기에는 남겼어요';
-    } else if (opts.live) {
-      box.textContent = '문파 랭킹에 기록했어요';
+      box.textContent = (guestRank() && submitState.message)
+        ? submitState.message
+        : '점수를 문파에 보내지 못했어요 · 이 기기에는 남겼어요';
+    } else if (opts.live || guestRank()) {
+      box.textContent = rankWord() + '에 기록했어요';
     }
   }
 
@@ -2498,8 +2507,10 @@
   /* ---------- 랭킹 ---------- */
 
   function rankingMarkup() {
-    var html = '<div class="gd-sheet__head"><h3>🏆 문파 랭킹</h3>' +
+    var html = '<div class="gd-sheet__head"><h3>🏆 ' + (guestRank() ? '체험 랭킹' : '문파 랭킹') + '</h3>' +
       '<button type="button" class="gd-sheet__close" data-sheet-close="1" aria-label="닫기">×</button></div>';
+
+    if (guestRank()) { return html + guestRankingBody(); }
 
     if (!opts.live) {
       html += '<div class="gd-rank__empty">체험 모드예요.<br>이 기기의 최고 점수 <b>' + fmtNum(localBest()) +
@@ -2547,6 +2558,64 @@
       html += '<p class="gd-sheet__note">내 기록이 아직 없어요 · 한 판 마치면 랭킹에 올라요</p>';
     }
     return html;
+  }
+
+  /* 🔗 게스트 전용 랭킹 — 이 체험 링크로 놀러 온 사람들만. 문파 랭킹과 별개입니다. */
+  function guestRankingBody() {
+    var html = '<p class="gd-sheet__note gd-sheet__note--guest">체험 링크로 놀러 온 분들만의 랭킹이에요 · <b>연못 문파 랭킹과는 따로</b> 쌓여요</p>';
+    if (ranking.status === 'loading' || ranking.status === 'idle') {
+      return html + '<div class="gd-rank__empty">체험 랭킹을 불러오는 중이에요…</div>';
+    }
+    if (ranking.status === 'error') {
+      return html + '<div class="gd-rank__empty">체험 랭킹을 불러오지 못했어요.<br>' + escapeHtml(ranking.message || '') + '</div>';
+    }
+    if (!ranking.rows || !ranking.rows.length) {
+      return html + '<div class="gd-rank__empty">아직 올라온 기록이 없어요 · 첫 기록을 남겨 보세요!</div>';
+    }
+    var me = opts.nickname ? String(opts.nickname).toLowerCase() : '';
+    html += '<ol class="gd-rank">';
+    ranking.rows.forEach(function (row) {
+      var mine = me && String(row.nickname || '').toLowerCase() === me;
+      var tier = Number((row.meta || {}).tier);
+      var tierName = (tier >= 1 && tier <= LAST_TIER) ? TIERS[tier].name : '';
+      html += '<li class="gd-rank__row' + (mine ? ' is-mine' : '') + '">' +
+        '<span class="gd-rank__no">' + (row.rank || '-') + '</span>' +
+        '<span class="gd-rank__avatar gd-rank__avatar--initial">' + escapeHtml(String(row.nickname || '?').slice(0, 1)) + '</span>' +
+        '<span class="gd-rank__who"><b>' + escapeHtml(row.nickname || '') + '</b>' +
+        '<span class="gd-rank__role">체험' + (tierName ? ' · ' + escapeHtml(tierName) : '') + '</span></span>' +
+        '<span class="gd-rank__score">' + fmtNum(row.score) + '</span>' +
+        '</li>';
+    });
+    html += '</ol>';
+    if (me && !ranking.rows.some(function (r) { return String(r.nickname || '').toLowerCase() === me; })) {
+      html += '<p class="gd-sheet__note">내 기록이 아직 없어요 · 한 판 마치면 체험 랭킹에 올라요</p>';
+    }
+    return html;
+  }
+
+  /* 🔗 게스트 점수 — 체험 링크 토큰으로만 올라갑니다(문파 랭킹과 무관). */
+  function submitGuestScore() {
+    submitState.pending = true;
+    submitState.failed = '';
+    submitState.message = '';
+    opts.submitGuestScore(Math.floor(S.score), S.maxTier).then(function (res) {
+      submitState.pending = false;
+      submitState.last = res || null;
+      if (res && Number(res.best_score) > S.best) {
+        S.best = Number(res.best_score);
+        renderScore();
+      }
+      if (res && res.rank) {
+        setHint((res.is_new_best ? '🎉 새 최고 기록! ' : '') + '체험 랭킹 ' + res.rank + '위예요');
+      }
+      renderOverResult(res);
+    }, function (err) {
+      submitState.pending = false;
+      submitState.failed = 'error';
+      submitState.message = (err && err.message) || '';
+      setHint(submitState.message || '체험 랭킹에 올리지 못했어요');
+      renderOverResult(null);
+    });
   }
 
   function escapeHtml(s) {
@@ -2626,7 +2695,9 @@
 
   /** 실제 문파 — 랭킹을 불러오고, 내 최고 점수도 함께 맞춥니다. */
   function loadRanking() {
-    if (!opts.live || typeof opts.listRanking !== 'function') {
+    var source = guestRank() ? (typeof opts.listGuestRanking === 'function' ? opts.listGuestRanking : null)
+                             : (opts.live && typeof opts.listRanking === 'function' ? opts.listRanking : null);
+    if (!source) {
       ranking.status = 'trial';
       return Promise.resolve(null);
     }
@@ -2637,16 +2708,17 @@
       var close = $('[data-sheet-close]', el.sheet);
       if (close) { close.addEventListener('click', closeSheet); }
     }
-    ranking.promise = opts.listRanking().then(function (rows) {
+    ranking.promise = source().then(function (rows) {
       ranking.status = 'ready';
       ranking.rows = Array.isArray(rows) ? rows : [];
       ranking.message = '';
       var mine = null;
       ranking.rows.forEach(function (r) {
-        if (opts.nickname && r.nickname === opts.nickname) { mine = r; }
+        if (opts.nickname && String(r.nickname).toLowerCase() === String(opts.nickname).toLowerCase()) { mine = r; }
       });
-      if (mine && Number(mine.best_score) > (S ? S.best : 0)) {
-        if (S) { S.best = Number(mine.best_score); renderScore(); }
+      var mineScore = mine ? Number(mine.best_score || mine.score || 0) : 0;
+      if (mine && mineScore > (S ? S.best : 0)) {
+        if (S) { S.best = mineScore; renderScore(); }
       }
       if (el.sheet && el.sheet.getAttribute('data-kind') === 'rank' && !el.sheet.hidden) {
         el.sheet.innerHTML = rankingMarkup();
@@ -2751,11 +2823,12 @@
       opened = true;
     }
     openSheetReset();
+    if (el.rankBtn) { el.rankBtn.textContent = '🏆 ' + rankWord(); }
     el.root.hidden = false;
     document.body.classList.add('is-locked');
     ranking = { status: 'idle', rows: [], message: '' };
     startGame(true);
-    if (opts.live) { loadRanking(); }
+    if (opts.live || guestRank()) { loadRanking(); }
     window.setTimeout(function () { resize(); draw(); }, 30);
   }
 

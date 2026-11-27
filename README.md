@@ -36,6 +36,7 @@
 | `supabase/migration-gyeongdan.sql` | 이미 설치해 쓰는 DB용 **'🍡 경단만들기 문파 랭킹' 마이그레이션** — `private.gyeongdan_scores` 표와 `submit_gyeongdan_score` · `list_gyeongdan_ranking` (여러 번 실행해도 안전) |
 | `supabase/migration-sinsupang.sql` | 이미 설치해 쓰는 DB용 **'🐾 신수팡 문파 랭킹' 마이그레이션** — `private.sinsupang_scores` 표와 `submit_sinsupang_score` · `list_sinsupang_ranking` (여러 번 실행해도 안전) |
 | `supabase/migration-sinsumoa.sql` | 이미 설치해 쓰는 DB용 **'🫧 신수모아 문파 랭킹' 마이그레이션** — `private.sinsumoa_scores` 표와 `submit_sinsumoa_score` · `list_sinsumoa_ranking` (여러 번 실행해도 안전) |
+| `supabase/migration-guest-links.sql` | 이미 설치해 쓰는 DB용 **'🔗 기간제한 외부 체험 링크 + 게스트 전용 랭킹' 마이그레이션** — `private.guest_game_links`(링크) · `private.guest_game_scores`(게스트 랭킹) 표와 `verify_guest_game_link` · `create_guest_game_link` · `list_guest_game_links` · `revoke_guest_game_link` · `submit_guest_game_score` · `list_guest_game_ranking` (여러 번 실행해도 안전) |
 | `supabase/migration-dosul.sql` | 이미 설치해 쓰는 DB용 **'⚔️ 도술 계산기 문파 공유 조합' 마이그레이션** — `private.dosul_builds` 표와 `save_dosul_build` · `list_dosul_builds` · `delete_dosul_build` (여러 번 실행해도 안전) |
 | `manifest.json` | PWA 설치 정보(이름, 아이콘, 테마 색) |
 | `sw.js` | 오프라인에서도 열리도록 파일을 기억하는 서비스 워커 |
@@ -83,6 +84,9 @@ var SUPABASE_KEY = 'sb_publishable_…';   // 공개용(publishable) 키 — 브
      (문파원마다 최고 점수 한 줄을 담는 표 + 점수 제출 · 랭킹 조회 RPC. 실행 전에도 게임은 이 기기 최고 점수로 그대로 돌아갑니다)
    - **🫧 신수모아 문파 랭킹**은 `supabase/migration-sinsumoa.sql` 하나로 준비됩니다.
      (신수팡과 같은 구조 — 문파원마다 최고 점수 한 줄 + 점수 제출 · 랭킹 조회 RPC. 실행 전에도 게임은 이 기기 최고 점수로 그대로 돌아갑니다)
+   - **🔗 기간제한 외부 체험 링크 + 게스트 전용 랭킹**은 `supabase/migration-guest-links.sql` 하나로 준비됩니다.
+     (문파원이 아닌 분에게 미니게임만 보여 주는 `?guest=토큰` 링크와, 그 사람들만의 랭킹판. 실행 전에는 내정보의 체험 링크 카드가
+     '아직 준비되지 않았어요'라고 알려 주고, 문파 기능은 그대로 돕니다)
 5. **문파원 초대** — 바뀐 초대 코드를 알려 주면, 문파원은 **가입하기**에서 닉네임 · PIN · 초대 코드로 들어옵니다.
    - 로그인은 **닉네임 + PIN** 만 씁니다(초대 코드는 가입할 때만).
    - PIN 5회 오입력 시 잠시 잠깁니다(최대 5분).
@@ -101,6 +105,26 @@ var SUPABASE_KEY = 'sb_publishable_…';   // 공개용(publishable) 키 — 브
 | 문파채팅 | 각 메시지의 `지우기` (본문이 즉시 비워져 모두에게서 사라짐) |
 | 문파앨범 | 각 사진의 `×` 삭제 (본인 사진도 같은 버튼으로 삭제) |
 | 내정보 | `문주 도구` — 초대 코드 확인 · 복사 · 변경, 문파원/내보냄/차단 수 |
+
+## 🔗 외부 체험 링크 (문주 · 운영진)
+
+문파원이 아닌 분에게 **미니게임만** 보여 주는 기간제한 링크입니다. 내정보 → **🔗 외부 체험 링크**에서 만듭니다.
+(문주·운영진에게만 보이고, 체험 모드에서는 이 기기에서만 연습할 수 있습니다)
+
+| 항목 | 내용 |
+| --- | --- |
+| 주소 | `https://duck-mui1.github.io/yeonmot-munpa/?guest=토큰` (토큰은 32자 난수 · 짐작 불가) |
+| 게임 | `전체 3종` / `신수모아` / `신수팡` / `경단만들기` 중 고르기 |
+| 기간 | `10분`(기본) · `30분` · `1시간` · `24시간` — 서버는 1분~7일까지 받습니다 |
+| 링크 목록 | 게임 이름 · 남은 시간(또는 만료됨) · `링크 복사` · `만료시키기` |
+| 만료·회수 | 기간이 지나거나 `만료시키기`를 누르면 새 접속은 안내 화면만 봅니다 |
+
+- **게스트에게는 문파 자료가 하나도 보이지 않습니다.** 로그인 · 공지 · 채팅 · 앨범 · 문파원 · 문파 랭킹 · 초대 코드를
+  화면에 그리지 않고, 서버로도 묻지 않습니다(링크 확인 한 번만). 표는 `private` 스키마 + RLS 로 잠그고 RPC 로만 씁니다.
+- **게스트 전용 랭킹**(`🏆 체험 랭킹`)은 문파 랭킹과 완전히 따로 쌓입니다 — 게스트가 적은 이름(1~12자, 이 기기에 저장)과
+  점수만 남고, 문파원 닉네임 · 아바타 · 직위는 섞이지 않습니다.
+- **기간이 지나도 하던 놀이는 끊기지 않습니다.** 이미 열어 둔 화면은 타이머 글자만 '체험 시간이 끝났어요'로 바뀌고,
+  새로 열거나 새로고침할 때 만료 안내가 뜹니다. (한 판을 마칠 수 있게 점수 · 랭킹 제출만 만료 뒤 10분 여유)
 
 ## 프로필 그림
 

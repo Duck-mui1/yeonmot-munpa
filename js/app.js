@@ -785,6 +785,14 @@
      ============================================================ */
   function init() {
     buildFireflies();
+
+    /* 🔗 외부 체험 링크(?guest=TOKEN) — 문파 자료를 하나도 불러오지 않고 체험 화면만 그립니다. */
+    var guestToken = guestTokenFromUrl();
+    if (guestToken) {
+      startGuest(guestToken);
+      return;
+    }
+
     $('#auth-art').innerHTML = ART.hero();
     $('#auth-mark').innerHTML = ART.mark(40);
     $('#topbar-mark').innerHTML = ART.mark(32);
@@ -3964,6 +3972,9 @@
         '</div>';
     }
 
+    /* 🔗 외부 체험 링크 — 문주·운영진(그리고 체험 모드)만 */
+    if (canManageGuestLinks()) { html += guestLinksCardHtml(); }
+
     html += '<div class="menu-card" id="install-card">' + installCardHtml() + '</div>';
 
     html += '<div class="menu-card">' +
@@ -4008,6 +4019,8 @@
 
     var backupRow = $('#admin-backup-row');
     if (backupRow) { backupRow.addEventListener('click', saveBackup); }
+
+    if (canManageGuestLinks()) { bindGuestLinksCard(); }
 
     bindAvatarCard();
 
@@ -4568,6 +4581,640 @@
       }
     });
     bindGameMenu();
+  }
+
+  /* ============================================================
+     🔗 외부 체험 링크 (게스트 · ?guest=TOKEN)
+     ------------------------------------------------------------
+     · 링크를 연 사람에게는 문파 화면을 아예 그리지 않습니다.
+       (로그인·공지·채팅·앨범·문파원·문파 랭킹·초대 코드 모두 보이지 않고, 서버로도 묻지 않습니다)
+     · 미니게임 3종과 '게스트 전용 랭킹'만 보여 줍니다.
+     · 유효기간이 지나도 하던 놀이를 강제로 끊지 않습니다 — 타이머 글자만 '체험 시간이 끝났어요'로
+       바뀌고, 새로 열거나 새로고침하면 그때 만료 안내가 뜹니다.
+     ============================================================ */
+
+  var GUEST_GAMES = [
+    { key: 'gyeongdan', mark: '🍡', name: '경단만들기', desc: '경단을 쌓아 합치는 11단계' },
+    { key: 'sinsupang', mark: '🐾', name: '신수팡', desc: '세 개를 맞추는 60초 퍼즐' },
+    { key: 'sinsumoa', mark: '🫧', name: '신수모아', desc: '네 개 이상 모아 터뜨리는 60초 퍼즐' }
+  ];
+  var GUEST_GAME_LABEL = { all: '전체 3종', gyeongdan: '경단만들기', sinsupang: '신수팡', sinsumoa: '신수모아' };
+  var GUEST_MINUTES = [10, 30, 60, 1440];
+  var GUEST_MINUTE_LABEL = { 10: '10분', 30: '30분', 60: '1시간', 1440: '24시간' };
+
+  var guest = null;                       /* { token, game, expiresAt, demo, timer } */
+  var glPick = { game: 'all', minutes: 10 };
+  var glTickTimer = null;
+  var GUEST_NICK_DEFAULT = '';
+
+  function guestTokenFromUrl() {
+    var search = String(window.location.search || '');
+    if (search.indexOf('guest=') === -1) { return null; }
+    var token = null;
+    try { token = new URLSearchParams(search).get('guest'); } catch (e) { token = null; }
+    if (!token) { return null; }
+    token = String(token).trim();
+    return /^[A-Za-z0-9_-]{16,64}$/.test(token) ? token : null;
+  }
+
+  function guestLinkUrl(token) {
+    var base = String(window.location.href || '').split('#')[0].split('?')[0];
+    return base + '?guest=' + encodeURIComponent(token);
+  }
+
+  function formatGuestRemain(ms) {
+    var sec = Math.max(0, Math.ceil(ms / 1000));
+    var day = Math.floor(sec / 86400); sec -= day * 86400;
+    var hour = Math.floor(sec / 3600); sec -= hour * 3600;
+    var min = Math.floor(sec / 60); var rest = sec - min * 60;
+    if (day > 0) { return day + '일 ' + hour + '시간'; }
+    if (hour > 0) { return hour + '시간 ' + min + '분'; }
+    if (min > 0) { return rest > 0 ? min + '분 ' + pad(rest) + '초' : min + '분'; }
+    return rest + '초';
+  }
+
+  /* ---------- 체험 모드에서 만든 '연습용' 링크 (이 기기에만) ---------- */
+  function demoGuestLinks() {
+    var list = store.get('guestLinks', null);
+    return Array.isArray(list) ? list : [];
+  }
+  function saveDemoGuestLinks(list) { store.set('guestLinks', list); }
+  function demoGuestFind(token) {
+    var found = null;
+    demoGuestLinks().forEach(function (row) {
+      if (row && row.token === token) { found = row; }
+    });
+    return found || null;
+  }
+  function demoToken() {
+    var bytes = new Uint8Array(16);
+    if (window.crypto && typeof window.crypto.getRandomValues === 'function') {
+      window.crypto.getRandomValues(bytes);
+    } else {
+      for (var i = 0; i < 16; i++) { bytes[i] = Math.floor(Math.random() * 256); }
+    }
+    return Array.prototype.map.call(bytes, function (b) {
+      return ('0' + b.toString(16)).slice(-2);
+    }).join('');
+  }
+
+  /* ---------- 게스트 이름 (게스트 랭킹에 올릴 이름 · 이 기기에만) ---------- */
+  function guestNickname() {
+    var nick = store.get('guestNick', GUEST_NICK_DEFAULT);
+    return String(nick || '').trim().slice(0, 12);
+  }
+  function setGuestNickname(nick) {
+    store.set('guestNick', String(nick || '').trim().slice(0, 12));
+  }
+
+  function askGuestNickname() {
+    return new Promise(function (resolve) {
+      openModal(modalTitle('체험 랭킹에 올릴 이름') +
+        '<p class="lightbox__meta">1~12자 · 이 이름으로 <b>게스트 랭킹</b>에 올라요. 연못 문파 랭킹과는 따로 쌓여요.</p>' +
+        '<label class="field" style="margin-top:12px"><span class="field__label">이름</span>' +
+        '<input class="field__input" id="gl-ask-nick" type="text" maxlength="12" placeholder="예: 연꽃손님" enterkeyhint="done"></label>' +
+        '<div class="lightbox__actions">' +
+        '<button type="button" class="btn btn--primary" id="gl-ask-ok">이 이름으로 올리기</button>' +
+        '<button type="button" class="btn btn--ghost" id="gl-ask-cancel">그만두기</button>' +
+        '</div>');
+      var input = $('#gl-ask-nick');
+      var finish = function (value) {
+        closeModal();
+        if (value) {
+          setGuestNickname(value);
+          var shown = $('#guest-nick');
+          if (shown) { shown.value = value; }
+        }
+        resolve(value);
+      };
+      var ok = $('#gl-ask-ok');
+      var cancel = $('#gl-ask-cancel');
+      if (ok) {
+        ok.addEventListener('click', function () {
+          var value = String((input && input.value) || '').trim().slice(0, 12);
+          if (!value) { if (input) { input.focus(); } return; }
+          finish(value);
+        });
+      }
+      if (cancel) { cancel.addEventListener('click', function () { finish(''); }); }
+      if (input) {
+        input.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter') { e.preventDefault(); if (ok) { ok.click(); } }
+        });
+        window.setTimeout(function () { input.focus(); }, 60);
+      }
+    });
+  }
+
+  /* ---------- 게스트 점수 · 게스트 랭킹 ---------- */
+  function guestMetaOf(gameKey, extra) {
+    if (typeof extra === 'number') {
+      return gameKey === 'gyeongdan' ? { tier: extra } : { combo: extra };
+    }
+    return (extra && typeof extra === 'object') ? extra : {};
+  }
+
+  function demoGuestScores(gameKey) {
+    var all = store.get('guestScores', null) || {};
+    return Array.isArray(all[gameKey]) ? all[gameKey] : [];
+  }
+  function demoGuestSubmit(gameKey, nick, score, meta) {
+    var all = store.get('guestScores', null) || {};
+    var rows = Array.isArray(all[gameKey]) ? all[gameKey] : [];
+    var mine = null;
+    rows.forEach(function (row) { if (row.nickname.toLowerCase() === nick.toLowerCase()) { mine = row; } });
+    var isNew = false;
+    if (!mine) {
+      rows.push({ nickname: nick, score: score, meta: meta, at: Date.now() });
+      isNew = score > 0;
+    } else if (score > mine.score) {
+      mine.score = score; mine.meta = meta; mine.at = Date.now(); isNew = true;
+    }
+    all[gameKey] = rows;
+    store.set('guestScores', all);
+    var best = 0;
+    rows.forEach(function (row) { if (row.nickname.toLowerCase() === nick.toLowerCase()) { best = row.score; } });
+    var rank = 1;
+    rows.forEach(function (row) { if (row.score > best) { rank += 1; } });
+    return { ok: true, nickname: nick, score: best, best_score: best, is_new_best: isNew, rank: rank };
+  }
+  function demoGuestRanking(gameKey) {
+    var rows = demoGuestScores(gameKey).slice();
+    rows.sort(function (a, b) {
+      if (b.score !== a.score) { return b.score - a.score; }
+      return (a.at || 0) - (b.at || 0);
+    });
+    return rows.slice(0, 20).map(function (row, index) {
+      return { rank: index + 1, nickname: row.nickname, score: row.score, meta: row.meta || {}, created_at: new Date(row.at || Date.now()).toISOString() };
+    });
+  }
+
+  function guestSubmitScore(gameKey, score, extra) {
+    if (!guest || !guest.token) { return Promise.reject(new Error('체험 링크가 닫혔어요. 새 링크를 받아 주세요.')); }
+    var send = function (nick) {
+      if (!nick) { return Promise.reject(new Error('이름을 적지 않아 랭킹에 올리지 않았어요.')); }
+      var meta = guestMetaOf(gameKey, extra);
+      if (guest.demo) { return Promise.resolve(demoGuestSubmit(gameKey, nick, Math.floor(score), meta)); }
+      return DB.guest.submitScore(guest.token, gameKey, nick, Math.floor(score), meta).then(function (res) {
+        return res || null;
+      });
+    };
+    var nick = guestNickname();
+    return nick ? send(nick) : askGuestNickname().then(send);
+  }
+
+  function guestRanking(gameKey) {
+    if (!guest || !guest.token) { return Promise.reject(new Error('체험 링크가 닫혔어요. 새 링크를 받아 주세요.')); }
+    if (guest.demo) { return Promise.resolve(demoGuestRanking(gameKey)); }
+    return DB.guest.ranking(guest.token, gameKey, 20).then(function (rows) {
+      return Array.isArray(rows) ? rows : [];
+    });
+  }
+
+  /* ---------- 게스트 화면 ---------- */
+  function showGuestView() {
+    $('#auth-view').hidden = true;
+    $('#main-view').hidden = true;
+    var view = $('#guest-view');
+    if (view) { view.hidden = false; }
+  }
+
+  function renderGuestLoading() {
+    var host = $('#guest-body');
+    if (!host) { return; }
+    host.innerHTML = '<div class="guest__card guest__card--loading">' +
+      '<div class="guest__mark">' + ART.mark(44) + '</div>' +
+      '<p class="guest__loading">체험 링크를 확인하는 중이에요…</p></div>';
+  }
+
+  function renderGuestClosed(reason) {
+    var host = $('#guest-body');
+    if (!host) { return; }
+    var hint = {
+      expired: '링크를 보내 준 분께 새 링크를 부탁해 주세요.',
+      revoked: '이 링크는 더 이상 쓸 수 없어요 · 새 링크를 부탁해 주세요.',
+      invalid: '주소가 잘못되었거나 지워진 링크예요.',
+      error: '연결을 확인한 뒤 이 주소로 다시 열어 주세요.'
+    }[reason] || '주소가 잘못되었거나 지워진 링크예요.';
+    host.innerHTML = '<div class="guest__card guest__card--closed">' +
+      '<div class="guest__mark">' + ART.mark(44) + '</div>' +
+      '<p class="kicker">도깨비의 세계</p>' +
+      '<h1 class="guest__title">체험 링크를 열 수 없어요</h1>' +
+      '<p class="guest__closed-line">이 체험 링크는 기간이 만료되었거나<br>사용할 수 없어요.</p>' +
+      '<p class="guest__closed-hint">' + hint + '</p>' +
+      '</div>';
+  }
+
+  function guestGameCardsHtml(allowed) {
+    var keys = allowed === 'all' ? GUEST_GAMES.map(function (g) { return g.key; }) : [allowed];
+    var solo = keys.length === 1;
+    return GUEST_GAMES.filter(function (g) { return keys.indexOf(g.key) !== -1; }).map(function (g) {
+      return '<button type="button" class="guest-game' + (solo ? ' guest-game--solo' : '') + '" data-guest-game="' + g.key + '">' +
+        '<span class="guest-game__mark" aria-hidden="true">' + g.mark + '</span>' +
+        '<span class="guest-game__body"><b>' + esc(g.name) + '</b><em>' + esc(g.desc) + '</em></span>' +
+        '<span class="guest-game__play">' + (solo ? '바로 시작' : '시작') + '</span>' +
+        '</button>';
+    }).join('');
+  }
+
+  function renderGuestHome() {
+    var host = $('#guest-body');
+    if (!host || !guest) { return; }
+    var nick = guestNickname();
+    host.innerHTML = '<div class="guest__card">' +
+      '<div class="guest__mark">' + ART.mark(44) + '</div>' +
+      '<p class="kicker">도깨비의 세계</p>' +
+      '<h1 class="guest__title">연못 미니게임 체험</h1>' +
+      '<p class="guest__sub">문파원이 아닌 분께 잠깐 열어 둔 놀이터예요</p>' +
+      '<div class="guest__timer" id="guest-timer" role="timer" aria-live="off">' +
+      '<span class="guest__timer-dot" aria-hidden="true"></span>' +
+      '<span id="guest-remain">체험 시간을 확인하는 중이에요…</span></div>' +
+      '<div class="guest__nick">' +
+      '<label class="guest__nick-label" for="guest-nick">체험 랭킹에 올릴 이름</label>' +
+      '<input class="guest__nick-input" id="guest-nick" type="text" maxlength="12" placeholder="예: 연꽃손님" value="' + esc(nick) + '" autocomplete="off" enterkeyhint="done">' +
+      '<p class="guest__nick-hint">이 이름으로 <b>게스트 전용 랭킹</b>에 올라요 · 연못 문파 랭킹과는 따로 쌓여요</p>' +
+      '</div>' +
+      '<div class="guest__games">' + guestGameCardsHtml(guest.game) + '</div>' +
+      '<p class="guest__note">연못 문파의 공지·채팅·앨범·문파원·문파 랭킹은 보이지 않아요. 놀이 기록은 이 기기에만 임시로 남습니다.</p>' +
+      '</div>';
+
+    var input = $('#guest-nick');
+    if (input) {
+      input.addEventListener('change', function () { setGuestNickname(input.value); });
+      input.addEventListener('blur', function () { setGuestNickname(input.value); });
+    }
+    $$('#guest-body [data-guest-game]').forEach(function (btn) {
+      btn.addEventListener('click', function () { openGuestGame(btn.getAttribute('data-guest-game')); });
+    });
+    tickGuestTimer();
+  }
+
+  function tickGuestTimer() {
+    var label = $('#guest-remain');
+    if (!guest || !label) { return; }
+    var wrap = $('#guest-timer');
+    var left = guest.expiresAt - Date.now();
+    if (left > 0) {
+      label.textContent = '체험 종료까지 ' + formatGuestRemain(left) + ' 남음';
+      if (wrap) { wrap.classList.remove('is-over'); }
+    } else {
+      label.textContent = '체험 시간이 끝났어요 · 하던 놀이는 이어서 할 수 있어요';
+      if (wrap) { wrap.classList.add('is-over'); }
+    }
+  }
+
+  function startGuestTimer() {
+    if (guest && guest.timer) { window.clearInterval(guest.timer); }
+    if (!guest) { return; }
+    guest.timer = window.setInterval(tickGuestTimer, 1000);
+    tickGuestTimer();
+  }
+
+  function openGuestSession(token, game, remainMs, demo) {
+    guest = {
+      token: token,
+      game: (game === 'gyeongdan' || game === 'sinsupang' || game === 'sinsumoa') ? game : 'all',
+      expiresAt: Date.now() + Math.max(0, Number(remainMs) || 0),
+      demo: !!demo,
+      timer: null
+    };
+    renderGuestHome();
+    startGuestTimer();
+  }
+
+  function startGuest(token) {
+    S.mode = 'guest';
+    document.title = '연못 · 미니게임 체험';
+    showGuestView();
+    renderGuestLoading();
+
+    var demo = demoGuestFind(token);
+    var verified = (DB && DB.guest && typeof DB.guest.verify === 'function')
+      ? DB.guest.verify(token)
+      : Promise.reject(new Error('연결 없음'));
+
+    verified.then(function (res) {
+      if (res && res.valid === true) {
+        openGuestSession(token, res.game, Math.max(1, Number(res.remaining_seconds) || 1) * 1000, false);
+        return;
+      }
+      if (demo) {
+        openGuestSession(token, demo.game, Math.max(0, Number(demo.expiresAt) - Date.now()), true);
+        return;
+      }
+      renderGuestClosed(res && res.reason);
+    }, function () {
+      if (demo) {
+        openGuestSession(token, demo.game, Math.max(0, Number(demo.expiresAt) - Date.now()), true);
+        return;
+      }
+      renderGuestClosed('error');
+    });
+  }
+
+  function guestGameOptions(gameKey) {
+    return {
+      live: false,
+      guestMode: true,
+      nickname: guestNickname(),
+      onToast: toast,
+      avatarHtml: function () { return ''; },
+      submitGuestScore: function (score, extra) { return guestSubmitScore(gameKey, score, extra); },
+      listGuestRanking: function () { return guestRanking(gameKey); }
+    };
+  }
+
+  function openGuestGame(gameKey) {
+    if (!guest || !guest.token) { return; }
+    if (guest.game !== 'all' && guest.game !== gameKey) { return; }
+    if (gameKey === 'gyeongdan') {
+      var G = window.YM_GYEONGDAN;
+      if (!G) { toast('경단만들기를 불러오지 못했어요. 새로고침해 주세요.'); return; }
+      G.open(guestGameOptions('gyeongdan'));
+      return;
+    }
+    if (gameKey === 'sinsupang') {
+      var P = window.YM_SINSUPANG;
+      if (!P) { toast('신수팡을 불러오지 못했어요. 새로고침해 주세요.'); return; }
+      P.open(guestGameOptions('sinsupang'));
+      return;
+    }
+    if (gameKey === 'sinsumoa') {
+      var M = window.YM_SINSUMOA;
+      if (!M) { toast('신수모아를 불러오지 못했어요. 새로고침해 주세요.'); return; }
+      M.open(guestGameOptions('sinsumoa'));
+    }
+  }
+
+  /* ---------- 문주·운영진: 체험 링크 만들기 (내정보) ---------- */
+  function canManageGuestLinks() {
+    if (S.mode === 'guest') { return false; }
+    if (!isLive()) { return true; }   /* 체험 모드 — 이 기기에서만 연습 */
+    return !!(S.me && (S.me.role === 'admin' || S.me.role === 'officer'));
+  }
+
+  function guestLinksCardHtml() {
+    var demo = !isLive();
+    var gameChips = ['all', 'sinsumoa', 'sinsupang', 'gyeongdan'].map(function (key) {
+      var on = glPick.game === key;
+      return '<button type="button" class="chip' + (on ? ' is-active' : '') + '" data-gl-game="' + key +
+        '" aria-pressed="' + on + '">' + esc(GUEST_GAME_LABEL[key]) + '</button>';
+    }).join('');
+    var minChips = GUEST_MINUTES.map(function (min) {
+      var on = glPick.minutes === min;
+      return '<button type="button" class="chip' + (on ? ' is-active' : '') + '" data-gl-min="' + min +
+        '" aria-pressed="' + on + '">' + esc(GUEST_MINUTE_LABEL[min]) + '</button>';
+    }).join('');
+    return '<div class="menu-card guest-links" id="guest-links-card">' +
+      '<h3 class="menu-card__title">🔗 외부 체험 링크</h3>' +
+      '<div class="guest-links__body">' +
+      '<p class="guest-links__lead">문파원이 아닌 분께 <b>미니게임만</b> 보여 주는 기간제한 링크예요. 공지·채팅·앨범·문파원·문파 랭킹은 링크로도 보이지 않아요.</p>' +
+      '<div class="guest-links__field"><span class="guest-links__label">게임</span>' +
+      '<div class="guest-links__chips" id="gl-games" role="group" aria-label="체험할 게임">' + gameChips + '</div></div>' +
+      '<div class="guest-links__field"><span class="guest-links__label">기간</span>' +
+      '<div class="guest-links__chips" id="gl-minutes" role="group" aria-label="링크 유효기간">' + minChips + '</div></div>' +
+      '<button type="button" class="btn btn--primary btn--small guest-links__make" id="gl-make">링크 만들고 복사</button>' +
+      (demo ? '<p class="guest-links__demo">체험 모드예요 · 이 기기에서만 만들어 보고 열어 볼 수 있어요.</p>' : '') +
+      '<div class="guest-links__list" id="gl-list"><p class="guest-links__empty">아직 만든 링크가 없어요</p></div>' +
+      '</div></div>';
+  }
+
+  function updateGuestLinkBadges() {
+    $$('#gl-list .gl-item').forEach(function (item) {
+      var badge = $('[data-gl-remain]', item);
+      if (!badge || item.getAttribute('data-gl-dead') === '1') { return; }
+      var until = Number(item.getAttribute('data-until') || 0);
+      var left = until - Date.now();
+      if (left > 0) {
+        badge.textContent = formatGuestRemain(left) + ' 남음';
+        badge.classList.remove('is-over');
+        item.classList.remove('is-over');
+      } else {
+        badge.textContent = '만료됨';
+        badge.classList.add('is-over');
+        item.classList.add('is-over');
+        var stop = $('[data-gl-revoke]', item);
+        if (stop) { stop.remove(); }
+      }
+    });
+  }
+
+  function renderGuestLinkItems(rows) {
+    var box = $('#gl-list');
+    if (!box) { return; }
+    if (!rows.length) {
+      box.innerHTML = '<p class="guest-links__empty">아직 만든 링크가 없어요</p>';
+      return;
+    }
+    box.innerHTML = rows.map(function (row) {
+      var until = row.expires_at ? Date.parse(row.expires_at) : Number(row.expiresAt || 0);
+      if (!until || isNaN(until)) { until = 0; }
+      var dead = !!row.revoked || until <= Date.now();
+      var url = guestLinkUrl(row.token);
+      return '<div class="gl-item' + (dead ? ' is-over' : '') + '" data-gl-id="' + esc(row.id) +
+        '" data-gl-token="' + esc(row.token) + '" data-until="' + until + '"' +
+        (dead ? ' data-gl-dead="1"' : '') + '>' +
+        '<div class="gl-item__top"><b class="gl-item__game">' + esc(GUEST_GAME_LABEL[row.game] || row.game) + '</b>' +
+        '<span class="gl-item__badge' + (dead ? ' is-over' : '') + '" data-gl-remain>' +
+        (dead ? '만료됨' : '확인 중') + '</span></div>' +
+        '<p class="gl-item__url">' + esc(url) + '</p>' +
+        '<div class="gl-item__acts">' +
+        '<button type="button" class="btn btn--ghost btn--small" data-gl-copy>링크 복사</button>' +
+        (dead ? '' : '<button type="button" class="btn btn--quiet btn--small" data-gl-revoke>만료시키기</button>') +
+        '</div></div>';
+    }).join('');
+    updateGuestLinkBadges();
+  }
+
+  /** 체험 링크 기능이 아직 서버에 없을 때(PGRST202)는 실행할 SQL 파일을 알려 줍니다. */
+  function guestLinkErrorMessage(err) {
+    var code = String((err && err.code) || '');
+    var msg = String((err && err.message) || '');
+    if (code === 'PGRST202' || msg.indexOf('Could not find the function') !== -1
+        || msg.indexOf('이 기능이 아직') !== -1) {
+      return '서버에 체험 링크 기능이 아직 준비되지 않았어요 · supabase/migration-guest-links.sql 을 실행해 주세요.';
+    }
+    return errorMessage(err);
+  }
+
+  function refreshGuestLinkList() {
+    var box = $('#gl-list');
+    if (!box) { return; }
+    if (!isLive()) { renderGuestLinkItems(demoGuestLinks()); return; }
+    box.innerHTML = '<p class="guest-links__empty">링크를 불러오는 중이에요…</p>';
+    DB.guest.list().then(function (rows) {
+      renderGuestLinkItems(Array.isArray(rows) ? rows : []);
+    }, function (err) {
+      box.innerHTML = '<p class="guest-links__empty">' + esc(guestLinkErrorMessage(err)) + '</p>';
+    });
+  }
+
+  function copyText(text) {
+    return new Promise(function (resolve) {
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        navigator.clipboard.writeText(text).then(function () { resolve(true); }, function () { resolve(fallbackCopyText(text)); });
+        return;
+      }
+      resolve(fallbackCopyText(text));
+    });
+  }
+  function fallbackCopyText(text) {
+    try {
+      var area = document.createElement('textarea');
+      area.value = text;
+      area.setAttribute('readonly', 'readonly');
+      area.style.position = 'fixed';
+      area.style.top = '-1000px';
+      area.style.opacity = '0';
+      document.body.appendChild(area);
+      area.select();
+      var ok = document.execCommand('copy');
+      document.body.removeChild(area);
+      return !!ok;
+    } catch (e) { return false; }
+  }
+
+  function showGuestLinkModal(url, minutes) {
+    openModal(modalTitle('체험 링크가 만들어졌어요') +
+      '<p class="lightbox__meta">' + esc(GUEST_MINUTE_LABEL[minutes] || '') + ' 동안 열려 있어요 · 링크를 길게 눌러 복사해 보내 주세요.</p>' +
+      '<p class="gl-modal__url" id="gl-modal-url">' + esc(url) + '</p>' +
+      '<div class="lightbox__actions">' +
+      '<button type="button" class="btn btn--primary" id="gl-modal-copy">복사</button>' +
+      '<button type="button" class="btn btn--ghost" data-close="1">닫기</button></div>');
+    var btn = $('#gl-modal-copy');
+    if (btn) {
+      btn.addEventListener('click', function () {
+        copyText(url).then(function (ok) {
+          toast(ok ? '체험 링크를 복사했어요' : '길게 눌러 복사해 주세요');
+        });
+      });
+    }
+  }
+
+  function createGuestLink() {
+    var btn = $('#gl-make');
+    if (!btn || btn.getAttribute('aria-busy') === 'true') { return; }
+    var label = btn.textContent;
+    btn.setAttribute('aria-busy', 'true');
+    btn.textContent = '링크 만드는 중…';
+    var done = function () {
+      btn.removeAttribute('aria-busy');
+      btn.textContent = label;
+    };
+
+    if (!isLive()) {
+      var token = demoToken();
+      var list = demoGuestLinks();
+      list.unshift({
+        id: token.slice(0, 8), token: token, game: glPick.game, minutes: glPick.minutes,
+        createdAt: Date.now(), expiresAt: Date.now() + glPick.minutes * 60000, revoked: false
+      });
+      saveDemoGuestLinks(list);
+      done();
+      refreshGuestLinkList();
+      copyText(guestLinkUrl(token)).then(function (ok) {
+        if (!ok) { showGuestLinkModal(guestLinkUrl(token), glPick.minutes); }
+        else { toast('체험 링크를 만들었어요 · ' + GUEST_MINUTE_LABEL[glPick.minutes] + ' 동안 열려요'); }
+      });
+      return;
+    }
+
+    DB.guest.create(glPick.game, glPick.minutes).then(function (res) {
+      done();
+      refreshGuestLinkList();
+      var url = guestLinkUrl(res.token);
+      copyText(url).then(function (ok) {
+        if (!ok) { showGuestLinkModal(url, glPick.minutes); }
+        else { toast('체험 링크를 만들었어요 · ' + GUEST_MINUTE_LABEL[glPick.minutes] + ' 동안 열려요 · 복사했어요'); }
+      });
+    }, function (err) {
+      done();
+      toast(guestLinkErrorMessage(err));
+    });
+  }
+
+  function revokeGuestLink(id, token) {
+    openModal(modalTitle('이 링크를 지금부터 못 쓰게 할까요?') +
+      '<p class="lightbox__meta">기간이 남아 있어도 바로 닫혀요. 이미 들어와 놀고 있는 사람의 화면은 그대로 이어져요.</p>' +
+      '<div class="lightbox__actions">' +
+      '<button type="button" class="btn btn--primary" id="gl-revoke-ok">만료시키기</button>' +
+      '<button type="button" class="btn btn--ghost" data-close="1">그대로 두기</button></div>');
+    var ok = $('#gl-revoke-ok');
+    if (!ok) { return; }
+    ok.addEventListener('click', function () {
+      ok.setAttribute('disabled', 'disabled');
+      if (!isLive()) {
+        var list = demoGuestLinks();
+        list.forEach(function (row) { if (row.id === id || row.token === token) { row.revoked = true; } });
+        saveDemoGuestLinks(list);
+        closeModal();
+        refreshGuestLinkList();
+        toast('체험 링크를 만료시켰어요');
+        return;
+      }
+      DB.guest.revoke(id).then(function () {
+        closeModal();
+        refreshGuestLinkList();
+        toast('체험 링크를 만료시켰어요');
+      }, function (err) {
+        ok.removeAttribute('disabled');
+        toast(guestLinkErrorMessage(err));
+      });
+    });
+  }
+
+  function bindGuestLinksCard() {
+    if (!$('#guest-links-card')) { return; }
+
+    var gameChips = $$('#gl-games .chip');
+    gameChips.forEach(function (chip) {
+      chip.addEventListener('click', function () {
+        glPick.game = chip.getAttribute('data-gl-game') || 'all';
+        gameChips.forEach(function (c) {
+          var on = c === chip;
+          c.classList.toggle('is-active', on);
+          c.setAttribute('aria-pressed', String(on));
+        });
+      });
+    });
+
+    var minChips = $$('#gl-minutes .chip');
+    minChips.forEach(function (chip) {
+      chip.addEventListener('click', function () {
+        glPick.minutes = Number(chip.getAttribute('data-gl-min')) || 10;
+        minChips.forEach(function (c) {
+          var on = c === chip;
+          c.classList.toggle('is-active', on);
+          c.setAttribute('aria-pressed', String(on));
+        });
+      });
+    });
+
+    var make = $('#gl-make');
+    if (make) { make.addEventListener('click', createGuestLink); }
+
+    var list = $('#gl-list');
+    if (list) {
+      list.addEventListener('click', function (e) {
+        var target = e.target && e.target.closest ? e.target.closest('[data-gl-copy], [data-gl-revoke]') : null;
+        if (!target) { return; }
+        var item = target.closest('.gl-item');
+        if (!item) { return; }
+        var token = item.getAttribute('data-gl-token') || '';
+        var id = item.getAttribute('data-gl-id') || '';
+        if (target.hasAttribute('data-gl-copy')) {
+          copyText(guestLinkUrl(token)).then(function (ok) {
+            toast(ok ? '체험 링크를 복사했어요' : '길게 눌러 복사해 주세요');
+          });
+          return;
+        }
+        revokeGuestLink(id, token);
+      });
+    }
+
+    window.clearInterval(glTickTimer);
+    glTickTimer = window.setInterval(updateGuestLinkBadges, 1000);
+    refreshGuestLinkList();
   }
 
   if ('serviceWorker' in navigator && window.location.protocol.indexOf('http') === 0) {

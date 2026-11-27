@@ -630,6 +630,44 @@
       });
     },
 
+    /* --- 🔗 외부 체험 링크(게스트) ---
+     *  게스트는 로그인 토큰이 없습니다. verify · submitScore · ranking 은 링크 토큰만으로 부르고,
+     *  서버가 그 토큰의 기간·회수·허용 게임을 다시 확인합니다.
+     */
+    guest: {
+      /** 링크 확인 — 유효하면 { valid:true, game, expires_at, remaining_seconds } */
+      verify: function (token) {
+        return rpc('verify_guest_game_link', { p_token: token });
+      },
+      /** 링크 발급 — 문주·운영진만 (서버가 역할을 다시 확인) · 기간은 분 단위 */
+      create: function (game, minutes) {
+        return withToken(function (t) {
+          return rpc('create_guest_game_link', { p_session: t, p_game: game, p_minutes: minutes });
+        });
+      },
+      /** 최근 발급 목록 — 문주·운영진만 */
+      list: function () {
+        return withToken(function (t) { return rpc('list_guest_game_links', { p_session: t, p_limit: 20 }); });
+      },
+      /** 즉시 만료 — 문주·운영진만 */
+      revoke: function (id) {
+        return withToken(function (t) { return rpc('revoke_guest_game_link', { p_session: t, p_id: id }); });
+      },
+      /** 게스트 점수 올리기 — 유효한 링크 토큰 + 그 링크가 허용한 게임만 */
+      submitScore: function (token, game, nickname, score, meta) {
+        return rpc('submit_guest_game_score', {
+          p_token: token, p_game: game, p_nickname: nickname,
+          p_score: score, p_meta: meta || {}
+        });
+      },
+      /** 게스트 전용 랭킹 — 그 게임의 게스트 기록만 (문파원 정보 없음) */
+      ranking: function (token, game, limit) {
+        return rpc('list_guest_game_ranking', {
+          p_token: token, p_game: game, p_limit: limit || 20
+        });
+      }
+    },
+
     /* --- 관리자(문주) --- */
     admin: {
       getSettings: function () {
