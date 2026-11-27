@@ -162,6 +162,8 @@
         killHits: 10, maxMobs: 13, respawnSec: 5,
         autoCoeff: 95, critPct: 50, critDmgPct: 20, duration: 180,
         maxHp: 160000, mobDmg: 0, mobAtkInterval: 2, healAtPct: 70, healPct: 30,
+        /* 몹 반격 방식 — 'passive' 비선공(때린 몹만 · 기본) / 'aggro' 선공(전부) (v53) */
+        aggroMode: 'passive',
         /* 내 기본 평타 데미지(몹 체력 추정용) · 체력 자연 회복(5초마다) */
         myAutoDmg: 0, hpRegen: 0,
         /* 몹 체력 넣는 방식 — 'hits'(직접 입력 몇 방, 기본) / 'ground'(사냥터 선택) */
@@ -210,6 +212,7 @@
       /* 글자 칸(방식·사냥터)은 숫자 정리 전에 따로 넣어 둡니다 */
       var rawHpMode = base.hunt.hpMode;
       var rawGroundId = base.hunt.groundId;
+      var rawAggroMode = base.hunt.aggroMode;
       for (var hk in hd) {
         if (Object.prototype.hasOwnProperty.call(hd, hk)) {
           base.hunt[hk] = Number(base.hunt[hk]) >= 0 ? Number(base.hunt[hk]) : hd[hk];
@@ -217,6 +220,8 @@
       }
       base.hunt.hpMode = rawHpMode === 'ground' ? 'ground' : 'hits';
       base.hunt.groundId = typeof rawGroundId === 'string' ? rawGroundId : '';
+      /* 반격 방식은 글자값이라 숫자 정리 뒤에 되돌려 넣습니다 — 없던 저장분은 기본 「비선공」 (v53) */
+      base.hunt.aggroMode = rawAggroMode === 'aggro' ? 'aggro' : 'passive';
       /* 옛 저장값(285 등)이 남아 있어도 평타 1타 계수는 고정값으로 교정합니다 (v51) */
       base.hunt.autoCoeff = HUNT_AUTO_FIXED;
       base.debuffOn = (base.debuffOn && typeof base.debuffOn === 'object') ? base.debuffOn : {};
@@ -324,6 +329,8 @@
     base.maxHp = Number(h.maxHp) || 0;
     base.mobDmg = Number(h.mobDmg) || 0;
     base.mobAtkInterval = Number(h.mobAtkInterval) || 2;
+    /* 몹 반격 방식 — 기본 「비선공 (때린 몹만)」 (v53) */
+    base.aggroMode = h.aggroMode === 'aggro' ? 'aggro' : 'passive';
     base.healAtPct = Number(h.healAtPct);
     base.healPct = Number(h.healPct);
     base.myAutoDmg = Number(h.myAutoDmg) || 0;
@@ -1267,6 +1274,16 @@
       return '<button type="button" class="ds-seg' + (Number(h.duration) === d ? ' is-on' : '') + '" data-hunt-dur="' + d + '">' +
         esc(HUNT_DUR_LABEL[d]) + '</button>';
     }).join('');
+    /* 몹 반격 방식 — 기본 「비선공 (때린 몹만)」 (v53) */
+    var aggroMode = h.aggroMode === 'aggro' ? 'aggro' : 'passive';
+    var aggroBtns = [
+      { k: 'passive', t: '비선공', s: '때린 몹만' },
+      { k: 'aggro', t: '선공', s: '전부' }
+    ].map(function (m) {
+      return '<button type="button" class="ds-seg' + (aggroMode === m.k ? ' is-on' : '') + '"' +
+        ' aria-pressed="' + (aggroMode === m.k ? 'true' : 'false') + '" data-hunt-aggro="' + m.k + '">' +
+        esc(m.t) + ' <em>' + esc(m.s) + '</em></button>';
+    }).join('');
 
     var groundMode = h.hpMode === 'ground';
     var sel = h.groundId || HUNT_DEFAULT_GROUND;
@@ -1331,9 +1348,11 @@
       '<div class="ds-hunt__quick" role="group" aria-label="사냥터 원터치 설정">' + qbtns + '</div>',
       '<p class="ds-hunt__qnote">원터치로 <b>마릿수 · 부활 시간</b>이 바로 바뀝니다 — 아래 칸에서 직접 고쳐도 됩니다.</p>',
       hpFields,
-      '<p class="ds-hunt__qnote"><b>버티기</b> — 내 체력과 <b>몹 1마리 피격 데미지</b>를 적으면 살아 있는 몹 수만큼 맞는 피해로 버티는 시간을 계산합니다(비우면 생략). ' +
+      '<p class="ds-hunt__qnote"><b>버티기</b> — 내 체력과 <b>몹 1마리 피격 데미지</b>를 적으면 나를 때리는 몹 수만큼 맞는 피해로 버티는 시간을 계산합니다(비우면 생략). ' +
+        '기본은 <b>비선공</b> — 처음엔 안 맞고 <b>내가 평타·도술로 한 번이라도 때린 몹만</b> 죽을 때까지 반격합니다(다시 살아나면 또 얌전). ' +
         '체력이 <b>발동 %</b> 이하로 떨어지면 장착한 <b>헌신 회복 도술</b>(생명의 흐름·생명의 축복)을 <b>맨 먼저</b> 씁니다. ' +
         '<b>체력 자연 회복</b>을 적으면 인게임처럼 <b>5초마다</b> 그만큼 즉시 회복합니다.</p>',
+      '<div class="ds-hunt__dur"><span class="ds-hunt__durlabel">몹 반격</span><div class="ds-segs">' + aggroBtns + '</div></div>',
       '<div class="ds-hunt__grid ds-hunt__grid--hp">',
       '  <label class="ds-hunt__f"><span>내 최대 체력 <em>HP</em></span>',
       '    <input type="number" min="0" max="100000000" step="1000" inputmode="numeric" data-hunt="maxHp" value="' + num(h.maxHp, 0) + '"></label>',
@@ -1363,7 +1382,7 @@
       JSON.stringify(cfg.trans), JSON.stringify(cfg.tr6), JSON.stringify(cfg.override), cfg.allDosulDmgPct,
       JSON.stringify(cfg.styleDmgPct), cfg.cdReducePct, cfg.castMode, cfg.chargeFull, cfg.autoInterval,
       cfg.gap, cfg.chain ? JSON.stringify(cfg.chain) : '', JSON.stringify(cfg.debuffOn),
-      cfg.maxHp, cfg.mobDmg, cfg.mobAtkInterval, cfg.healAtPct, cfg.healPct, cfg.myAutoDmg, cfg.hpRegen,
+      cfg.maxHp, cfg.mobDmg, cfg.mobAtkInterval, cfg.healAtPct, cfg.healPct, cfg.myAutoDmg, cfg.hpRegen, cfg.aggroMode,
       (cfg.groundInfo ? cfg.groundInfo.id : '')].join('|');
     if (huntCache.key === key && huntCache.res) { return huntCache; }
     var res = C.simulateHunt(cfg);
@@ -1415,6 +1434,12 @@
     if (sv) {
       var lv = LV[sv.level] || null;
       var line = [];
+      if (sv.aggroMode === 'aggro') {
+        line.push('몹 반격은 <b>선공</b> — 살아 있는 몹 ' + num(sv.avgAlive, 1) + '마리가 모두 때립니다.');
+      } else {
+        line.push('몹 반격은 <b>비선공</b> — 살아 있는 몹은 평균 ' + num(sv.avgAlive, 1) + '마리지만, 때린 몹만 반격해서 평균 <b>' +
+          num(sv.avgAggro, 1) + '마리</b>에게 맞습니다.');
+      }
       if (sv.diedAt != null) {
         line.push('체력이 <b>' + num(sv.diedAt, 1) + '초</b>에 바닥납니다' +
           (sv.healCasts ? ' (헌신 회복 ' + sv.healCasts + '회로는 부족)' : ' — 헌신 회복 도술을 넣거나 물약이 필요합니다') + '.');
@@ -1437,7 +1462,8 @@
         : (sv.diedAt != null ? '→ <b>무한 자사 불가</b> — 초당 ' + num(sv.holdRegen, 0) + ' HP 이상 회복이 필요합니다.'
           : (sv.sustain === false ? '→ 초당 <b>' + num(sv.holdRegen, 0) + ' HP</b> 회복이 있어야 계속 버팁니다.' : '')));
       survHtml = '<div class="ds-hunt__surv">' +
-        '<p class="ds-hunt__survhead">버티기 <em>' + num(sv.avgAlive, 1) + '마리가 평균 · 몹 1방 ' + num(sv.mobDmg, 0) + ' · ' + num(sv.atkInterval, 1) + '초마다</em>' +
+        '<p class="ds-hunt__survhead">버티기 <em>' + (sv.aggroMode === 'aggro' ? '선공 · 살아있는 몹 전부' : '비선공 · 때린 몹만') +
+        ' · 때리는 몹 평균 ' + num(sv.avgAggro, 1) + '마리 · 몹 1방 ' + num(sv.mobDmg, 0) + ' · ' + num(sv.atkInterval, 1) + '초마다</em>' +
         (lv ? '<b class="ds-hunt__lv ' + lv.cls + '">' + lv.t + '</b>' : '') + '</p>' +
         '<div class="ds-cards ds-hunt__cards">' +
         '  <div class="ds-card"><span>받는 피해(초당)</span><strong>' + num(sv.dps, 0) + '<small>HP/초</small></strong></div>' +
@@ -1478,6 +1504,9 @@
       '  <div class="ds-card"><span>젠 소모율</span><strong>' + num(r.waveUse, 1) + '<small>%</small></strong></div>',
       '  <div class="ds-card"><span>이론 최대</span><strong>' + num(r.theoretical / (r.duration / 60), 1) + '<small>마리/분</small></strong></div>',
       '  <div class="ds-card"><span>평균 살아있는 몹</span><strong>' + num(r.avgAlive, 1) + '<small>마리</small></strong></div>',
+      (r.aggroMode === 'aggro'
+        ? ''
+        : '  <div class="ds-card"><span>평균 때리는 몹 <em>비선공</em></span><strong>' + num(r.avgAggro, 1) + '<small>마리</small></strong></div>'),
       '  <div class="ds-card"><span>평타 횟수</span><strong>' + r.autoCount + '<small>회</small></strong></div>',
       (r.mobHpEstimate ? '  <div class="ds-card ds-card--wide"><span>추정 몹 체력</span><strong>약 ' + group(r.mobHpEstimate) + '<small>HP</small></strong><em>평타 ' + num(r.killHits, 2) + '방 × 내 기본 평타 ' + group(r.myAutoDmg) + '</em></div>' : ''),
       '</div>',
@@ -1490,7 +1519,8 @@
       '<p class="ds-hunt__note"><b>계산 기준</b> — 몹 체력 = <b>평타 ' + num(r.killHits, 1) + '방</b>(치명타 ' + num(r.critPct, 0) + '% · 치명타 피해 +' + num(r.critDmgPct, 1) + '% 기준). ' +
         '도술 피해는 <b>계수 × 레이드 계산기의 시전당 평균 배수 ÷ 평타 1타 계수(' + num(r.autoCoeff, 0) + '%)</b>이고, ' +
         '맞는 대상은 <b>남은 체력이 가장 적은 몹부터</b> 최대 대상 수만큼입니다. ' +
-        '죽은 몹은 <b>죽은 순간 +' + num(r.respawnSec, 1) + '초</b>에 그 몹만 풀피로 돌아오고, 시작할 때는 ' + num(r.maxMobs, 0) + '마리가 모두 살아 있습니다. ' +
+        '죽은 몹은 <b>죽은 순간 +' + num(r.respawnSec, 1) + '초</b>에 그 몹만 풀피로 돌아오고, 시작할 때는 ' + num(r.maxMobs, 0) + '마리가 모두 살아 있습니다' +
+        (r.aggroMode === 'aggro' ? '(<b>선공</b>이라 살아 있으면 바로 때립니다). ' : '(<b>비선공</b>이라 살아난 몹은 다시 얌전하고, 때린 몹만 죽을 때까지 반격합니다). ') +
         '<b>쿨타임 신식</b>(기만 눈물 · 파멸 요기범람 초기화 · 주술 구슬 · 척결 · 강압 · 절명 형상 · 기동 연쇄)과 ' +
         '<b>용맹의 기운 · 저격 연속 조준</b>은 시전 빈도·평타에 그대로 넣었습니다.</p>',
       '<p class="ds-hunt__note ds-hunt__note--dim"><b>빠진 것</b> — 이동 시간 · 물약 · 받는 피해 감소·보호막 · 화상 같은 지속 피해 · 대상이 흩어진 정도 · 기동 연쇄의 시전 속도(수치 미공개). ' +
@@ -2101,6 +2131,18 @@
         return;
       }
       /* 🏹 사냥터 원터치 프리셋 · 계산 시간 */
+      var hagg = t.closest('[data-hunt-aggro]');
+      if (hagg) {
+        var wantAgg = hagg.getAttribute('data-hunt-aggro') === 'aggro' ? 'aggro' : 'passive';
+        if (S.hunt.aggroMode !== wantAgg) {
+          S.hunt.aggroMode = wantAgg;
+          huntCache.key = '';
+          renderHuntForm();
+          recompute();
+          save();
+        }
+        return;
+      }
       var hq = t.closest('[data-hunt-preset]');
       if (hq) {
         var qk = hq.getAttribute('data-hunt-preset');

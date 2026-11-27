@@ -5810,6 +5810,10 @@ body.is-locked { overflow: hidden; }
 .ds-hunt__dur { display: flex; align-items: center; gap: 9px; }
 .ds-hunt__durlabel { flex: none; font-size: 9.5px; color: var(--muted); }
 .ds-hunt__dur .ds-segs { flex: 1; }
+/* 자사계산기 — 몹 반격 방식 토글 (비선공/선공) */
+.ds-hunt__dur .ds-seg em { font-style: normal; font-size: 9px; font-weight: 500; opacity: .68; margin-left: 2px; }
+.ds-hunt__dur .ds-seg.is-on em { opacity: .85; }
+.ds-card span em { font-style: normal; font-size: 8.5px; font-weight: 600; color: rgba(127, 209, 189, .75); margin-left: 2px; }
 
 .ds-hunt__out { display: flex; flex-direction: column; gap: 9px; }
 .ds-hunt__hero {

@@ -1616,6 +1616,11 @@
       maxHp: clampNum(c.maxHp, 0, 1e9, 0),
       mobDmg: clampNum(c.mobDmg, 0, 1e9, 0),
       mobAtkInterval: clampNum(c.mobAtkInterval, 0.2, 30, 2),
+      /* 몹 반격 방식 (v53) — 'passive' 비선공(기본) / 'aggro' 선공
+         · 비선공: 처음엔 안 때리고, 내가 평타·도술로 한 번이라도 때린 몹만 죽을 때까지 반격합니다.
+           죽어서 다시 살아나면 다시 얌전해집니다.
+         · 선공: 살아 있는 몹이 전부 나를 때립니다(예전 v52까지의 계산). */
+      aggroMode: c.aggroMode === 'aggro' ? 'aggro' : 'passive',
       /* 헌신 회복 — 체력이 이 % 이하가 되면 회복 도술을 최우선으로 씁니다.
          회복량 계수는 공개 자료에 없어 「최대 체력 %」로 받습니다(기본 30%). */
       healAtPct: clampNum(c.healAtPct, 0, 99, 70),
@@ -1668,7 +1673,8 @@
     var mobHp = cfg.killHits;
     var mobs = [];
     for (i = 0; i < cfg.maxMobs; i++) {
-      mobs.push({ i: i, hp: mobHp, alive: true, deadAt: -1, respawnAt: 0 });
+      /* aggro — 이 몹이 나를 적으로 아는지. 비선공 모드에서는 내가 때려야 true 가 됩니다 */
+      mobs.push({ i: i, hp: mobHp, alive: true, deadAt: -1, respawnAt: 0, aggro: false });
     }
     var EPS = 1e-9;
 
@@ -1852,6 +1858,8 @@
     var skillDamage = 0;
     var respawnCount = 0;
     var aliveSec = 0;
+    /* aggroSec — 「나를 때리는 몹」의 시간 평균. 비선공 모드에서는 때린 몹만 셉니다 */
+    var aggroSec = 0;
     var killLog = [];
     var respawnLog = [];
     var hitLog = [];
@@ -1875,6 +1883,14 @@
       for (var m = 0; m < mobs.length; m++) { if (mobs[m].alive) { cA += 1; } }
       return cA;
     }
+    /* 지금 나를 때리는 몹 수 — 선공 모드면 살아 있는 몹 전부, 비선공 모드면 때린 몹만 */
+    function aggroCountNow() {
+      var cA = 0;
+      for (var m = 0; m < mobs.length; m++) {
+        if (mobs[m].alive && (cfg.aggroMode === 'aggro' || mobs[m].aggro)) { cA += 1; }
+      }
+      return cA;
+    }
     function stepTo(now) {
       if (now <= lastT + EPS) { return; }
       if (diedAt != null) { lastT = now; return; }
@@ -1885,16 +1901,19 @@
         var segEnd = now;
         if (doRegen && nextRegenAt > lastT + EPS && nextRegenAt < segEnd - EPS) { segEnd = nextRegenAt; }
         var span = segEnd - lastT;
-        /* 사망한 뒤에는 살아 있는 몹 수를 더 세지 않습니다 */
-        var acNow = aliveCountNow();
+        /* 사망한 뒤에는 살아 있는 몹 수를 더 세지 않습니다.
+           받는 피해는 「나를 때리는 몹」 수(acHit)로 셉니다 — 비선공이면 때린 몹만 (v53) */
+        var acAll = aliveCountNow();
+        var acHit = aggroCountNow();
         if (hpTrack) {
-          var rate = acNow * cfg.mobDmg / cfg.mobAtkInterval;
+          var rate = acHit * cfg.mobDmg / cfg.mobAtkInterval;
           if (rate > 0) {
             var need = hp / rate;
             if (need <= span + EPS) {
               /* 이 구간 안에서 체력이 바닥 — 살아 있던 need 초까지만 셉니다 */
               diedAt = lastT + need;
-              aliveSec += acNow * Math.max(0, need);
+              aliveSec += acAll * Math.max(0, need);
+              aggroSec += acHit * Math.max(0, need);
               hp = 0;
               hpMin = 0;
               lastT = now;
@@ -1904,7 +1923,8 @@
             if (hp < hpMin) { hpMin = hp; }
           }
         }
-        aliveSec += acNow * span;
+        aliveSec += acAll * span;
+        aggroSec += acHit * span;
         lastT = segEnd;
         /* 이 시각이 5초 회복 지점이고 아직 살아 있으면 즉시 회복 (최대 체력 상한) */
         if (doRegen && Math.abs(lastT - nextRegenAt) <= EPS) {
@@ -1922,6 +1942,8 @@
         if (!mb.alive && mb.respawnAt <= now + EPS) {
           mb.alive = true;
           mb.hp = mobHp;
+          /* 새로 살아난 몹은 다시 얌전합니다 — 때려야 반격합니다 (v53) */
+          mb.aggro = false;
           respawnCount += 1;
           if (respawnLog.length < 200) {
             respawnLog.push({ mob: mb.i, killAt: round(mb.deadAt, 3), at: round(now, 3) });
@@ -1944,6 +1966,8 @@
         if (!mb.alive) { continue; }
         var real = Math.min(mb.hp, dmgPer);
         dealt += real;
+        /* 때린 순간부터 이 몹은 나를 적으로 알고 죽을 때까지 반격합니다 (v53) */
+        mb.aggro = true;
         mb.hp -= dmgPer;
         if (mb.hp <= EPS) {
           mb.alive = false;
@@ -2133,9 +2157,11 @@
        (죽어서 리스폰을 기다리는 몹은 때리지 못하므로 평균 살아있는 몹으로 셉니다) */
     var life = (diedAt != null && diedAt > 0) ? diedAt : duration;
     var avgAliveMobs = aliveSec / (life || duration);
+    /* 받는 피해는 「나를 때리는 몹」의 평균으로 셉니다 — 비선공이면 때린 몹만 (v53) */
+    var avgAggroMobs = aggroSec / (life || duration);
     var survival = null;
     if (cfg.mobDmg > 0) {
-      var inDps = avgAliveMobs * (cfg.mobDmg / cfg.mobAtkInterval);
+      var inDps = avgAggroMobs * (cfg.mobDmg / cfg.mobAtkInterval);
       var surviveSec = diedAt != null ? diedAt : ((cfg.maxHp > 0 && inDps > 0) ? Infinity : null);
       var regen = life > 0 ? healed / life : 0;
       var natPerSec = life > 0 ? regenTotal / life : 0;
@@ -2146,6 +2172,8 @@
         hpRegen: cfg.hpRegen, regenInterval: REGEN_SEC,
         regenTicks: regenTicks, regenTotal: round(regenTotal, 0), regenNatural: round(natPerSec, 1),
         avgAlive: round(avgAliveMobs, 2),
+        avgAggro: round(avgAggroMobs, 2),
+        aggroMode: cfg.aggroMode,
         dps: round(inDps, 1),
         dmg60: round(inDps * 60, 0),
         surviveSec: surviveSec === Infinity ? null : (surviveSec != null ? round(surviveSec, 1) : null),
@@ -2214,6 +2242,8 @@
       waveUse: theoretical > 0 ? round((kills / theoretical) * 100, 1) : 0,
       life: round(life || duration, 1),
       avgAlive: round(avgAliveMobs, 2),
+      avgAggro: round(avgAggroMobs, 2),
+      aggroMode: cfg.aggroMode,
       survival: survival,
       respawns: respawnCount,
       autoCount: autoCount, autoMiss: autoMiss,
