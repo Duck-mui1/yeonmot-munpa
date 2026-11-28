@@ -6149,12 +6149,20 @@ body.is-locked { overflow: hidden; }
 .ds-sticky__alt b { font-family: var(--serif); font-size: 16px; font-weight: 800; color: #f0d9a5; line-height: 1.1; }
 .ds-sticky__alt em { font-style: normal; font-size: 9.5px; font-weight: 700; color: rgba(240, 217, 165, .8); }
 .ds-sticky__go { font-size: 12px; font-weight: 800; color: rgba(147, 183, 174, .78); white-space: nowrap; line-height: 1; }
-.ds-sticky.is-safe { border-bottom-color: rgba(74, 222, 128, .6); box-shadow: 0 10px 22px rgba(0, 0, 0, .42), inset 0 -2px 0 rgba(74, 222, 128, .22); }
-.ds-sticky.is-warn { border-bottom-color: rgba(251, 191, 36, .6); box-shadow: 0 10px 22px rgba(0, 0, 0, .42), inset 0 -2px 0 rgba(251, 191, 36, .22); }
+.ds-sticky.is-safe {
+  border-bottom-color: rgba(74, 222, 128, .6);
+  background: linear-gradient(180deg, rgba(8, 40, 32, .97), rgba(4, 26, 26, .94));
+  box-shadow: 0 10px 22px rgba(0, 0, 0, .42), inset 0 -2px 0 rgba(74, 222, 128, .22);
+}
+.ds-sticky.is-warn {
+  border-bottom-color: rgba(251, 191, 36, .6);
+  background: linear-gradient(180deg, rgba(46, 36, 12, .97), rgba(26, 22, 8, .94));
+  box-shadow: 0 10px 22px rgba(0, 0, 0, .42), inset 0 -2px 0 rgba(251, 191, 36, .22);
+}
 .ds-sticky.is-danger {
-  border-bottom-color: rgba(248, 113, 113, .68);
-  background: linear-gradient(180deg, rgba(46, 13, 17, .97), rgba(26, 9, 13, .95));
-  box-shadow: 0 10px 22px rgba(0, 0, 0, .42), inset 0 -2px 0 rgba(248, 113, 113, .26);
+  border-bottom-color: rgba(248, 113, 113, .72);
+  background: linear-gradient(180deg, rgba(64, 14, 20, .97), rgba(32, 9, 14, .95));
+  box-shadow: 0 10px 22px rgba(0, 0, 0, .42), inset 0 -2px 0 rgba(248, 113, 113, .28);
 }
 .ds-sticky.is-danger .ds-sticky__go { color: rgba(252, 165, 165, .8); }
 .ds-sticky.ds-sticky--raid { border-bottom-color: rgba(240, 217, 165, .42); }
