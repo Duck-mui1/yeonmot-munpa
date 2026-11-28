@@ -410,6 +410,16 @@ svg { max-width: 100%; }
 }
 .topbar__brand { display: grid; place-items: center; }
 .topbar__brand .mark { width: 32px; height: 32px; }
+/* v64 — 상단 「🌸 연못」 영역이 새로고침 버튼 (누르면 최신 버전 캐시까지 받아 새로고침) */
+.topbar__brand-btn {
+  display: flex; align-items: center; gap: 10px;
+  padding: 4px 8px; margin: -4px -8px;
+  background: none; border: 0; border-radius: 12px;
+  cursor: pointer; text-align: left;
+  -webkit-tap-highlight-color: transparent;
+}
+.topbar__brand-btn:active { opacity: .72; }
+.topbar__brand-btn[aria-busy="true"] { opacity: .6; pointer-events: none; }
 .topbar__text { display: flex; flex-direction: column; line-height: 1.15; min-width: 0; white-space: nowrap; }
 .topbar__text strong {
   font-family: var(--serif);

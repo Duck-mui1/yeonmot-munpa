@@ -5354,6 +5354,40 @@
     refreshGuestLinkList();
   }
 
+  /* v64 — 상단 「🌸 연못」 누르면 최신 버전 캐시까지 받아 새로고침 (로그인 세션 localStorage 는 그대로) */
+  function bindAppRefresh() {
+    var btn = $('#refresh-app-btn');
+    if (!btn) { return; }
+    var clearYeonmotCaches = function () {
+      if (!('caches' in window)) { return Promise.resolve(); }
+      return caches.keys().then(function (keys) {
+        return Promise.all(keys.map(function (key) {
+          if (key.indexOf('yeonmot-munpa-') === 0) { return caches.delete(key); }
+          return null;
+        }));
+      });
+    };
+    btn.addEventListener('click', function () {
+      if (btn.getAttribute('aria-busy') === 'true') { return; }
+      btn.setAttribute('aria-busy', 'true');
+      toast('최신 버전을 확인하고 있어요…');
+      var reload = function () { location.reload(); };
+      var finish = function () {
+        /* 오프라인이면 캐시를 지우지 않고 그대로 새로고침 (설치된 앱이 깨지지 않게) */
+        if (navigator.onLine === false) { reload(); return; }
+        clearYeonmotCaches().then(reload, reload);
+      };
+      if (!('serviceWorker' in navigator)) { finish(); return; }
+      navigator.serviceWorker.getRegistration().then(function (reg) {
+        if (!reg) { finish(); return; }
+        reg.update().then(function () {
+          if (reg.waiting) { reg.waiting.postMessage({ type: 'SKIP_WAITING' }); }
+          finish();
+        }, finish);
+      }, finish);
+    });
+  }
+
   if ('serviceWorker' in navigator && window.location.protocol.indexOf('http') === 0) {
     window.addEventListener('load', function () {
       navigator.serviceWorker.register('./sw.js').catch(function () { /* offline is optional */ });
@@ -5361,6 +5395,7 @@
   }
 
   bindInstall();
+  bindAppRefresh();
   renderInstallBanners();
 
   document.addEventListener('DOMContentLoaded', init);

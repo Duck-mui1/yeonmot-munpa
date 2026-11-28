@@ -5,8 +5,9 @@
    v60 (2026-11-28) — 평타 1타 계수 95% → 54.5% 실측 정정 (어지럼 유발 +49강 330.5% 노크리 14,998 vs 평타 2,475)
    v61 (2026-11-28) — 파멸 요기범람 재발동 규칙 정정 — 30초 지속 중에는 쿨초가 다시 돌지 않고(영력 200 대기), 30초가 끝나는 순간 200이면 그때 재발동
    v62 (2026-11-28) — 자사계산기 고정 요약 바 가운데에 「전부 명중 · 딸피 우선 기준 / 실제 사냥은 이보다 낮아요」 안내
-   v63 (2026-11-28) — 만료된 외부 체험 링크 「삭제」 버튼 (delete_guest_game_link RPC · migration-v63-delete-guest-link.sql) */
-var CACHE_NAME = 'yeonmot-munpa-v63';
+   v63 (2026-11-28) — 만료된 외부 체험 링크 「삭제」 버튼 (delete_guest_game_link RPC · migration-v63-delete-guest-link.sql)
+   v64 (2026-11-28) — 상단 「🌸 연못」 누르면 최신 버전 받아 새로고침 (SKIP_WAITING 메시지 처리) */
+var CACHE_NAME = 'yeonmot-munpa-v64';
 var CORE_ASSETS = [
   './',
   './index.html',
@@ -150,6 +151,10 @@ var CORE_ASSETS = [
   './assets/dosul/1130080.webp',
   './assets/dosul/1130090.webp',
 ];
+
+self.addEventListener('message', function (event) {
+  if (event.data && event.data.type === 'SKIP_WAITING') { self.skipWaiting(); }
+});
 
 self.addEventListener('install', function (event) {
   event.waitUntil(

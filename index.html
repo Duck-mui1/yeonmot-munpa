@@ -102,11 +102,13 @@
   <!-- ============ 앱 ============ -->
   <div class="app" id="main-view" hidden>
     <header class="topbar">
-      <div class="topbar__brand" id="topbar-mark"></div>
-      <div class="topbar__text">
-        <strong>연못</strong>
-        <span class="topbar__sub">도깨비의 세계</span>
-      </div>
+      <button type="button" class="topbar__brand-btn" id="refresh-app-btn" aria-label="연못 새로고침 — 누르면 최신 버전을 받아 새로고침해요">
+        <span class="topbar__brand" id="topbar-mark"></span>
+        <span class="topbar__text">
+          <strong>연못</strong>
+          <span class="topbar__sub">도깨비의 세계</span>
+        </span>
+      </button>
       <div class="topbar__games">
         <button type="button" class="topbar__game" id="game-btn" aria-label="🎮 미니게임 고르기" aria-haspopup="true" aria-expanded="false" aria-controls="game-menu">
           <span class="topbar__game-icon" aria-hidden="true">🎮</span><span class="topbar__game-text">미니게임</span>
