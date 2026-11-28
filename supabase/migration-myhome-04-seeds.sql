@@ -21,12 +21,12 @@ insert into public.shop_items (id, name, category, price, is_limited, sale_start
   ('furn_xmas_giftbox', '선물상자',               'furniture', 1500, true, date '2026-12-01', date '2026-12-25', 'assets/myhome/furniture/furn_xmas_giftbox.png'),
   ('furn_xmas_firewood','장작바구니',             'furniture', 2000, true, date '2026-12-01', date '2026-12-25', 'assets/myhome/furniture/furn_xmas_firewood.png'),
   -- 트리 6종
-  ('tree_classic',      '클래식 트리',            'tree',      3000, true, date '2026-12-01', date '2026-12-25', 'assets/myhome/furniture/tree_classic.png'),
-  ('tree_snow',         '스노우 트리',            'tree',      3000, true, date '2026-12-01', date '2026-12-25', 'assets/myhome/furniture/tree_snow.png'),
-  ('tree_pastel',       '파스텔 트리',            'tree',      3000, true, date '2026-12-01', date '2026-12-25', 'assets/myhome/furniture/tree_pastel.png'),
-  ('tree_hanok',        '한옥 등불분재 트리',     'tree',      3500, true, date '2026-12-01', date '2026-12-25', 'assets/myhome/furniture/tree_hanok.png'),
-  ('tree_birch',        '북유럽 자작나무 트리',   'tree',      3500, true, date '2026-12-01', date '2026-12-25', 'assets/myhome/furniture/tree_birch.png'),
-  ('tree_mini',         '미니트리',               'tree',      2000, true, date '2026-12-01', date '2026-12-25', 'assets/myhome/furniture/tree_mini.png'),
+  ('tree_classic',      '클래식 트리',            'tree',      3000, true, date '2026-12-01', date '2026-12-25', 'assets/myhome/furniture/furn_tree_classic.png'),
+  ('tree_snow',         '스노우 트리',            'tree',      3000, true, date '2026-12-01', date '2026-12-25', 'assets/myhome/furniture/furn_tree_snow.png'),
+  ('tree_pastel',       '파스텔 트리',            'tree',      3000, true, date '2026-12-01', date '2026-12-25', 'assets/myhome/furniture/furn_tree_pastel.png'),
+  ('tree_hanok',        '한옥 등불분재 트리',     'tree',      3500, true, date '2026-12-01', date '2026-12-25', 'assets/myhome/furniture/furn_tree_hanok.png'),
+  ('tree_birch',        '북유럽 자작나무 트리',   'tree',      3500, true, date '2026-12-01', date '2026-12-25', 'assets/myhome/furniture/furn_tree_birch.png'),
+  ('tree_mini',         '미니트리',               'tree',      2000, true, date '2026-12-01', date '2026-12-25', 'assets/myhome/furniture/furn_tree_mini.png'),
   -- 한복 코스튬 2종 (복권 3등 겸용, 당첨자 선택 수령)
   ('costume_xmas_m',    '딥그린 크리스마스 한복 (남)', 'costume', 5000, true, date '2026-12-01', date '2026-12-25', 'assets/myhome/avatars/costume_xmas_m.png'),
   ('costume_xmas_f',    '레드 크리스마스 한복 (여)',   'costume', 5000, true, date '2026-12-01', date '2026-12-25', 'assets/myhome/avatars/costume_xmas_f.png'),

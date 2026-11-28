@@ -3,7 +3,7 @@
 --   · shop_set_items 테이블과 category 'set' 허용은 01 파일에 있음
 --   · 규칙: 세트 가격은 세트 자체 가격 / 구성품 중 보유분은 건너뛰되 가격 그대로
 --           구성품 전부 보유 시 구매 불가 / 세트도 user_items 1개로 남겨 중복 구매 방지
---   · ※ 구성품 시드(맨 아래)는 뮤즈 확정 구성 전까지 주석 유지
+--   · 구성품 시드 포함 (토르 11/28 확정 구성: 시안 1:1, 7종)
 -- ===========================================================================
 
 create or replace function public.myhome_purchase_set(p_token text, p_set text)
@@ -50,11 +50,15 @@ revoke all on function public.myhome_purchase_set(text, text) from public;
 grant execute on function public.myhome_purchase_set(text, text) to anon, authenticated;
 
 -- ---------------------------------------------------------------------------
--- 세트 구성 시드 (※ 뮤즈 확정 구성 전까지 주석 유지)
--- 예시: 크리스마스 홈 세트 = 빈 방 + 가구 + 트리 (정확한 구성 ID 확인 필요)
+-- 세트 구성 시드: 크리스마스 홈 세트 = 빈 방 + 가구 6종 (토르 11/28 확정, 시안 1:1)
+--   빈 방(bg_xmas_2026) + 트리(furn_xmas_tree) + 소파·티테이블·안락의자·선물상자·장작바구니
 -- ---------------------------------------------------------------------------
--- insert into public.shop_set_items (set_id, item_id) values
---   ('set_xmas_2026', 'bg_xmas_2026'),
---   ('set_xmas_2026', '<가구 id>'),
---   ('set_xmas_2026', '<트리 id>')
--- on conflict do nothing;
+insert into public.shop_set_items (set_id, item_id) values
+  ('set_xmas_2026', 'bg_xmas_2026'),
+  ('set_xmas_2026', 'furn_xmas_tree'),
+  ('set_xmas_2026', 'furn_xmas_sofa'),
+  ('set_xmas_2026', 'furn_xmas_teatable'),
+  ('set_xmas_2026', 'furn_xmas_armchair'),
+  ('set_xmas_2026', 'furn_xmas_giftbox'),
+  ('set_xmas_2026', 'furn_xmas_firewood')
+on conflict do nothing;
