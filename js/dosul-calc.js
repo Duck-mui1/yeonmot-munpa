@@ -1668,7 +1668,9 @@
       killHits: clampNum(c.killHits, 0.5, 2000, HD.killHits || 10),
       maxMobs: Math.round(clampNum(c.maxMobs, 1, 60, HD.maxMobs || 13)),
       respawnSec: clampNum(c.respawnSec, 0.5, 120, HD.respawnSec || 5),
-      huntAuto: clampNum(c.huntAutoCoeff != null ? c.huntAutoCoeff : (HUNT.autoCoeff || 95), 10, 3000, 95),
+      /* v60 — 평타 1타 계수 기본값 54.5%(준형 님 인게임 실측). 옛 값(95·285)이 넘어와도 화면(js/dosul-ui.js)이
+         고정값을 넣어 주지만, 엔진만 단독으로 부를 때도 54.5이 되도록 기본값을 맞춰 둡니다. */
+      huntAuto: clampNum(c.huntAutoCoeff != null ? c.huntAutoCoeff : (HUNT.autoCoeff || 54.5), 10, 3000, 54.5),
       /* 치명타 — 기본 50%(2026-11-27 준형 님 지시) · 치명타 피해 증가 기본 +20%
          평타 타수(몹 체력)는 「치명타 50% · 치타피해 +20%」에서 잰 기준이므로,
          다른 확률로 바꾸면 그 기준 대비 기대 피해 배수로 환산합니다:

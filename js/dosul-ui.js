@@ -10,11 +10,13 @@
 
   /* 🏹 평타 1타 계수 — 자사계산기의 고정 기준값입니다(사용자 입력 칸 없음).
      v48·v49 때 285로 저장된 기기의 localStorage 값이 남아 v50 의 95 를 덮어썼습니다.
-     v51 부터는 읽어 들일 때도, 계산할 때도 언제나 이 값을 씁니다. */
+     v51 부터는 읽어 들을 때도, 계산할 때도 언제나 이 값을 씁니다.
+     v60 — 값 자체를 54.5% 로 정정했습니다(준형 님 인게임 실측). 기기에 95·285·69.7 이 남아 있어도
+     마찬가지로 무시하고 이 값을 씁니다. */
   var HUNT_AUTO_FIXED = (function () {
     var h = (C.huntData && C.huntData()) || null;
     var v = h ? Number(h.autoCoeff) : NaN;
-    return isFinite(v) && v > 0 ? v : 95;
+    return isFinite(v) && v > 0 ? v : 54.5;
   })();
 
   var SAVE_KEY = 'ym.dosul.v1';
@@ -173,7 +175,7 @@
            · critRes  「직접 입력(비경)」에서 쓸 요귀 치명타 저항 (모르면 0)
            · critPct  계산된 확률 — 화면·결과 표기가 같은 값을 쓰도록 메모리에도 적어 둡니다 */
         critHit: 2699, critRes: 0, critPct: 50, critDmgPct: 20, duration: 180,
-        autoCoeff: 95,
+        autoCoeff: 54.5,
         maxHp: 160000, mobDmg: 0, mobAtkInterval: 2, healAtPct: 70,
         /* 몹 반격 방식 — 'passive' 비선공(때린 몹만 · 기본) / 'aggro' 선공(전부) (v53) */
         aggroMode: 'passive',
@@ -1852,7 +1854,7 @@
         (r.normalMobDmgPct > 0
           ? '일반 요괴 추가 대미지 <b>+' + num(r.normalMobDmgPct, 2) + '%</b>는 <b>평타와 모든 도술</b>에 똑같이 곱했습니다(×' + num(r.normalMult, 4) + '). '
           : '') +
-        '도술 피해는 <b>계수 × 레이드 계산기의 시전당 평균 배수 ÷ 평타 1타 계수(' + num(r.autoCoeff, 0) + '%)</b>이고, ' +
+        '도술 피해는 <b>계수 × 레이드 계산기의 시전당 평균 배수 ÷ 평타 1타 계수(' + num(r.autoCoeff, 1) + '%)</b>이고, ' +
         '맞는 대상은 <b>남은 체력이 가장 적은 몹부터</b> 최대 대상 수만큼입니다. ' +
         '죽은 몹은 <b>죽은 순간 +' + num(r.respawnSec, 1) + '초</b>에 그 몹만 풀피로 돌아오고, 시작할 때는 ' + num(r.maxMobs, 0) + '마리가 모두 살아 있습니다' +
         (r.aggroMode === 'aggro' ? '(<b>선공</b>이라 살아 있으면 바로 때립니다). ' : '(<b>비선공</b>이라 살아난 몹은 다시 얌전하고, 때린 몹만 죽을 때까지 반격합니다). ') +
