@@ -230,7 +230,7 @@
       base.hunt.aggroMode = rawAggroMode === 'aggro' ? 'aggro' : 'passive';
       /* 옛 저장값(285 등)이 남아 있어도 평타 1타 계수는 고정값으로 교정합니다 (v51) */
       base.hunt.autoCoeff = HUNT_AUTO_FIXED;
-      /* v56 — 평타 박자를 인게임 실측 0.5초로 통일. 숫자 정리에서 0.5가 들어옵니다 */
+      /* v56 — 평타 박자를 인게임 실측 평균 0.6초로 통일. 옛 저장분에 없으면 0.6이 들어갑니다 */
       if (!(Number(base.hunt.autoInterval) > 0)) { base.hunt.autoInterval = HUNT_AUTO_INTERVAL; }
       base.hunt.autoInterval = Math.max(0.1, Math.min(3, Number(base.hunt.autoInterval)));
       /* v56 — 단일 계산기 평타 간격도 0.6초로. 예전 기본값 「1초」가 그대로 저장된 기기는
@@ -351,7 +351,7 @@
     /* 헌신 회복량 — 내 공격력 × 그 도술의 강화 단계별 % (v54) */
     base.myAtk = Number(h.myAtk) || 0;
     base.myAutoDmg = Number(h.myAutoDmg) || 0;
-    /* 평타 속도 — 인게임 실측 0.5초(초당 2방)가 기본. 레이드 쪽 「평타 1회 시간」과는 따로 둡니다 (v56) */
+    /* 평타 속도 — 인게임 실측 평균 0.6초가 기본. 레이드 쪽 「평타 속도」 칸과는 따로 둡니다 (v56) */
     base.autoInterval = Math.max(0.1, Math.min(3, Number(h.autoInterval) || HUNT_AUTO_INTERVAL));
     /* 사냥터를 골랐을 때는 예시 평타(2,475)로 환산했더라도 그 값을 결과에 남깁니다 */
     if (gh) { base.myAutoDmg = gh.auto; }
@@ -1206,8 +1206,10 @@
      🏹 사냥터 분당 처치 — 입력 · 결과
      · 몹 체력은 「평타 몇 방」으로 넣습니다(방어력 공식 비공개 대신 체감값).
      · 마릿수·부활 시간은 원터치 프리셋(비경 10·5초 / 사냥터 13·5초)과 직접 입력 둘 다.
-     · 치명타 확률(기본 50%)·치명타 피해(%)는 직접 적습니다 — 몹 체력 기준점이
-       치명타 50%이므로, 바꾸면 그 기준 대비 기대 피해로 환산합니다.
+     · 치명타 확률(기본 50%)·치명타 피해(%)는 직접 적습니다 (v56)
+       - 사냥터 선택: 몹 체력이 「치명타 없는 평타」 기준이라 기대 피해를 온전히 곱합니다.
+       - 직접 입력: 체감 방 수에 치명타가 섞여 있으므로 50%·+20% 기준 대비 배수로 환산합니다.
+     · 평타 속도는 인게임 실측 평균 0.6초(초당 1.7방)가 기본입니다 (v56).
      --------------------------------------------------------- */
   var HUNT_DURS = [60, 180, 300];
   var HUNT_DUR_LABEL = { 60: '1분', 180: '3분', 300: '5분' };
@@ -1248,13 +1250,13 @@
     return v > 0 ? v : HUNT_EXAMPLE_AUTO;
   }
 
-  /* 고른 사냥터로 「평타 몇 방」을 환산 — 사냥터가 없으면 null */
-  /* 평타 속도 — 저장값이 없으면 실측 기본 0.5초 (v56) */
+  /* 평타 속도 — 저장값이 없으면 실측 기본 0.6초 (v56) */
   function huntAutoInterval(h) {
     var v = Number((h || {}).autoInterval);
     return v > 0 ? v : HUNT_AUTO_INTERVAL;
   }
 
+  /* 고른 사냥터로 「평타 몇 방」을 환산 — 사냥터가 없으면 null */
   function huntGroundHits(h) {
     var g = C.huntGround ? C.huntGround(h.groundId || HUNT_DEFAULT_GROUND) : null;
     if (!g) { return null; }
