@@ -3863,7 +3863,9 @@ body.is-locked { overflow: hidden; }
   box-shadow: 0 0 10px -4px rgba(160, 230, 214, .9);
 }
 .ds-sec__head h3 {
-  flex: 1;
+  /* 제목은 한 줄로 고정 — 오른쪽 힌트가 길어져도(자사계산기 「일반 요괴 +%」 등) 글자가 세로로 쪼개지지 않게 (v58) */
+  flex: none;
+  white-space: nowrap;
   min-width: 0;
   margin: 0;
   font-family: var(--serif);
@@ -3873,6 +3875,14 @@ body.is-locked { overflow: hidden; }
   line-height: 1.2;
   color: #f6fffb;
   text-shadow: 0 1px 0 rgba(0, 0, 0, .5);
+}
+/* 힌트가 남는 폭을 차지하고 오른쪽 정렬 — 길면 두 줄로 (v58) */
+.ds-sec__head .ds-hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-left: auto;
+  text-align: right;
+  line-height: 1.45;
 }
 .ds-sec__sub {
   margin: -2px 0 10px;
