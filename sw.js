@@ -1,6 +1,6 @@
 /* 연못 서비스 워커 — 오프라인에서도 연못이 열리도록
    v55 (2026-11-28) — 도술 계산기 실시간 고정 요약 바(자사 · 단일) · 버티기 여유(녹색)/주의(노랑)/위험(빨강) */
-var CACHE_NAME = 'yeonmot-munpa-v55';
+var CACHE_NAME = 'yeonmot-munpa-v56';
 var CORE_ASSETS = [
   './',
   './index.html',

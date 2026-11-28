@@ -627,7 +627,10 @@
       castMode: config.castMode || 'delay',
       castScale: config.castScale || 1,
       chargeFull: config.chargeFull !== false,
-      autoInterval: config.autoInterval > 0 ? config.autoInterval : 1,
+      /* 평타 박자 — 단일(레이드) 계산기도 자사계산기와 같은 인게임 실측 평균 0.6초를 기본으로 씁니다 (v56)
+         · 385K 영상 0.25초 프레임: 0.50 → 1.00 → 1.50 → 2.25초 (간격 0.5 · 0.5 · 0.75) → 평균 0.6초
+         · 예전 기본값은 1초였습니다. 화면 「내 스펙 조정」의 평타 속도 칸에서 바꿀 수 있습니다. */
+      autoInterval: config.autoInterval > 0 ? config.autoInterval : 0.6,
       gap: config.gap > 0 ? config.gap : 0,
       autoCoeff: config.autoCoeff >= 0 ? config.autoCoeff : 100,
       ultFirst: config.ultFirst !== false,
@@ -1600,6 +1603,8 @@
      🏹 사냥터 분당 처치 시뮬레이션 — 2026-11-27
      ---------------------------------------------------------
      · 몹 체력 = 평타 N방 = N × 평타 1타 (계산 단위 「타」)
+     · 평타는 평균 0.6초마다 1방 — 준형 님 385K 영상 0.25초 프레임 실측(0.50·1.00·1.50·2.25초) (v56)
+     · 사냥터 선택이면 몹 체력이 「치명타 없는 평타」 기준이라 치명타 기대 피해를 온전히 곱함 (v56)
      · 도술 1회가 한 마리에게 넣는 피해 = (계수 × 평균 배수 ÷ 평타 1타 계수) 타
      · 맞는 대상 = 살아 있는 몹 가운데 남은 체력이 가장 적은 몹부터 최대 대상 수만큼
      · 죽은 몹은 죽은 순간 + respawnSec 초에 그 몹만 풀피로 부활(개별 리스폰)
@@ -1624,7 +1629,13 @@
       castMode: c.castMode || 'delay',
       castScale: c.castScale || 1,
       chargeFull: c.chargeFull !== false,
-      autoInterval: c.autoInterval > 0 ? c.autoInterval : 1,
+      /* 평타 박자 — 인게임 실측 평균 0.6초마다 1방 (v56)
+         · 준형 님 385K 사냥 영상(1000011575-…mp4)을 0.25초 프레임으로 2.5초까지 뜯어 보니
+           평타 2,475가 0.50s → 1.00s → 1.50s → 2.25s 로 나왔습니다(간격 0.5 · 0.5 · 0.75).
+           평균 간격 = 0.6초(초당 1.7방).
+         · 예전 기본값은 1초였습니다. 사냥(자사) 계산은 이 0.6초를 기본으로 쓰고,
+           화면에서 「평타 속도」로 바꿀 수 있습니다. */
+      autoInterval: c.autoInterval > 0 ? c.autoInterval : 0.6,
       gap: c.gap > 0 ? c.gap : 0,
       autoCoeff: c.autoCoeff >= 0 ? c.autoCoeff : 100,
       ultFirst: c.ultFirst !== false,
@@ -1672,8 +1683,16 @@
          (초당으로 나눠 붙이지 않고 5·10·15…초 시점에 한꺼번에) */
       hpRegen: clampNum(c.hpRegen, 0, 1e9, 0)
     };
-    var critFactor = (1 + (cfg.critPct / 100) * (cfg.critDmgPct / 100)) /
-      (1 + 0.5 * 0.2);
+    /* 치명타 배수 — 몹 체력(몇 방)을 어디서 얻었는지에 따라 기준이 다릅니다 (v56)
+       · 사냥터 선택(groundInfo) : 몹 체력 ÷ 내 기본 평타 = 「치명타 없는 평타」 기준입니다.
+         그래서 치명타 기대 피해를 온전히 곱합니다 → 1 + p × cd
+         (예전에는 여기서도 50%·20% 기준으로 나눠 버려 치명타 몫이 통째로 사라졌습니다.)
+       · 직접 입력(killHits) : 인게임에서 센 「몇 방」에는 치명타가 이미 섞여 있습니다.
+         그래서 50%·+20% 에서 잰 값으로 보고, 바꾼 확률·피해만 기준 대비 배수로 환산합니다
+         → (1 + p × cd) ÷ (1 + 0.5 × 0.2) */
+    var critBase = 1 + (cfg.critPct / 100) * (cfg.critDmgPct / 100);
+    var critMode = cfg.groundInfo ? 'full' : 'relative';
+    var critFactor = critMode === 'full' ? critBase : critBase / (1 + 0.5 * 0.2);
     var duration = cfg.duration;
 
     var built = buildEntries(cfg);
@@ -2347,6 +2366,7 @@
       critPct: cfg.critPct,
       critDmgPct: cfg.critDmgPct,
       critFactor: round(critFactor, 4),
+      critMode: critMode,
       mobHpUnits: round(mobHp, 2),
       /* 내 기본 평타 데미지를 적었으면 몹 1마리 체력을 어림합니다 (평타 몇 방 × 내 평타) */
       myAutoDmg: cfg.myAutoDmg,

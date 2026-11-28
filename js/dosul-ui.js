@@ -148,7 +148,7 @@
       castMode: 'delay',
       chargeFull: true,
       ultFirst: true,
-      autoInterval: 1,
+      autoInterval: 0.6,   /* 평타 속도 — 인게임 실측 평균 0.6초마다 1방 (v56) */
       autoCoeff: 100,
       gap: 0,
       toggles: {},
@@ -168,6 +168,8 @@
         myAtk: 0,
         /* 내 기본 평타 데미지(몹 체력 추정용) · 체력 자연 회복(5초마다) */
         myAutoDmg: 0, hpRegen: 0,
+        /* 평타 속도(초마다 1방) — 385K 영상 실측 평균 0.6초 (v56) */
+        autoInterval: 0.6,
         /* 몹 체력 넣는 방식 — 'hits'(직접 입력 몇 방, 기본) / 'ground'(사냥터 선택) */
         hpMode: 'hits', groundId: ''
       },
@@ -228,6 +230,16 @@
       base.hunt.aggroMode = rawAggroMode === 'aggro' ? 'aggro' : 'passive';
       /* 옛 저장값(285 등)이 남아 있어도 평타 1타 계수는 고정값으로 교정합니다 (v51) */
       base.hunt.autoCoeff = HUNT_AUTO_FIXED;
+      /* v56 — 평타 박자를 인게임 실측 0.5초로 통일. 숫자 정리에서 0.5가 들어옵니다 */
+      if (!(Number(base.hunt.autoInterval) > 0)) { base.hunt.autoInterval = HUNT_AUTO_INTERVAL; }
+      base.hunt.autoInterval = Math.max(0.1, Math.min(3, Number(base.hunt.autoInterval)));
+      /* v56 — 단일 계산기 평타 간격도 0.6초로. 예전 기본값 「1초」가 그대로 저장된 기기는
+         한 번만 0.6으로 옮깁니다(이후에 다시 1로 고치시면 그대로 남습니다) */
+      if (!base.mig || typeof base.mig !== 'object') { base.mig = {}; }
+      if (base.mig.auto06 !== 1) {
+        if (Math.abs(Number(base.autoInterval) - 1) < 1e-9) { base.autoInterval = HUNT_AUTO_INTERVAL; }
+        base.mig.auto06 = 1;
+      }
       base.debuffOn = (base.debuffOn && typeof base.debuffOn === 'object') ? base.debuffOn : {};
       /* 무기·장비 도술 피해 — 예전 저장분에는 없으므로 없으면 0 / {} 로 읽습니다 */
       base.allDosulDmgPct = clampPct(base.allDosulDmgPct);
@@ -339,6 +351,8 @@
     /* 헌신 회복량 — 내 공격력 × 그 도술의 강화 단계별 % (v54) */
     base.myAtk = Number(h.myAtk) || 0;
     base.myAutoDmg = Number(h.myAutoDmg) || 0;
+    /* 평타 속도 — 인게임 실측 0.5초(초당 2방)가 기본. 레이드 쪽 「평타 1회 시간」과는 따로 둡니다 (v56) */
+    base.autoInterval = Math.max(0.1, Math.min(3, Number(h.autoInterval) || HUNT_AUTO_INTERVAL));
     /* 사냥터를 골랐을 때는 예시 평타(2,475)로 환산했더라도 그 값을 결과에 남깁니다 */
     if (gh) { base.myAutoDmg = gh.auto; }
     base.hpRegen = Number(h.hpRegen) || 0;
@@ -1218,6 +1232,9 @@
      · 「사냥터 선택」은 깨비지지 일반 사냥터 27곳의 몹 체력 ÷ 내 기본 평타로
        몇 방인지 환산해 같은 엔진에 넣습니다. */
   var HUNT_EXAMPLE_AUTO = 2475;   /* 평타를 안 적었을 때 쓰는 예시 값 — 385K 실측 앵커 */
+  /* 평타 속도 기본값 — 준형 님 385K 사냥 영상 0.25초 프레임 실측: 0.50·1.00·1.50·2.25초마다 1방
+     = 간격 0.5 · 0.5 · 0.75 → 평균 0.6초 (v56) */
+  var HUNT_AUTO_INTERVAL = 0.6;
   var HUNT_DEFAULT_GROUND = '101012';   /* 역병의 부화장 385K — 준형 님 실측 사냥터 */
 
   function huntGroundList() {
@@ -1232,6 +1249,12 @@
   }
 
   /* 고른 사냥터로 「평타 몇 방」을 환산 — 사냥터가 없으면 null */
+  /* 평타 속도 — 저장값이 없으면 실측 기본 0.5초 (v56) */
+  function huntAutoInterval(h) {
+    var v = Number((h || {}).autoInterval);
+    return v > 0 ? v : HUNT_AUTO_INTERVAL;
+  }
+
   function huntGroundHits(h) {
     var g = C.huntGround ? C.huntGround(h.groundId || HUNT_DEFAULT_GROUND) : null;
     if (!g) { return null; }
@@ -1288,7 +1311,18 @@
     box.innerHTML = '몹 체력 <b>' + group(gh.ground.hp) + '</b> ÷ 내 평타 <b>' + group(gh.auto) + '</b> = <b>' +
       num(gh.hits, 2) + '방</b>' +
       (Number(S.hunt.myAutoDmg) > 0 ? ''
-        : ' <em>· 평타를 적으면 내 값으로 바뀝니다 (지금은 예시 ' + group(HUNT_EXAMPLE_AUTO) + ')</em>');
+        : ' <em>· 평타를 적으면 내 값으로 바뀝니다 (지금은 예시 ' + group(HUNT_EXAMPLE_AUTO) + ')</em>') +
+      critHitsNote(gh.hits);
+  }
+
+  /* 치명타를 넣으면 실질 몇 방인지 — 사냥터 선택은 「노크리 평타」 기준이라 치명타 기대 피해를 그대로 곱합니다 (v56) */
+  function critHitsNote(hits) {
+    var p = Number((S.hunt || {}).critPct);
+    var cd = Number((S.hunt || {}).critDmgPct);
+    if (!(p > 0) || !(hits > 0)) { return ''; }
+    var mult = 1 + (p / 100) * (cd / 100);
+    if (!(mult > 1)) { return ''; }
+    return ' <em>· 치명타 ' + num(p, 0) + '%·+' + num(cd, 1) + '% 넣으면 <b>' + num(hits / mult, 2) + '방</b></em>';
   }
 
   function huntGroundOptions(sel) {
@@ -1352,6 +1386,8 @@
         '<div class="ds-hunt__grid">',
         '  <label class="ds-hunt__f"><span>내 기본 평타 데미지</span>',
         '    <input type="number" min="0" max="100000000" step="1" inputmode="numeric" data-hunt="myAutoDmg" placeholder="예: ' + HUNT_EXAMPLE_AUTO + '" value="' + (Number(h.myAutoDmg) > 0 ? num(h.myAutoDmg, 0) : '') + '"></label>',
+        '  <label class="ds-hunt__f"><span>평타 속도 <em>초마다 1방</em></span>',
+        '    <input type="number" min="0.1" max="3" step="0.05" inputmode="decimal" data-hunt="autoInterval" value="' + num(huntAutoInterval(h), 2) + '"></label>',
         '  <label class="ds-hunt__f"><span>내 공격력 <em>헌신 회복 기준</em></span>',
         '    <input type="number" min="0" max="1000000000" step="100" inputmode="numeric" data-hunt="myAtk" placeholder="예: 120000" value="' + (Number(h.myAtk) > 0 ? num(h.myAtk, 0) : '') + '"></label>',
         '  <label class="ds-hunt__f"><span>최대 마릿수</span>',
@@ -1366,12 +1402,13 @@
         '    <input type="number" min="0.2" max="30" step="0.1" inputmode="decimal" data-hunt="mobAtkInterval" value="' + num(h.mobAtkInterval, 1) + '"></label>',
         '</div>',
         '<p class="ds-hunt__calc" id="ds-hunt-calc">' + (gh
-          ? '몹 체력 <b>' + group(gh.ground.hp) + '</b> ÷ 내 평타 <b>' + group(gh.auto) + '</b> = <b>' + num(gh.hits, 2) + '방</b>'
+          ? '몹 체력 <b>' + group(gh.ground.hp) + '</b> ÷ 내 평타 <b>' + group(gh.auto) + '</b> = <b>' + num(gh.hits, 2) + '방</b>' + critHitsNote(gh.hits)
             + (Number(h.myAutoDmg) > 0 ? '' : ' <em>· 평타를 적으면 내 값으로 바뀝니다 (지금은 예시 ' + group(HUNT_EXAMPLE_AUTO) + ')</em>')
           : '사냥터를 골라 주세요.') + '</p>',
         '<p class="ds-hunt__calc ds-hunt__healcalc" id="ds-hunt-heal">' + huntHealLineHtml() + '</p>',
         '<p class="ds-hunt__qnote">사냥터를 고르면 <b>깨비지지에 나온 그 사냥터 몹 체력</b>이 그대로 들어가고, ' +
-          '<b>몹 체력 ÷ 내 기본 평타</b>로 몇 방인지 계산합니다. 비경처럼 체력이 공개되지 않은 곳은 <b>직접 입력</b>에서 몇 방인지 적어 주세요.</p>'
+          '<b>몹 체력 ÷ 내 기본 평타</b>로 몇 방인지 계산합니다. 이 「몇 방」은 <b>치명타가 안 터진 평타</b> 기준이라, ' +
+          '<b>치명타 확률·피해</b>는 그 위에 온전히 곱해집니다. 비경처럼 체력이 공개되지 않은 곳은 <b>직접 입력</b>에서 몇 방인지 적어 주세요.</p>'
       ].join('\n');
     } else {
       hpFields = [
@@ -1380,6 +1417,8 @@
         '    <input type="number" min="1" max="2000" step="1" inputmode="numeric" data-hunt="killHits" value="' + num(h.killHits, 2) + '"></label>',
         '  <label class="ds-hunt__f"><span>내 기본 평타 데미지 <em>선택</em></span>',
         '    <input type="number" min="0" max="100000000" step="1" inputmode="numeric" data-hunt="myAutoDmg" placeholder="예: 2475" value="' + (Number(h.myAutoDmg) > 0 ? num(h.myAutoDmg, 0) : '') + '"></label>',
+        '  <label class="ds-hunt__f"><span>평타 속도 <em>초마다 1방</em></span>',
+        '    <input type="number" min="0.1" max="3" step="0.05" inputmode="decimal" data-hunt="autoInterval" value="' + num(huntAutoInterval(h), 2) + '"></label>',
         '  <label class="ds-hunt__f"><span>내 공격력 <em>헌신 회복 기준</em></span>',
         '    <input type="number" min="0" max="1000000000" step="100" inputmode="numeric" data-hunt="myAtk" placeholder="예: 120000" value="' + (Number(h.myAtk) > 0 ? num(h.myAtk, 0) : '') + '"></label>',
         '  <label class="ds-hunt__f"><span>최대 마릿수</span>',
@@ -1395,7 +1434,8 @@
         '</div>',
         '<p class="ds-hunt__calc ds-hunt__healcalc" id="ds-hunt-heal">' + huntHealLineHtml() + '</p>',
         '<p class="ds-hunt__qnote"><b>내 기본 평타 데미지</b>는 선택이에요 — 적으면 몹 체력까지 <b>추정</b>해 드립니다(평타 몇 방 × 내 평타 데미지). ' +
-          '비경처럼 몹 체력이 공개되지 않은 곳에 쓰는 방식입니다.</p>'
+          '비경처럼 몹 체력이 공개되지 않은 곳에 쓰는 방식입니다. <b>직접 입력</b>의 「몇 방」은 인게임에서 <b>치명타가 섞인 채로 센 방 수</b>로 보고, ' +
+          '치명타 확률·피해를 바꾸면 <b>50% · +20% 기준 대비 기대 피해 배수</b>로 환산합니다.</p>'
       ].join('\n');
     }
 
@@ -1532,7 +1572,7 @@
     if (!out) { return; }
     var h = S.hunt || defaults().hunt;
     if (el.huntHint) {
-      el.huntHint.textContent = num(h.maxMobs, 0) + '마리 · ' + num(h.respawnSec, 1) + '초 · 치명타 ' + num(h.critPct, 0) + '%';
+      el.huntHint.textContent = num(h.maxMobs, 0) + '마리 · ' + num(h.respawnSec, 1) + '초 · 평타 ' + num(huntAutoInterval(h), 2) + '초 · 치명타 ' + num(h.critPct, 0) + '%';
     }
     /* 회복량 안내 줄 — 장착·강화·공격력이 바뀌면 바로 갱신 (v54) */
     var healBox = document.getElementById('ds-hunt-heal');
@@ -1672,7 +1712,13 @@
         rowsHtml + '</div></div>',
       survHtml,
       cmpHtml,
-      '<p class="ds-hunt__note"><b>계산 기준</b> — 몹 체력 = <b>평타 ' + num(r.killHits, 1) + '방</b>(치명타 ' + num(r.critPct, 0) + '% · 치명타 피해 +' + num(r.critDmgPct, 1) + '% 기준). ' +
+      '<p class="ds-hunt__note"><b>계산 기준</b> — 몹 체력 = <b>평타 ' + num(r.killHits, 1) + '방</b> · 평타 <b>' +
+        num(r.autoInterval, 2) + '초마다 1방</b>(초당 ' + num(1 / r.autoInterval, 1) + '방). ' +
+        (r.critMode === 'full'
+          ? '사냥터 몹 체력은 <b>치명타 없는 평타</b> 기준이라 <b>치명타 ' + num(r.critPct, 0) + '% · 치명타 피해 +' + num(r.critDmgPct, 1) +
+            '%</b> 기대 피해(×' + num(r.critFactor, 3) + ')를 그 위에 그대로 곱합니다. '
+          : '입력한 방 수는 <b>치명타 ' + num(r.critPct, 0) + '% · 치명타 피해 +' + num(r.critDmgPct, 1) +
+            '%</b>에서 잰 값으로 보고 기준(50% · +20%) 대비 ×' + num(r.critFactor, 3) + ' 로 환산합니다. ') +
         '도술 피해는 <b>계수 × 레이드 계산기의 시전당 평균 배수 ÷ 평타 1타 계수(' + num(r.autoCoeff, 0) + '%)</b>이고, ' +
         '맞는 대상은 <b>남은 체력이 가장 적은 몹부터</b> 최대 대상 수만큼입니다. ' +
         '죽은 몹은 <b>죽은 순간 +' + num(r.respawnSec, 1) + '초</b>에 그 몹만 풀피로 돌아오고, 시작할 때는 ' + num(r.maxMobs, 0) + '마리가 모두 살아 있습니다' +
@@ -1806,7 +1852,7 @@
         '해제 시간이 공개된 <b>빙결 3.5초 · 속박 2초</b>는 자동으로도 동작합니다.</p>',
       '  </div>',
       '  <div class="ds-field ds-field--row">',
-      '    <label>평타 1회 시간<input type="number" min="0.3" max="3" step="0.05" value="' + num(S.autoInterval, 2) + '" data-auto="interval"></label>',
+      '    <label>평타 속도(초마다 1방)<input type="number" min="0.1" max="3" step="0.05" value="' + num(S.autoInterval, 2) + '" data-auto="interval"></label>',
       '    <label>평타 1회 계수(%)<input type="number" min="0" max="800" step="5" value="' + num(S.autoCoeff, 0) + '" data-auto="coeff"></label>',
       '    <label>도술 사이 간격(초)<input type="number" min="0" max="2" step="0.05" value="' + num(S.gap, 2) + '" data-auto="gap"></label>',
       '  </div>',
@@ -2484,7 +2530,7 @@
         /* 사냥터를 고른 채 평타만 고치면 「÷ 내 평타 = 몇 방」 줄도 바로 바뀝니다 */
         if (hk === 'myAutoDmg' && S.hunt.hpMode === 'ground') { updateHuntCalcLine(); }
         if (el.huntHint) {
-          el.huntHint.textContent = num(S.hunt.maxMobs, 0) + '마리 · ' + num(S.hunt.respawnSec, 1) + '초 · 치명타 ' + num(S.hunt.critPct, 0) + '%';
+          el.huntHint.textContent = num(S.hunt.maxMobs, 0) + '마리 · ' + num(S.hunt.respawnSec, 1) + '초 · 평타 ' + num(huntAutoInterval(S.hunt), 2) + '초 · 치명타 ' + num(S.hunt.critPct, 0) + '%';
         }
         recomputeSoon();
         return;
@@ -2556,7 +2602,7 @@
       if (auto) {
         var av = Number(t.value);
         if (!isFinite(av)) { return; }
-        if (auto === 'interval' && av >= 0.3) { S.autoInterval = av; }
+        if (auto === 'interval' && av >= 0.1) { S.autoInterval = av; }
         if (auto === 'coeff' && av >= 0) { S.autoCoeff = av; }
         if (auto === 'gap' && av >= 0) { S.gap = av; }
         S.opt = null;
@@ -2581,7 +2627,7 @@
       var hck = t.getAttribute && t.getAttribute('data-hunt');
       if (hck) {
         var lim = { killHits: [0.5, 2000], maxMobs: [1, 60], respawnSec: [0.5, 120],
-          critPct: [0, 100], critDmgPct: [0, 500], autoCoeff: [10, 3000],
+          critPct: [0, 100], critDmgPct: [0, 500], autoCoeff: [10, 3000], autoInterval: [0.1, 3],
           maxHp: [0, 100000000], mobDmg: [0, 100000000], mobAtkInterval: [0.2, 30],
           healAtPct: [0, 99], myAtk: [0, 1000000000],
           myAutoDmg: [0, 100000000], hpRegen: [0, 100000000] };
@@ -2594,7 +2640,7 @@
         t.value = num(vv, 2);
         huntCache.key = '';
         if (el.huntHint) {
-          el.huntHint.textContent = num(S.hunt.maxMobs, 0) + '마리 · ' + num(S.hunt.respawnSec, 1) + '초 · 치명타 ' + num(S.hunt.critPct, 0) + '%';
+          el.huntHint.textContent = num(S.hunt.maxMobs, 0) + '마리 · ' + num(S.hunt.respawnSec, 1) + '초 · 평타 ' + num(huntAutoInterval(S.hunt), 2) + '초 · 치명타 ' + num(S.hunt.critPct, 0) + '%';
         }
         recompute();
         return;
