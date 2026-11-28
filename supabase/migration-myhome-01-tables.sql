@@ -106,8 +106,23 @@ create table if not exists private.lottery_draws (
   created_at timestamptz not null default now()
 );
 
+-- 세트-구성품 정의 (세트 구매 RPC는 05 파일, 구성 시드도 05·뮤즈 확정 후 주석 해제)
+create table if not exists public.shop_set_items (
+  set_id text not null references public.shop_items(id),
+  item_id text not null references public.shop_items(id),
+  primary key (set_id, item_id)
+);
+
+-- category 에 'set' 허용 (create table이 이미 실행됐어도 적용되도록 멱등 alter)
+alter table public.shop_items drop constraint if exists shop_items_category_check;
+alter table public.shop_items add constraint shop_items_category_check
+  check (category in ('room','furniture','tree','avatar','costume','acc_head','acc_hand','set'));
+
 -- RLS: shop_items 는 SELECT 정책만, private 테이블은 RLS enable + 정책 없음(직접 접근 전면 차단)
 alter table public.shop_items enable row level security;
+alter table public.shop_set_items enable row level security;
+drop policy if exists set_items_read on public.shop_set_items;
+create policy set_items_read on public.shop_set_items for select using (true);
 drop policy if exists shop_read on public.shop_items;
 create policy shop_read on public.shop_items for select using (true);
 
@@ -120,3 +135,5 @@ do $$ declare t text; begin
 -- 카탈로그: anon/authenticated 는 SELECT 만 (쓰기는 대시보드/마이그레이션에서만)
 revoke insert, update, delete on public.shop_items from anon, authenticated;
 grant select on public.shop_items to anon, authenticated;
+revoke insert, update, delete on public.shop_set_items from anon, authenticated;
+grant select on public.shop_set_items to anon, authenticated;

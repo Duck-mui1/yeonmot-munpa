@@ -12,7 +12,7 @@
 insert into public.shop_items (id, name, category, price, is_limited, sale_start, sale_end, asset_path) values
   -- 배경 · 홈 세트 (복권 1·2등 겸용)
   ('bg_xmas_2026',      '크리스마스 빈 방',       'room',      6000, true, date '2026-12-01', date '2026-12-25', 'assets/myhome/rooms/bg_xmas_2026.png'),
-  ('set_xmas_2026',     '크리스마스 홈 세트',     'room',      9500, true, date '2026-12-01', date '2026-12-25', 'assets/myhome/rooms/set_xmas_2026.png'),
+  ('set_xmas_2026',     '크리스마스 홈 세트',     'set',      9500, true, date '2026-12-01', date '2026-12-25', 'assets/myhome/rooms/set_xmas_2026.png'),
   -- 가구 6종
   ('furn_xmas_tree',    '크리스마스 트리',        'furniture', 4500, true, date '2026-12-01', date '2026-12-25', 'assets/myhome/furniture/furn_xmas_tree.png'),
   ('furn_xmas_sofa',    '크리스마스 소파',        'furniture', 4000, true, date '2026-12-01', date '2026-12-25', 'assets/myhome/furniture/furn_xmas_sofa.png'),

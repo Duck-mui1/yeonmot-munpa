@@ -66,6 +66,11 @@ begin
         values (v_actor.member_id, v_refund, 'lottery_dup_refund', v_item);
       else
         insert into private.user_items(member_id, item_id) values (v_actor.member_id, v_item);
+        -- 세트 경품이면 구성품도 함께 지급(보유분은 건너뜀). shop_set_items는 05 파일에서 생성
+        insert into private.user_items(member_id, item_id)
+        select v_actor.member_id, si.item_id from public.shop_set_items si
+        where si.set_id = v_item
+        on conflict (member_id, item_id) do nothing;
       end if;
       insert into private.lottery_draws(member_id, week_key, tier, item_id, points, refunded)
       values (v_actor.member_id, v_week, v_tier, v_item, 0, v_refund)
