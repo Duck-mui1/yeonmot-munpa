@@ -39,6 +39,7 @@
 | `supabase/migration-sinsumoa.sql` | 이미 설치해 쓰는 DB용 **'🫧 신수모아 문파 랭킹' 마이그레이션** — `private.sinsumoa_scores` 표와 `submit_sinsumoa_score` · `list_sinsumoa_ranking` (여러 번 실행해도 안전) |
 | `supabase/migration-survival.sql` | 이미 설치해 쓰는 DB용 **'🦆 연못 생존기 문파 랭킹' 마이그레이션** — `private.survival_scores` 표와 `submit_survival_score` · `list_survival_ranking`, 그리고 외부 체험 링크의 네 번째 게임 `survival` (여러 번 실행해도 안전) |
 | `supabase/migration-guest-links.sql` | 이미 설치해 쓰는 DB용 **'🔗 기간제한 외부 체험 링크 + 게스트 전용 랭킹' 마이그레이션** — `private.guest_game_links`(링크) · `private.guest_game_scores`(게스트 랭킹) 표와 `verify_guest_game_link` · `create_guest_game_link` · `list_guest_game_links` · `revoke_guest_game_link` · `submit_guest_game_score` · `list_guest_game_ranking` (여러 번 실행해도 안전) |
+| `supabase/migration-v63-delete-guest-link.sql` | 이미 설치해 쓰는 DB용 **'만료된 체험 링크 삭제' 마이그레이션** — `delete_guest_game_link` (기간 지났거나 만료시킨 링크만, 여러 번 실행해도 안전) |
 | `supabase/migration-dosul.sql` | 이미 설치해 쓰는 DB용 **'⚔️ 도술 계산기 문파 공유 조합' 마이그레이션** — `private.dosul_builds` 표와 `save_dosul_build` · `list_dosul_builds` · `delete_dosul_build` (여러 번 실행해도 안전) |
 | `manifest.json` | PWA 설치 정보(이름, 아이콘, 테마 색) |
 | `sw.js` | 오프라인에서도 열리도록 파일을 기억하는 서비스 워커 |

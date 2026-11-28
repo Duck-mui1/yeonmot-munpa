@@ -673,6 +673,10 @@
       revoke: function (id) {
         return withToken(function (t) { return rpc('revoke_guest_game_link', { p_session: t, p_id: id }); });
       },
+      /** 만료된 링크 삭제 — 문주·운영진만 (서버가 기간·회수 상태를 다시 확인, v63) */
+      del: function (id) {
+        return withToken(function (t) { return rpc('delete_guest_game_link', { p_session: t, p_id: id }); });
+      },
       /** 게스트 점수 올리기 — 유효한 링크 토큰 + 그 링크가 허용한 게임만 */
       submitScore: function (token, game, nickname, score, meta) {
         return rpc('submit_guest_game_score', {

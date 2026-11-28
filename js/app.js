@@ -5078,7 +5078,14 @@
         badge.classList.add('is-over');
         item.classList.add('is-over');
         var stop = $('[data-gl-revoke]', item);
-        if (stop) { stop.remove(); }
+        if (stop) {
+          var delBtn = document.createElement('button');
+          delBtn.type = 'button';
+          delBtn.className = 'btn btn--quiet btn--small';
+          delBtn.setAttribute('data-gl-del', '');
+          delBtn.textContent = '삭제';
+          stop.parentNode.replaceChild(delBtn, stop);
+        }
       }
     });
   }
@@ -5104,7 +5111,9 @@
         '<p class="gl-item__url">' + esc(url) + '</p>' +
         '<div class="gl-item__acts">' +
         '<button type="button" class="btn btn--ghost btn--small" data-gl-copy>링크 복사</button>' +
-        (dead ? '' : '<button type="button" class="btn btn--quiet btn--small" data-gl-revoke>만료시키기</button>') +
+        (dead
+          ? '<button type="button" class="btn btn--quiet btn--small" data-gl-del>삭제</button>'
+          : '<button type="button" class="btn btn--quiet btn--small" data-gl-revoke>만료시키기</button>') +
         '</div></div>';
     }).join('');
     updateGuestLinkBadges();
@@ -5247,6 +5256,46 @@
     });
   }
 
+  function deleteGuestLink(id) {
+    openModal(modalTitle('만료된 링크를 목록에서 지울까요?') +
+      '<p class="lightbox__meta">링크만 지워지고 게스트 랭킹 기록은 그대로 남아요. 한 번 지우면 되돌릴 수 없어요.</p>' +
+      '<div class="lightbox__actions">' +
+      '<button type="button" class="btn btn--primary" id="gl-del-ok">삭제하기</button>' +
+      '<button type="button" class="btn btn--ghost" data-close="1">그대로 두기</button></div>');
+    var ok = $('#gl-del-ok');
+    if (!ok) { return; }
+    ok.addEventListener('click', function () {
+      ok.setAttribute('disabled', 'disabled');
+      if (!isLive()) {
+        var list = demoGuestLinks().filter(function (row) { return row.id !== id; });
+        saveDemoGuestLinks(list);
+        closeModal();
+        refreshGuestLinkList();
+        toast('만료된 체험 링크를 지웠어요');
+        return;
+      }
+      DB.guest.del(id).then(function () {
+        closeModal();
+        refreshGuestLinkList();
+        toast('만료된 체험 링크를 지웠어요');
+      }, function (err) {
+        ok.removeAttribute('disabled');
+        closeModal();
+        toast(guestLinkDeleteErrorMessage(err));
+      });
+    });
+  }
+
+  /** v63 삭제 RPC가 아직 서버에 없을 때(PGRST202)는 실행할 SQL 파일을 알려 줍니다. */
+  function guestLinkDeleteErrorMessage(err) {
+    var code = String((err && err.code) || '');
+    var msg = String((err && err.message) || '');
+    if (code === 'PGRST202' || msg.indexOf('Could not find the function') !== -1) {
+      return '서버에 링크 삭제 기능이 아직 준비되지 않았어요 · supabase/migration-v63-delete-guest-link.sql 을 실행해 주세요.';
+    }
+    return guestLinkErrorMessage(err);
+  }
+
   function bindGuestLinksCard() {
     if (!$('#guest-links-card')) { return; }
 
@@ -5280,7 +5329,7 @@
     var list = $('#gl-list');
     if (list) {
       list.addEventListener('click', function (e) {
-        var target = e.target && e.target.closest ? e.target.closest('[data-gl-copy], [data-gl-revoke]') : null;
+        var target = e.target && e.target.closest ? e.target.closest('[data-gl-copy], [data-gl-revoke], [data-gl-del]') : null;
         if (!target) { return; }
         var item = target.closest('.gl-item');
         if (!item) { return; }
@@ -5290,6 +5339,10 @@
           copyText(guestLinkUrl(token)).then(function (ok) {
             toast(ok ? '체험 링크를 복사했어요' : '길게 눌러 복사해 주세요');
           });
+          return;
+        }
+        if (target.hasAttribute('data-gl-del')) {
+          deleteGuestLink(id);
           return;
         }
         revokeGuestLink(id, token);

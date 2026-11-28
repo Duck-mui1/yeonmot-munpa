@@ -494,7 +494,7 @@ create index if not exists survival_scores_best_idx
 
 -- 2-9f. 기간제한 외부 체험 링크 (🔗 ?guest=TOKEN) — 링크 한 줄에 하나
 --   · 문파원이 아닌 사람에게 미니게임만 열어 주는 주소입니다. 문파 자료는 하나도 보이지 않습니다.
---   · 읽기/쓰기는 RPC(create_guest_game_link · list_guest_game_links · revoke_guest_game_link · verify_guest_game_link)만.
+--   · 읽기/쓰기는 RPC(create_guest_game_link · list_guest_game_links · revoke_guest_game_link · delete_guest_game_link · verify_guest_game_link)만.
 create table if not exists private.guest_game_links (
   id         uuid primary key default gen_random_uuid(),
   token      text not null unique
@@ -3805,6 +3805,46 @@ comment on function public.revoke_guest_game_link(text, uuid) is
   '체험 링크 만료시키기 — 문주·운영진만. 기간이 남아 있어도 즉시 못 쓰게 만듭니다. { ok, id, revoked, already }.';
 
 
+-- 만료된 체험 링크 지우기 — 문주·운영진만 · 기간이 지났거나 회수한 링크만
+create or replace function public.delete_guest_game_link(
+  p_session text,
+  p_id      uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $fn$
+declare
+  v_actor private.session_actor := private.current_member(p_session);
+  v_link  private.guest_game_links;
+begin
+  if v_actor.member_role not in ('admin', 'officer') then
+    raise exception '문주·운영진만 체험 링크를 지울 수 있어요.' using errcode = '42501';
+  end if;
+
+  select * into v_link
+    from private.guest_game_links l
+   where l.id = p_id;
+
+  if not found then
+    raise exception '체험 링크를 찾지 못했어요. 새로고침한 뒤 다시 시도해 주세요.' using errcode = '22023';
+  end if;
+
+  if not v_link.revoked and v_link.expires_at > now() then
+    raise exception '아직 열려 있는 링크는 지울 수 없어요. 먼저 만료시켜 주세요.' using errcode = '22023';
+  end if;
+
+  delete from private.guest_game_links where id = p_id;
+
+  return jsonb_build_object('ok', true, 'id', p_id, 'deleted', true);
+end;
+$fn$;
+
+comment on function public.delete_guest_game_link(text, uuid) is
+  '만료된 체험 링크 삭제 — 문주·운영진만. 기간이 지났거나 만료시킨 링크만 목록에서 지웁니다. { ok, id, deleted }.';
+
+
 -- 게스트 점수 올리기 — 체험 링크가 허용한 게임일 때만. 같은 닉네임은 최고 점수 한 줄
 create or replace function public.submit_guest_game_score(
   p_token    text,
@@ -4097,7 +4137,8 @@ begin
          'submit_sinsumoa_score', 'list_sinsumoa_ranking',
          'submit_survival_score', 'list_survival_ranking',
          'verify_guest_game_link', 'create_guest_game_link', 'list_guest_game_links',
-         'revoke_guest_game_link', 'submit_guest_game_score', 'list_guest_game_ranking',
+         'revoke_guest_game_link', 'delete_guest_game_link',
+         'submit_guest_game_score', 'list_guest_game_ranking',
          'bootstrap_admin'
        )
   loop
@@ -4207,6 +4248,7 @@ where not exists (select 1 from public.chat_messages c);
 -- drop function if exists private.today_kst();
 -- drop function if exists public.list_guest_game_ranking(text, text, integer);
 -- drop function if exists public.submit_guest_game_score(text, text, text, integer, jsonb);
+-- drop function if exists public.delete_guest_game_link(text, uuid);
 -- drop function if exists public.revoke_guest_game_link(text, uuid);
 -- drop function if exists public.list_guest_game_links(text, integer);
 -- drop function if exists public.create_guest_game_link(text, text, integer);
