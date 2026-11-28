@@ -427,7 +427,7 @@
 
       '<section class="ds-sec ds-sec--rose ds-shared" id="ds-shared">',
       '  <div class="ds-sec__head"><span class="ds-sec__num">2</span><h3>문파 공유 조합</h3><span class="ds-hint" id="ds-shared-hint">눌러서 불러오기</span></div>',
-      '  <p class="ds-sec__sub">문파원이 올린 조합을 눌러 그대로 불러옵니다. 강화·돌파 설정까지 함께 저장됩니다.</p>',
+      '  <p class="ds-sec__sub">문파원이 올린 조합을 눌러 그대로 불러옵니다. 강화·돌파·자사 설정까지 함께 저장됩니다.</p>',
       '  <div class="ds-shared__list" id="ds-shared-list"></div>',
       '</section>',
 
@@ -1006,14 +1006,15 @@
     var rows = shown.map(function (it) {
       var armed = SH.armed === String(it.id);
       var who = it.mine ? '내가 올림' : (it.nickname || '문파원');
+      var isHunt = !!(it.config && it.config.mode === 'hunt');
       var right = [
         '평타 ' + num(it.idle_pct, 1) + '%',
         'DPS ' + num(it.dps, 1) + '%'
       ].join(' · ');
       return '<div class="ds-share-item' + (armed ? ' is-armed' : '') + '">' +
         '<button type="button" class="ds-share-item__hit" data-load="' + esc(it.id) + '">' +
-        '<strong>' + esc(it.title) + '</strong>' +
-        '<span>' + esc(who) + ' · ' + right + '</span>' +
+        '<strong>' + (isHunt ? '🏹 ' : '') + esc(it.title) + '</strong>' +
+        '<span>' + esc(who) + (isHunt ? ' · 자사' : '') + ' · ' + right + '</span>' +
         (it.memo ? '<em>' + esc(it.memo) + '</em>' : '') +
         '</button>' +
         (it.can_delete ? '<button type="button" class="ds-share-item__del" data-del="' + esc(it.id) + '">' +
@@ -1068,13 +1069,19 @@
   }
 
   function openShare() {
-    var r = C.simulate(config());
-    if (!r.ok) { return; }
+    var hunt = !!(S && S.mode === 'hunt');
+    var r = hunt && C.simulateHunt ? C.simulateHunt(huntConfig()) : C.simulate(config());
+    if (!r || !r.ok) { return; }
     if (el.shareName) { el.shareName.value = buildTitle(); }
     if (el.shareMemo) { el.shareMemo.value = ''; }
     if (el.shareSum) {
-      el.shareSum.textContent = '8칸 · 평타 빈 시간 ' + num(r.idlePct, 1) + '% (' + num(r.idle, 1) + '초) · DPS ' + num(r.dps, 1) + '%/초' +
-        (enhSummaryText() ? ' · ' + enhSummaryText() : '');
+      /* v66 — 자사 조합은 분당 처치 기준으로 요약 */
+      el.shareSum.textContent = hunt
+        ? '자사 · 분당 ' + num(r.killsPerMin, 1) + '마리 · ' +
+          (r.ground ? r.ground.name : '평타 ' + num(r.killHits, 1) + '방 기준') +
+          (enhSummaryText() ? ' · ' + enhSummaryText() : '')
+        : '8칸 · 평타 빈 시간 ' + num(r.idlePct, 1) + '% (' + num(r.idle, 1) + '초) · DPS ' + num(r.dps, 1) + '%/초' +
+          (enhSummaryText() ? ' · ' + enhSummaryText() : '');
     }
     if (el.shareNote) {
       el.shareNote.textContent = API.live
@@ -1089,6 +1096,23 @@
     if (el.shareBox) { el.shareBox.hidden = true; }
   }
 
+  /* v66 — 자사계산기 조합 공유: 사냥터·자사 스펙까지 함께 저장 (config 는 jsonb 라 SQL 변경 없음) */
+  function huntSharedConfig() {
+    var cfg = sharedConfig();
+    var h = S.hunt || defaults().hunt;
+    cfg.mode = 'hunt';
+    cfg.hunt = {
+      duration: h.duration, hpMode: h.hpMode, groundId: h.groundId,
+      killHits: h.killHits, maxMobs: h.maxMobs, respawnSec: h.respawnSec,
+      critHit: h.critHit, critRes: h.critRes, critPct: h.critPct, critDmgPct: h.critDmgPct,
+      autoCoeff: h.autoCoeff, maxHp: h.maxHp, mobDmg: h.mobDmg,
+      mobAtkInterval: h.mobAtkInterval, healAtPct: h.healAtPct, aggroMode: h.aggroMode,
+      myAtk: h.myAtk, myAutoDmg: h.myAutoDmg, hpRegen: h.hpRegen,
+      normalMobDmgPct: h.normalMobDmgPct, autoInterval: h.autoInterval
+    };
+    return cfg;
+  }
+
   function saveShare() {
     var name = (el.shareName && el.shareName.value || '').trim();
     var memo = (el.shareMemo && el.shareMemo.value || '').trim();
@@ -1097,15 +1121,19 @@
       if (el.shareName) { el.shareName.focus(); }
       return;
     }
-    var r = C.simulate(config());
-    if (!r.ok) { return; }
+    var hunt = !!(S && S.mode === 'hunt');
+    var hr = hunt && C.simulateHunt ? C.simulateHunt(huntConfig()) : null;
+    var rr = C.simulate(config());
+    if (hunt && (!hr || !hr.ok)) { return; }
+    if (!hunt && (!rr || !rr.ok)) { return; }
     var payload = {
       title: name.slice(0, 40),
       memo: memo.slice(0, 200),
       slots: S.slots.slice(0, 8),
-      config: sharedConfig(),
-      idlePct: r.idlePct,
-      dps: r.dps
+      config: hunt ? huntSharedConfig() : sharedConfig(),
+      /* 목록 비교용 숫자는 단일 보스 기준을 유지 (자사 조합도 같은 8칸이라 계산됩니다) */
+      idlePct: rr && rr.ok ? rr.idlePct : 0,
+      dps: rr && rr.ok ? rr.dps : 0
     };
     var saveBtn = el.shareBox.querySelector('[data-act="share-save"]');
     if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '저장 중…'; }
@@ -1191,11 +1219,20 @@
       ? cfg.castOrder.map(function (v) { return Number(v) || null; }).filter(function (v) { return v && C.skillById(v); })
       : [];
     S.opt = null;
+    /* v66 — 자사 조합이면 사냥터·스펙 설정도 함께 복원하고 자사 모드로 전환 */
+    if (cfg.hunt && typeof cfg.hunt === 'object') {
+      S.hunt = Object.assign(defaults().hunt, cfg.hunt);
+      S.mode = 'hunt';
+    } else {
+      S.mode = 'raid';
+    }
     renderSlots();
     renderSin();
     renderOrder();
     renderEnhance();
     renderTune();
+    renderHuntForm();
+    applyMode();
     recompute();
     if (el.root && el.root.scrollIntoView) { el.root.scrollTop = 0; }
     if (el.onToast) { el.onToast('📌 "' + (it.title || '조합') + '"을(를) 불러왔어요'); }
@@ -1843,6 +1880,11 @@
         : '  <div class="ds-card"><span>평균 때리는 몹 <em>비선공</em></span><strong>' + num(r.avgAggro, 1) + '<small>마리</small></strong></div>'),
       '  <div class="ds-card"><span>평타 횟수</span><strong>' + r.autoCount + '<small>회</small></strong></div>',
       (r.mobHpEstimate ? '  <div class="ds-card ds-card--wide"><span>추정 몹 체력</span><strong>약 ' + group(r.mobHpEstimate) + '<small>HP</small></strong><em>평타 ' + num(r.killHits, 2) + '방 × 내 기본 평타 ' + group(r.myAutoDmg) + '</em></div>' : ''),
+      '</div>',
+      /* v66 — 자사계산기에서도 바로 문파 공유 (준형 님 요청) */
+      '<div class="ds-sharebar">' +
+      '<button type="button" class="ds-btn ds-btn--share" data-act="share-open">💾 이 조합 문파에 공유하기</button>' +
+      '<p class="ds-sharebar__note">장착 8칸 · 시전 순서 · <b>사냥터 · 자사 스펙</b>까지 함께 저장됩니다.</p>' +
       '</div>',
       '<div class="ds-block"><p class="ds-block__title">도술별 기여 · 처치</p>' +
         '<div class="ds-hunt__tbl"><div class="ds-hunt__row ds-hunt__row--head">' +
