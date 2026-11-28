@@ -6167,6 +6167,25 @@ body.is-locked { overflow: hidden; }
 .ds-sticky__alt b { font-family: var(--serif); font-size: 16px; font-weight: 800; color: #f0d9a5; line-height: 1.1; }
 .ds-sticky__alt em { font-style: normal; font-size: 9.5px; font-weight: 700; color: rgba(240, 217, 165, .8); }
 .ds-sticky__go { font-size: 12px; font-weight: 800; color: rgba(147, 183, 174, .78); white-space: nowrap; line-height: 1; }
+/* v62 — 가운데 빈 공간의 「실제 사냥은 더 낮아요」 안내 (자사 모드 전용 · 320px 까지 한 줄 유지) */
+.ds-sticky__note {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  padding: 0 2px;
+  text-align: center;
+  font-size: clamp(9px, 2.7vw, 10.5px);
+  line-height: 1.3;
+  letter-spacing: -.02em;
+  white-space: nowrap;
+  color: rgba(203, 224, 217, .72);
+}
+.ds-sticky__note b { font-weight: 800; color: rgba(255, 233, 199, .92); }
+.ds-sticky__note i { font-style: normal; font-weight: 700; color: rgba(203, 224, 217, .72); }
 .ds-sticky.is-safe {
   border-bottom-color: rgba(74, 222, 128, .6);
   background: linear-gradient(180deg, rgba(8, 40, 32, .97), rgba(4, 26, 26, .94));
