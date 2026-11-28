@@ -790,7 +790,28 @@
        (궁극기는 눈물을 쌓지도, 쿨이 줄지도 않습니다 — 인게임 수동 테스트로 확인, v59) */
     var nonUltSeq = 0;
     var halfTrig = 0, halfSaved = 0;
-    /* 파멸 요기범람 — 14회마다 켜지는 30초 피해 +20% 버프 구간 */
+    /* 파멸 요기범람 — 영력 200(도술 14회)이 차면 켜지는 30초 구간
+       (피해 +% · 궁극기를 뺀 도술 쿨 초기화)
+       ---------------------------------------------------------
+       v61 (2026-11-28 준형 님 인게임 확인) — 재발동 규칙
+         · 30초가 도는 동안에도 도술을 쓰면 영력은 계속 차지만 **최대 200(14회)에서 멈춥니다**
+           (30초 동안 20번 써도 14+6으로 이월되지 않습니다)
+         · 30초가 끝나기 전에는 **다시 발동하지 않습니다** (영력 200에서 대기)
+         · 30초가 딱 끝나는 순간 영력이 200이면 **그때 200이 소모되며 재발동**합니다
+           (피해 +% 30초 갱신 + 궁극기를 뺀 도술 쿨 초기화 · 영력 0부터 다시)
+         · 30초가 끝났을 때 아직 14회가 안 찼으면, 그 뒤 14회가 차는 시점에 발동합니다
+       → 요기범람이 있는 계열(파멸)은 **지속이 끝난 뒤에만** 발동합니다.
+          「쿨 초기화」 토글만 켜도 같은 30초 지속을 적용합니다(요기범람은 한 가지 효과라
+          피해 +%를 꺼도 재발동 규칙은 그대로입니다). 지속 시간 정보가 없는 다른 계열의
+          resetEvery(현재 데이터에는 없음)는 예전처럼 회수마다 발동합니다. */
+    var ovOn = fx.resetEvery > 0 || (fx.dmgBuffEvery > 0 && fx.dmgBuffSec > 0);
+    var ovEvery = ovOn ? (fx.resetEvery > 0 ? fx.resetEvery : fx.dmgBuffEvery) : 0;
+    var ovSec = fx.dmgBuffSec > 0 ? fx.dmgBuffSec : 30;
+    /* 타임라인 표시용 계열 색 — 요기범람을 켠 신식 토글의 계열 */
+    var ovStyle = '';
+    (built.toggles || []).forEach(function (tg) {
+      if (!ovStyle && tg.fx && (tg.fx.resetEvery > 0 || tg.fx.dmgBuffSec > 0)) { ovStyle = tg.style; }
+    });
     var buffUntil = -Infinity;
     var castsSinceBuff = 0;
     var buffTrig = 0;
@@ -822,6 +843,25 @@
         if (e.readyAt > now) {
           e.readyAt = Math.max(now, e.readyAt - amt);
         }
+      }
+    }
+
+    /* 요기범람 발동 — at 시각에 영력 200을 소모하고 30초 지속을 새로 켭니다.
+       (at 은 「30초가 끝나는 시각」일 수도, 방금 도술이 끝난 시각일 수도 있습니다)
+       · 다른 신식 게이지·용맹의 기운과 같은 순서(도술 피해 계산 뒤)에서만 불립니다 */
+    function fireOverflow(at, style) {
+      castsSinceReset = 0;
+      if (buffFrom > -Infinity) {
+        buffTime += Math.max(0, Math.min(duration, buffUntil) - buffFrom);
+      }
+      buffFrom = Math.min(duration, at);
+      buffUntil = buffFrom + ovSec;
+      buffTrig += 1;
+      if (fx.resetEvery > 0) {
+        for (var q = 0; q < n; q++) {
+          if (list[q].kind !== 'ult') { list[q].readyAt = at; }
+        }
+        segments.push({ t0: at, t1: at, kind: 'mark', name: '요기범람', style: style, color: styleColor(style) });
       }
     }
 
@@ -1050,6 +1090,11 @@
     }
 
     while (t < duration - EPS && guard++ < 20000) {
+      /* 요기범람 — 30초 지속이 이미 끝났고 그동안 영력이 200(14회)까지 차 있었으면,
+         도술을 쓰지 않은 대기·평타 중이라도 **끝난 시각에 그 자리에서** 재발동합니다 */
+      if (ovOn && castsSinceReset >= ovEvery && t >= buffUntil - EPS) {
+        fireOverflow(t, ovStyle);
+      }
       /* 쓸 수 있는 도술 고르기 — 슬롯 순서(우선순위)대로 */
       var pick = -1;
       var pickOrder = Infinity;
@@ -1066,6 +1111,11 @@
       if (pick < 0) {
         /* 쿨이 모두 비었다 → 평타 구간 */
         var end = Math.min(duration, nextReady === Infinity ? duration : nextReady);
+        /* 영력 200이 지속이 끝나기를 기다리는 중이면, 끝나는 시각에서 창을 끊어
+           그 순간 재발동(쿨 초기화)이 계산되게 합니다 */
+        if (ovOn && castsSinceReset >= ovEvery && buffUntil > t + EPS) {
+          end = Math.min(end, buffUntil);
+        }
         if (end > t + EPS) {
           idle += end - t;
           /* 용맹의 기운 버프가 걸린 시간만 따로 세어 평타에도 배수를 붙입니다 */
@@ -1086,6 +1136,9 @@
       }
 
       var cur = list[pick];
+      /* 시전을 시작하는 순간에 이미 영력 200이 차 있었는지 — 이 시전이 30초 끝자락을
+         걸치면 「끝난 시각」에 재발동해야 하므로 미리 기억해 둡니다 */
+      var ovFullAtStart = ovOn && castsSinceReset >= ovEvery && t < buffUntil - EPS;
       /* 연계기가 켜져 있으면 1단계 + 연계 시전 시간을 한 번에 점유합니다 */
       var castLen = cur.cast + (cur.chain ? cur.chainCast : 0) + gap;
       if (t + castLen > duration) { castLen = duration - t; }
@@ -1208,12 +1261,14 @@
          쌍검 가르기 10초 · 월식 12초를 그대로 기다립니다. */
       var cd = cur.cd;
 
-      /* 파멸 신식(요기범람) — 궁극기를 제외한 도술을 쓸 때마다 영력 15.
-         14회(= 영력 200)가 된 순간에 요기범람이 켜져 30초 동안 피해 +20%가 붙습니다.
-         (14회 쿨 초기화 토글과 별개로, 피해 +20% 토글만 켜도 14회마다 발동합니다.
-          영력은 그 도술을 쓴 뒤에 차므로, 14회째 도술이 끝난 시점부터 30초를 세고
-          그 도술 자체에는 +20%가 붙지 않습니다.) */
-      if (cur.kind !== 'ult' && fx.dmgBuffEvery > 0) {
+      /* 파멸 신식(요기범람) — 궁극기를 제외한 도술을 쓸 때마다 영력이 15씩 차고,
+         14회(= 영력 200)가 되면 요기범람이 켜져 30초 지속이 돕니다.
+         v61부터는 위의 요기범람 경로(ovOn)가 피해 버프와 쿨 초기화를 **한 발동**으로 다룹니다
+         (지속 중 재발동 없음 · 지속이 끝나는 순간 영력 200이면 그때 발동).
+         여기는 지속 시간 정보가 없는(fx.dmgBuffSec 0) 예전 방식의 버프 토글만 남은 길입니다.
+         영력은 그 도술을 쓴 뒤에 차므로, 14회째 도술이 끝난 시점부터 30초를 세고
+         그 도술 자체에는 +20%가 붙지 않습니다. */
+      if (!ovOn && cur.kind !== 'ult' && fx.dmgBuffEvery > 0) {
         castsSinceBuff += 1;
         if (castsSinceBuff >= fx.dmgBuffEvery) {
           castsSinceBuff = 0;
@@ -1280,16 +1335,30 @@
 
       t = t + castLen;
 
+      /* 요기범람 — 이 시전이 30초 끝자락을 걸쳤고 그 전에 영력이 200이었으면,
+         지속이 끝난 시각에 먼저 발동시킵니다(새 30초는 그 시각부터) */
+      if (ovFullAtStart && buffUntil <= t + EPS) {
+        fireOverflow(buffUntil, cur.style);
+      }
+
       /* 신식 게이지 — 일정 횟수마다 쿨 초기화 */
       if (cur.kind !== 'ult') {
-        castsSinceReset += 1;
         castsSinceUltReset += 1;
-        if (fx.resetEvery && castsSinceReset >= fx.resetEvery) {
-          castsSinceReset = 0;
-          for (i = 0; i < n; i++) {
-            if (list[i].kind !== 'ult') { list[i].readyAt = t; }
+        if (ovOn) {
+          /* 영력은 지속 중에도 차지만 최대 200(ovEvery회)에서 멈춥니다 */
+          castsSinceReset = Math.min(ovEvery, castsSinceReset + 1);
+          if (t >= buffUntil - EPS && castsSinceReset >= ovEvery) {
+            fireOverflow(t, cur.style);
           }
-          segments.push({ t0: t, t1: t, kind: 'mark', name: '요기/강압', style: cur.style, color: styleColor(cur.style) });
+        } else {
+          castsSinceReset += 1;
+          if (fx.resetEvery && castsSinceReset >= fx.resetEvery) {
+            castsSinceReset = 0;
+            for (i = 0; i < n; i++) {
+              if (list[i].kind !== 'ult') { list[i].readyAt = t; }
+            }
+            segments.push({ t0: t, t1: t, kind: 'mark', name: '요기/강압', style: cur.style, color: styleColor(cur.style) });
+          }
         }
         if (fx.ultResetEvery && ult && castsSinceUltReset >= fx.ultResetEvery) {
           castsSinceUltReset = 0;
@@ -1787,7 +1856,25 @@
     var castsSinceReset = 0;
     var castsSinceUltReset = 0;
     var nonUltSeq = 0;
-    var cdFx = { halfTrig: 0, halfSaved: 0, resetTrig: 0, gaugeCuts: 0, ultResetTrig: 0, flatCdCuts: 0 };
+    var cdFx = { halfTrig: 0, halfSaved: 0, resetTrig: 0, gaugeCuts: 0, ultResetTrig: 0, flatCdCuts: 0, resetAt: [] };
+    /* 파멸 요기범람 재발동 규칙 (v61 · simulate 와 같은 규칙)
+       · 30초 지속 중에는 재발동하지 않고 영력이 200(14회)에서 대기
+       · 30초가 끝나는 순간 영력 200이면 그때 재발동(쿨 초기화 · 30초 갱신) */
+    var ovOn = fx.resetEvery > 0 || (fx.dmgBuffEvery > 0 && fx.dmgBuffSec > 0);
+    var ovEvery = ovOn ? (fx.resetEvery > 0 ? fx.resetEvery : fx.dmgBuffEvery) : 0;
+    var ovSec = fx.dmgBuffSec > 0 ? fx.dmgBuffSec : 30;
+    var ovUntil = -Infinity;
+    function fireHuntOverflow(at) {
+      castsSinceReset = 0;
+      ovUntil = Math.min(duration, at) + ovSec;
+      cdFx.resetAt.push(round(at, 3));
+      if (fx.resetEvery > 0) {
+        for (var q2 = 0; q2 < n; q2++) {
+          if (list[q2].kind !== 'ult') { list[q2].readyAt = at; }
+        }
+        cdFx.resetTrig += 1;
+      }
+    }
     /* 신식 게이지 상태 — 쿨에 영향을 주는 부분만 씁니다(피해 배수는 avgMul 몫) */
     var gauges = (built.gauges || []).map(function (g) {
       return { style: g.style, name: g.name, def: g.def, on: g.on || [], v: 0, lastT: 0, stacks: [] };
@@ -2104,6 +2191,11 @@
     while (t < duration - EPS && guard++ < 100000) {
       respawnUpTo(t);
       stepTo(t);
+      /* 요기범람 — 지속이 이미 끝났고 그동안 영력 200이 차 있었으면 대기·평타 중이라도
+         끝난 시각에 바로 재발동합니다 */
+      if (ovOn && castsSinceReset >= ovEvery && t >= ovUntil - EPS) {
+        fireHuntOverflow(t);
+      }
       var pick = -1;
       var pickOrder = Infinity;
       var nextReady = Infinity;
@@ -2132,6 +2224,8 @@
 
       if (pick >= 0) {
         var cur = list[pick];
+        /* 시전을 시작할 때 이미 영력 200이 차 있었는지 — 30초 끝자락을 걸치면 끝난 시각에 발동 */
+        var ovFullAtStart = ovOn && castsSinceReset >= ovEvery && t < ovUntil - EPS;
         var castLen = cur.cast + (cur.chain ? cur.chainCast : 0) + cfg.gap;
         if (t + castLen > duration) { castLen = duration - t; }
         if (castLen <= EPS) { break; }
@@ -2211,16 +2305,27 @@
           vCasts += 1;
         }
         t = end;
+        /* 요기범람 — 시전이 30초 끝자락을 걸쳤고 그 전에 영력이 200이었으면 끝난 시각에 발동 */
+        if (ovFullAtStart && ovUntil <= end + EPS) {
+          fireHuntOverflow(ovUntil);
+        }
         /* 일정 횟수마다 쿨 초기화 (파멸 요기범람 14회 등) */
         if (cur.kind !== 'ult') {
-          castsSinceReset += 1;
           castsSinceUltReset += 1;
-          if (fx.resetEvery && castsSinceReset >= fx.resetEvery) {
-            castsSinceReset = 0;
-            for (k = 0; k < n; k++) {
-              if (list[k].kind !== 'ult') { list[k].readyAt = t; }
+          if (ovOn) {
+            castsSinceReset = Math.min(ovEvery, castsSinceReset + 1);
+            if (t >= ovUntil - EPS && castsSinceReset >= ovEvery) {
+              fireHuntOverflow(t);
             }
-            cdFx.resetTrig += 1;
+          } else {
+            castsSinceReset += 1;
+            if (fx.resetEvery && castsSinceReset >= fx.resetEvery) {
+              castsSinceReset = 0;
+              for (k = 0; k < n; k++) {
+                if (list[k].kind !== 'ult') { list[k].readyAt = t; }
+              }
+              cdFx.resetTrig += 1;
+            }
           }
           if (fx.ultResetEvery && ult && castsSinceUltReset >= fx.ultResetEvery) {
             castsSinceUltReset = 0;
@@ -2236,6 +2341,10 @@
         if (!mobs[k].alive && mobs[k].respawnAt > t + EPS && mobs[k].respawnAt < nextRespawn) { nextRespawn = mobs[k].respawnAt; }
       }
       var until = Math.min(duration, nextReady === Infinity ? duration : nextReady, nextRespawn);
+      /* 영력 200이 지속 끝나기를 기다리는 중이면, 끝나는 시각에서 창을 끊어 그 순간 재발동 */
+      if (ovOn && castsSinceReset >= ovEvery && ovUntil > t + EPS) {
+        until = Math.min(until, ovUntil);
+      }
       /* 헌신 회복 — 체력이 발동 % 를 지나는 시각에 창을 끊습니다.
          평타만 치는 긴 창에서 체력이 먼저 바닥나 버리면, 회복을 쓸 기회 자체가
          없어 보이기 때문입니다(회복 도술이 준비돼 있을 때만). */
