@@ -87,9 +87,10 @@ create table if not exists private.user_lottery_weekly (
 create table if not exists private.lottery_prizes (
   tier int primary key,
   weight_permille int not null,
-  kind text not null check (kind in ('item','points','none')),
+  kind text not null check (kind in ('item','points','choice','none')),
   item_id text references public.shop_items(id),
-  points int not null default 0
+  points int not null default 0,
+  choice_items text[]   -- kind='choice' 일 때 수령 선택지 (예: 남/여 코스튬)
 );
 
 create table if not exists private.lottery_draws (
@@ -100,6 +101,8 @@ create table if not exists private.lottery_draws (
   item_id text,
   points int,
   refunded int not null default 0,
+  claimed boolean not null default true,   -- 즉시 지급은 true, 선택 수령 대기(pending)만 false
+  pending_choices text[],                  -- pending 시 수령 가능한 선택지 스냅샷
   created_at timestamptz not null default now()
 );
 

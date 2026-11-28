@@ -2,6 +2,7 @@
 -- 마이홈 업데이트 3/3: 주간 복권 RPC
 --   · 01·02 이후에 실행
 --   · 1장 1,000P / 주 100장 선착순 / 1인 주 5장 / 토요일(KST) 추첨 기준 주차 키
+--   · kind='choice'(3등 남/여 코스튬)는 당첨 시 보류(pending) → myhome_lottery_claim 으로 수령
 --   · 당첨표 시드는 확정 전까지 주석 유지 (확률·아이템 ID 확정 후 주석 해제)
 -- ===========================================================================
 
@@ -21,6 +22,7 @@ declare
   v_roll int; v_acc int := 0;
   pr private.lottery_prizes;
   v_tier int; v_item text; v_pts int := 0; v_refund int := 0; v_price int;
+  v_draw_id bigint;
 begin
   v_actor := private.current_member(p_token);
   insert into private.lottery_weekly_pool(week_key) values (v_week) on conflict do nothing;
@@ -65,32 +67,89 @@ begin
       else
         insert into private.user_items(member_id, item_id) values (v_actor.member_id, v_item);
       end if;
+      insert into private.lottery_draws(member_id, week_key, tier, item_id, points, refunded)
+      values (v_actor.member_id, v_week, v_tier, v_item, 0, v_refund)
+      returning id into v_draw_id;
     elsif pr.kind = 'points' then
       v_pts := pr.points;
       update private.members set point_balance = point_balance + v_pts where id = v_actor.member_id;
       insert into private.point_ledger(member_id, delta, reason, ref)
       values (v_actor.member_id, v_pts, 'lottery_prize', v_week || ':' || v_tier);
+      insert into private.lottery_draws(member_id, week_key, tier, points)
+      values (v_actor.member_id, v_week, v_tier, v_pts)
+      returning id into v_draw_id;
+    elsif pr.kind = 'choice' then
+      -- 선택 수령 대기: 아이템은 넣지 않고 pending으로 기록, claim RPC로 수령
+      insert into private.lottery_draws(member_id, week_key, tier, claimed, pending_choices)
+      values (v_actor.member_id, v_week, v_tier, false, pr.choice_items)
+      returning id into v_draw_id;
+      return jsonb_build_object('tier', v_tier, 'pending', true, 'draw_id', v_draw_id,
+        'choices', to_jsonb(pr.choice_items),
+        'remaining', (select max_total - sold from private.lottery_weekly_pool where week_key = v_week));
+    else  -- 'none'
+      insert into private.lottery_draws(member_id, week_key, tier)
+      values (v_actor.member_id, v_week, v_tier)
+      returning id into v_draw_id;
     end if;
+  else
+    insert into private.lottery_draws(member_id, week_key, tier)   -- 꽝
+    values (v_actor.member_id, v_week, null)
+    returning id into v_draw_id;
   end if;
-
-  insert into private.lottery_draws(member_id, week_key, tier, item_id, points, refunded)
-  values (v_actor.member_id, v_week, v_tier, v_item, v_pts, v_refund);
 
   return jsonb_build_object('tier', v_tier, 'item_id', v_item, 'points', v_pts, 'refunded', v_refund,
     'remaining', (select max_total - sold from private.lottery_weekly_pool where week_key = v_week));
 end $$;
 
+-- pending 경품 수령: 본인·미수령·선택지 안 아이템인지 한 방 UPDATE로 원자 검증.
+-- 이미 보유한 쪽을 골라도 상점가 30% 환급으로 처리. 미수령 draw는 만료 없이 유지.
+create or replace function public.myhome_lottery_claim(p_token text, p_draw_id bigint, p_item text)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare
+  v_actor private.session_actor;
+  d private.lottery_draws;
+  v_price int; v_refund int := 0;
+begin
+  v_actor := private.current_member(p_token);
+  update private.lottery_draws
+     set claimed = true, item_id = p_item
+   where id = p_draw_id
+     and member_id = v_actor.member_id
+     and claimed = false
+     and p_item = any(pending_choices)
+  returning * into d;
+  if not found then
+    raise exception '이미 받았거나 받을 수 없는 경품이에요.' using errcode = 'P0001';
+  end if;
+  if exists (select 1 from private.user_items u
+             where u.member_id = v_actor.member_id and u.item_id = p_item) then
+    -- 이미 보유한 쪽 선택: 상점가 30% 환급
+    v_price := (select price from public.shop_items where id = p_item);
+    v_refund := floor(v_price * 0.3)::int;
+    update private.members set point_balance = point_balance + v_refund where id = v_actor.member_id;
+    insert into private.point_ledger(member_id, delta, reason, ref)
+    values (v_actor.member_id, v_refund, 'lottery_dup_refund', p_item);
+    update private.lottery_draws set refunded = v_refund where id = d.id;
+  else
+    insert into private.user_items(member_id, item_id) values (v_actor.member_id, p_item);
+  end if;
+  return jsonb_build_object('ok', true, 'item_id', p_item, 'refunded', v_refund);
+end $$;
+
 revoke all on function public.myhome_lottery_buy(text) from public;
 grant execute on function public.myhome_lottery_buy(text) to anon, authenticated;
+revoke all on function public.myhome_lottery_claim(text, bigint, text) from public;
+grant execute on function public.myhome_lottery_claim(text, bigint, text) to anon, authenticated;
 
 -- ---------------------------------------------------------------------------
--- 당첨표 시드 (확인 필요: 1~3등 item_id는 확정된 상점 ID로, 합계 55% + 꽝 45%는
--- 보드 확정치 해석이라 혜민 님 확인 후 주석 해제)
+-- 당첨표 시드 (방 합의: 확률 0.5/1.5/3/20/30% + 꽝 45%, 3등은 남/여 코스튬 선택 수령.
+-- ※ 실행 전 확인 2개: ① 준형 님/오둥이 최종 확인 ② shop_items 카탈로그 시드 선행
+--    — lottery_prizes.item_id 와 choice_items 가 shop_items 를 참조하므로)
 -- ---------------------------------------------------------------------------
--- insert into private.lottery_prizes(tier, weight_permille, kind, item_id, points) values
---   (1,   5, 'item',   '<크리스마스 홈 세트 id>',   0),
---   (2,  15, 'item',   '<크리스마스 배경 id>',      0),
---   (3,  30, 'item',   '<크리스마스 코스튬 id>',    0),
---   (4, 200, 'points', null,                        500),
---   (5, 300, 'points', null,                        100)
+-- insert into private.lottery_prizes(tier, weight_permille, kind, item_id, points, choice_items) values
+--   (1,   5, 'item',   'set_xmas_2026',   0, null),
+--   (2,  15, 'item',   'bg_xmas_2026',    0, null),
+--   (3,  30, 'choice', null,              0, array['costume_xmas_m','costume_xmas_f']),
+--   (4, 200, 'points', null,            500, null),
+--   (5, 300, 'points', null,            100, null)
 -- on conflict (tier) do nothing;
