@@ -6,8 +6,12 @@
    v61 (2026-11-28) — 파멸 요기범람 재발동 규칙 정정 — 30초 지속 중에는 쿨초가 다시 돌지 않고(영력 200 대기), 30초가 끝나는 순간 200이면 그때 재발동
    v62 (2026-11-28) — 자사계산기 고정 요약 바 가운데에 「전부 명중 · 딸피 우선 기준 / 실제 사냥은 이보다 낮아요」 안내
    v63 (2026-11-28) — 만료된 외부 체험 링크 「삭제」 버튼 (delete_guest_game_link RPC · migration-v63-delete-guest-link.sql)
-   v64 (2026-11-28) — 상단 「🌸 연못」 누르면 최신 버전 받아 새로고침 (SKIP_WAITING 메시지 처리) */
-var CACHE_NAME = 'yeonmot-munpa-v64';
+   v64 (2026-11-28) — 상단 「🌸 연못」 누르면 최신 버전 받아 새로고침 (SKIP_WAITING 메시지 처리)
+   v65 (2026-11-28) — 자사 고정 바 문구 「실제 사냥은 약 10% 낮아요」 · 옛 캐시 정리 보강
+     · activate 가 `yeonmot-munpa-` 로 시작하는 구버전 캐시를 확실히 지운다 (접두사 기준 · 네비게이션마다 한 번 더)
+     · 캐시 읽기·쓰기를 이 워커의 캐시로 한정 — 옛 워커가 남은 탭이 옛 캐시를 다시 만들지 않는다 */
+var CACHE_NAME = 'yeonmot-munpa-v65';
+var CACHE_PREFIX = 'yeonmot-munpa-';
 var CORE_ASSETS = [
   './',
   './index.html',
@@ -156,6 +160,27 @@ self.addEventListener('message', function (event) {
   if (event.data && event.data.type === 'SKIP_WAITING') { self.skipWaiting(); }
 });
 
+/* 이 서비스워커가 지금 등록의 활성 워커인가 —
+   새 워커가 이미 활성인데 옛 워커가 남은 탭이 있으면, 그 옛 워커는 캐시를 쓰지 않는다. */
+function isActiveWorker() {
+  var reg = self.registration;
+  return !reg || !reg.active || reg.active === self;
+}
+
+/* 연못 캐시(yeonmot-munpa-v57 같은 옛 이름)만 골라 지운다.
+   duck-mui1.github.io 한 주소에 다른 페이지 캐시가 있어도 건드리지 않는다. */
+function cleanupStaleCaches() {
+  if (typeof caches === 'undefined') { return Promise.resolve([]); }
+  return caches.keys().then(function (keys) {
+    var stale = keys.filter(function (key) {
+      return key.indexOf(CACHE_PREFIX) === 0 && key !== CACHE_NAME;
+    });
+    return Promise.all(stale.map(function (key) { return caches.delete(key); })).then(function () {
+      return stale;
+    });
+  }).catch(function () { return []; });
+}
+
 self.addEventListener('install', function (event) {
   event.waitUntil(
     caches.open(CACHE_NAME).then(function (cache) {
@@ -168,13 +193,11 @@ self.addEventListener('install', function (event) {
 
 self.addEventListener('activate', function (event) {
   event.waitUntil(
-    caches.keys().then(function (keys) {
-      return Promise.all(keys.map(function (key) {
-        if (key !== CACHE_NAME) { return caches.delete(key); }
-        return null;
-      }));
-    }).then(function () {
+    cleanupStaleCaches().then(function () {
       return self.clients.claim();
+    }).then(function () {
+      /* claim 직후 옛 탭이 옛 캐시를 다시 만드는 경우까지 한 번 더 정리 */
+      return cleanupStaleCaches();
     })
   );
 });
@@ -186,11 +209,16 @@ self.addEventListener('fetch', function (event) {
   var url = new URL(request.url);
   if (url.origin !== self.location.origin) { return; }
 
+  /* 화면을 열 때마다 구버전 연못 캐시가 남아 있지 않은지 확인 (지울 게 없으면 그냥 끝난다) */
+  if (request.mode === 'navigate' && isActiveWorker()) {
+    event.waitUntil(cleanupStaleCaches());
+  }
+
   event.respondWith(
-    caches.match(request, { ignoreSearch: true }).then(function (cached) {
+    caches.match(request, { ignoreSearch: true, cacheName: CACHE_NAME }).then(function (cached) {
       if (cached) { return cached; }
       return fetch(request).then(function (response) {
-        if (response && response.status === 200 && response.type === 'basic') {
+        if (response && response.status === 200 && response.type === 'basic' && isActiveWorker()) {
           var copy = response.clone();
           caches.open(CACHE_NAME).then(function (cache) {
             cache.put(request, copy);
@@ -199,9 +227,9 @@ self.addEventListener('fetch', function (event) {
         return response;
       }).catch(function () {
         if (request.mode === 'navigate') {
-          return caches.match('./index.html');
+          return caches.match('./index.html', { cacheName: CACHE_NAME });
         }
-        return caches.match('./');
+        return caches.match('./', { cacheName: CACHE_NAME });
       });
     })
   );

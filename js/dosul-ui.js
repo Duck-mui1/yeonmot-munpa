@@ -1657,10 +1657,11 @@
         '  <span class="ds-sticky__cap">분당 처치</span>',
         '  <span class="ds-sticky__val" id="ds-sticky-permin">' + (r ? num(r.killsPerMin, 1) : '–') + '<em>마리/분</em></span>',
         '</div>',
-        /* v62 — 가운데 빈 공간: 실제 사냥과의 차이 안내 (자사 모드에서만) */
+        /* v62 — 가운데 빈 공간: 실제 사냥과의 차이 안내 (자사 모드에서만)
+           v65 — 「이보다」 → 「약 10%」로 구체적으로 */
         '<span class="ds-sticky__note" id="ds-sticky-note">',
         '  <b>전부 명중 · 딸피 우선 기준</b>',
-        '  <i>실제 사냥은 이보다 낮아요</i>',
+        '  <i>실제 사냥은 약 10% 낮아요</i>',
         '</span>',
         (stt
           ? '<span class="ds-sticky__state ' + stt.lv.cls + '" id="ds-sticky-state" data-sticky-jump="surv">' +
