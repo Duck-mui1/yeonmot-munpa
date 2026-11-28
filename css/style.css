@@ -3788,7 +3788,8 @@ body.is-locked { overflow: hidden; }
 /* =========================================================
    ⚔️ 도술 효율 · 평타 빈 시간 계산기 — 하단 「도술」 탭
    ========================================================= */
-.screen--dosul { padding: 16px 14px 26px; }
+/* v55 — 고정 요약 바가 화면 맨 위(top:0)에 붙도록 위 여백은 바가 갖습니다 */
+.screen--dosul { padding: 0 14px 26px; }
 .ds-page { display: flex; flex-direction: column; }
 .ds-head { margin: 0 0 12px; }
 .ds-head__kicker {
@@ -6044,9 +6045,124 @@ body.is-locked { overflow: hidden; }
   font-size: 9.5px;
   font-weight: 800;
 }
-.ds-hunt__lv.is-safe { background: rgba(127, 209, 189, .2); color: #b8ecdd; border: 1px solid rgba(127, 209, 189, .45); }
-.ds-hunt__lv.is-warn { background: rgba(240, 200, 120, .18); color: #ffe9b8; border: 1px solid rgba(240, 200, 120, .42); }
-.ds-hunt__lv.is-danger { background: rgba(242, 120, 120, .2); color: #ffc9c9; border: 1px solid rgba(242, 120, 120, .45); }
+.ds-hunt__lv.is-safe { background: rgba(74, 222, 128, .16); color: #4ade80; border: 1px solid rgba(74, 222, 128, .55); }
+.ds-hunt__lv.is-warn { background: rgba(251, 191, 36, .16); color: #fbbf24; border: 1px solid rgba(251, 191, 36, .55); }
+.ds-hunt__lv.is-danger { background: rgba(248, 113, 113, .18); color: #f87171; border: 1px solid rgba(248, 113, 113, .58); }
+
+/* v55 — 여유(녹색) · 주의(노랑) · 위험(빨강): 카드 테두리·배경·제목 글씨까지 상태 색으로 */
+.ds-hunt__surv.is-safe {
+  border-color: rgba(74, 222, 128, .5);
+  background: linear-gradient(168deg, rgba(12, 48, 32, .86), rgba(5, 24, 22, .92));
+  box-shadow: 0 0 0 1px rgba(74, 222, 128, .12) inset;
+}
+.ds-hunt__surv.is-safe .ds-hunt__survhead { color: #86efac; }
+.ds-hunt__surv.is-safe .ds-hunt__survhead em { color: rgba(134, 239, 172, .8); }
+.ds-hunt__surv.is-safe .ds-hunt__key strong { color: #4ade80; }
+.ds-hunt__surv.is-warn {
+  border-color: rgba(251, 191, 36, .5);
+  background: linear-gradient(168deg, rgba(48, 38, 12, .86), rgba(24, 20, 8, .92));
+  box-shadow: 0 0 0 1px rgba(251, 191, 36, .12) inset;
+}
+.ds-hunt__surv.is-warn .ds-hunt__survhead { color: #fcd34d; }
+.ds-hunt__surv.is-warn .ds-hunt__survhead em { color: rgba(252, 211, 77, .8); }
+.ds-hunt__surv.is-warn .ds-hunt__key strong { color: #fbbf24; }
+.ds-hunt__surv.is-danger {
+  border-color: rgba(248, 113, 113, .58);
+  background: linear-gradient(168deg, rgba(54, 16, 20, .88), rgba(26, 8, 12, .94));
+  box-shadow: 0 0 0 1px rgba(248, 113, 113, .18) inset;
+}
+.ds-hunt__surv.is-danger .ds-hunt__survhead { color: #fca5a5; }
+.ds-hunt__surv.is-danger .ds-hunt__survhead em { color: rgba(252, 165, 165, .8); }
+.ds-hunt__surv.is-danger .ds-hunt__key strong { color: #f87171; }
+.ds-hunt__key strong { font-size: 15px; }
+
+/* =========================================================
+   v55 — 실시간 고정 요약 바 (자사계산기 · 단일 레이드)
+   #screen-dosul 이 스크롤 컨테이너라 그 안에서 top:0 으로 붙습니다
+   ========================================================= */
+.ds-sticky {
+  position: sticky;
+  top: 0;
+  z-index: 8;
+  margin: 0 -14px 12px;
+  padding: 7px 14px 8px;
+  background: linear-gradient(180deg, rgba(4, 28, 31, .97), rgba(3, 22, 25, .93));
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid rgba(127, 209, 189, .22);
+  box-shadow: 0 10px 22px rgba(0, 0, 0, .42);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: border-color .18s ease, background .18s ease, box-shadow .18s ease;
+}
+.ds-sticky:focus-visible { outline: 2px solid rgba(127, 209, 189, .7); outline-offset: -2px; }
+.ds-sticky:active { background: linear-gradient(180deg, rgba(10, 45, 48, .99), rgba(4, 26, 30, .96)); }
+.ds-sticky__in { display: flex; align-items: center; gap: 8px; min-height: 32px; }
+.ds-sticky__main { display: flex; flex-direction: column; min-width: 0; }
+.ds-sticky__cap {
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: .1em;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.ds-sticky__val {
+  font-family: var(--serif);
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1.1;
+  color: #f4fbf7;
+  white-space: nowrap;
+}
+.ds-sticky__val em { font-style: normal; font-size: 9.5px; font-weight: 700; color: var(--muted); margin-left: 2px; }
+.ds-sticky__state {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 9px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+.ds-sticky__state i { font-style: normal; font-size: 10px; line-height: 1; }
+.ds-sticky__state b { font-weight: 900; }
+.ds-sticky__state em { font-style: normal; font-size: 9.5px; font-weight: 700; }
+.ds-sticky__state.is-safe { color: #4ade80; background: rgba(74, 222, 128, .14); border: 1px solid rgba(74, 222, 128, .55); }
+.ds-sticky__state.is-safe em { color: #86efac; }
+.ds-sticky__state.is-warn { color: #fbbf24; background: rgba(251, 191, 36, .14); border: 1px solid rgba(251, 191, 36, .55); }
+.ds-sticky__state.is-warn em { color: #fcd34d; }
+.ds-sticky__state.is-danger { color: #f87171; background: rgba(248, 113, 113, .16); border: 1px solid rgba(248, 113, 113, .6); }
+.ds-sticky__state.is-danger em { color: #fca5a5; }
+.ds-sticky__state.is-none { color: #b9d3cb; background: rgba(147, 183, 174, .12); border: 1px solid rgba(147, 183, 174, .32); }
+.ds-sticky__alt {
+  margin-left: auto;
+  display: grid;
+  grid-template-columns: auto auto;
+  column-gap: 3px;
+  align-items: baseline;
+  justify-content: end;
+  text-align: right;
+}
+.ds-sticky__alt small { grid-column: 1 / -1; font-size: 8.5px; font-weight: 800; letter-spacing: .1em; color: var(--muted); }
+.ds-sticky__alt b { font-family: var(--serif); font-size: 16px; font-weight: 800; color: #f0d9a5; line-height: 1.1; }
+.ds-sticky__alt em { font-style: normal; font-size: 9.5px; font-weight: 700; color: rgba(240, 217, 165, .8); }
+.ds-sticky__go { font-size: 12px; font-weight: 800; color: rgba(147, 183, 174, .78); white-space: nowrap; line-height: 1; }
+.ds-sticky.is-safe { border-bottom-color: rgba(74, 222, 128, .6); box-shadow: 0 10px 22px rgba(0, 0, 0, .42), inset 0 -2px 0 rgba(74, 222, 128, .22); }
+.ds-sticky.is-warn { border-bottom-color: rgba(251, 191, 36, .6); box-shadow: 0 10px 22px rgba(0, 0, 0, .42), inset 0 -2px 0 rgba(251, 191, 36, .22); }
+.ds-sticky.is-danger {
+  border-bottom-color: rgba(248, 113, 113, .68);
+  background: linear-gradient(180deg, rgba(46, 13, 17, .97), rgba(26, 9, 13, .95));
+  box-shadow: 0 10px 22px rgba(0, 0, 0, .42), inset 0 -2px 0 rgba(248, 113, 113, .26);
+}
+.ds-sticky.is-danger .ds-sticky__go { color: rgba(252, 165, 165, .8); }
+.ds-sticky.ds-sticky--raid { border-bottom-color: rgba(240, 217, 165, .42); }
+@media (max-width: 359px) {
+  .ds-sticky__val { font-size: 16px; }
+  .ds-sticky__state { font-size: 10px; padding: 3px 7px; gap: 3px; }
+  .ds-sticky__go { display: none; }
+}
 .ds-hunt__survnote {
   margin: 7px 0 0;
   font-size: 9px;

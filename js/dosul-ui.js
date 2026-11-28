@@ -352,6 +352,12 @@
     var body = el.body;
     if (!body) { return; }
     body.innerHTML = [
+      /* v55 — 실시간 고정 요약 바. #screen-dosul 이 스크롤 컨테이너라 여기에 sticky 로 붙습니다 */
+      '<div class="ds-sticky" id="ds-sticky" role="button" tabindex="0" data-ds-sticky="1"',
+      ' aria-label="실시간 요약 — 누르면 계산 결과로 이동">',
+      '  <div class="ds-sticky__in" id="ds-sticky-in"></div>',
+      '</div>',
+
       '<div class="ds-head">',
       '  <p class="ds-head__kicker">도깨비의 세계</p>',
       '  <h2 class="ds-head__title"><svg class="ds-head__icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">' +
@@ -465,6 +471,8 @@
     el.durQuick = $('#ds-dur-quick');
     el.hunt = $('#ds-hunt');
     el.huntHint = $('#ds-hunt-hint');
+    el.sticky = $('#ds-sticky');
+    el.stickyIn = $('#ds-sticky-in');
     el.shared = $('#ds-shared-list');
     el.sharedHint = $('#ds-shared-hint');
     el.shareBox = $('#ds-share');
@@ -1419,6 +1427,88 @@
     renderHuntOut();
   }
 
+  /* ---------------------------------------------------------
+     실시간 고정 요약 바 (v55)
+     화면 위에 붙어 모드별 핵심 숫자를 바로 보여 줍니다.
+       자사계산기 — 분당 처치 + 버티기 상태(여유=녹색 · 주의=노랑 · 위험=빨강)
+       단일(레이드) — 전투 시간 총 피해 + 초당 피해(DPS)
+     입력칸을 고치면 recompute → renderResult/renderHuntOut 이 다시 그리면서
+     이 바도 같이 갱신됩니다.
+     --------------------------------------------------------- */
+  var SURV_LV = {
+    safe: { key: 'safe', t: '여유', mark: '🟢', cls: 'is-safe' },
+    warn: { key: 'warn', t: '주의', mark: '🟡', cls: 'is-warn' },
+    danger: { key: 'danger', t: '위험', mark: '🔴', cls: 'is-danger' }
+  };
+  var lastRaid = null;   /* renderResult 가 계산한 최근 결과 — 고정 바가 또 계산하지 않도록 */
+  var lastHunt = null;   /* renderHuntOut 이 계산한 최근 결과 */
+
+  /* 버티기 상태 — 색과 함께 보여 줄 말까지 정리 */
+  function huntStatus(r) {
+    var sv = r && r.survival;
+    if (!sv) { return null; }
+    var k = sv.status || sv.level || 'safe';
+    var lv = SURV_LV[k] || SURV_LV.safe;
+    var detail = '';
+    if (k === 'danger') { detail = num(sv.diedAt, 1) + '초 사망'; }
+    else if (k === 'warn') { detail = '최저 체력 ' + num(sv.hpMinPct, 0) + '%'; }
+    else { detail = r.duration >= 180 ? '3분+ 생존' : num(r.duration, 0) + '초 생존'; }
+    return { key: k, lv: lv, detail: detail, sv: sv };
+  }
+
+  function stickyJump(to) {
+    if (!el.root) { return; }
+    var sel = to === 'surv'
+      ? ((S && S.mode === 'hunt') ? '.ds-hunt__surv' : '#ds-result-sec')
+      : ((S && S.mode === 'hunt') ? '#ds-hunt-out' : '#ds-result-sec');
+    var t = document.querySelector(sel);
+    if (!t) { return; }
+    var off = el.sticky ? el.sticky.offsetHeight + 10 : 0;
+    var top = t.getBoundingClientRect().top - el.root.getBoundingClientRect().top + el.root.scrollTop - off;
+    if (typeof el.root.scrollTo === 'function') { el.root.scrollTo({ top: Math.max(0, top), behavior: 'smooth' }); }
+    else { el.root.scrollTop = Math.max(0, top); }
+  }
+
+  function renderSticky() {
+    if (!el.sticky || !el.stickyIn) { return; }
+    var hunt = !!(S && S.mode === 'hunt');
+    var cls = 'ds-sticky';
+    var html;
+    if (hunt) {
+      var r = lastHunt;
+      var stt = r ? huntStatus(r) : null;
+      cls += ' ds-sticky--hunt' + (stt ? ' ' + stt.lv.cls : '');
+      html = [
+        '<div class="ds-sticky__main">',
+        '  <span class="ds-sticky__cap">분당 처치</span>',
+        '  <span class="ds-sticky__val" id="ds-sticky-permin">' + (r ? num(r.killsPerMin, 1) : '–') + '<em>마리/분</em></span>',
+        '</div>',
+        (stt
+          ? '<span class="ds-sticky__state ' + stt.lv.cls + '" id="ds-sticky-state" data-sticky-jump="surv">' +
+            '<i aria-hidden="true">' + stt.lv.mark + '</i><b>' + stt.lv.t + '</b><em>' + esc(stt.detail) + '</em></span>'
+          : '<span class="ds-sticky__state is-none" id="ds-sticky-state" data-sticky-jump="surv">' +
+            '<b>버티기</b><em>체력 입력 전</em></span>'),
+        '<span class="ds-sticky__go" aria-hidden="true">▾</span>'
+      ].join('\n');
+    } else {
+      var q = lastRaid;
+      var ok = !!(q && q.ok);
+      var dtxt = QUICK_LABEL[S.duration] || (num(S.duration, 0) + '초');
+      cls += ' ds-sticky--raid';
+      html = [
+        '<div class="ds-sticky__main">',
+        '  <span class="ds-sticky__cap">' + esc(dtxt) + ' 총 피해</span>',
+        '  <span class="ds-sticky__val" id="ds-sticky-total">' + (ok ? group(Math.round(q.totalCoeff)) : '–') + '<em>%</em></span>',
+        '</div>',
+        '<span class="ds-sticky__alt" id="ds-sticky-dps"><small>DPS</small><b>' + (ok ? num(q.dps, 1) : '–') + '</b><em>%/초</em></span>',
+        '<span class="ds-sticky__go" aria-hidden="true">▾</span>'
+      ].join('\n');
+    }
+    el.sticky.className = cls;
+    el.sticky.setAttribute('data-sticky-mode', hunt ? 'hunt' : 'raid');
+    el.stickyIn.innerHTML = html;
+  }
+
   function huntCompute() {
     var cfg = huntConfig();
     var key = [cfg.killHits, cfg.maxMobs, cfg.respawnSec, cfg.huntAutoCoeff, cfg.critPct, cfg.critDmgPct, cfg.duration,
@@ -1447,10 +1537,11 @@
     /* 회복량 안내 줄 — 장착·강화·공격력이 바뀌면 바로 갱신 (v54) */
     var healBox = document.getElementById('ds-hunt-heal');
     if (healBox) { healBox.innerHTML = huntHealLineHtml(); }
-    if (!C.simulateHunt) { out.innerHTML = '<p class="ds-hunt__empty">사냥 계산을 불러오지 못했어요.</p>'; return; }
+    if (!C.simulateHunt) { out.innerHTML = '<p class="ds-hunt__empty">사냥 계산을 불러오지 못했어요.</p>'; lastHunt = null; renderSticky(); return; }
     var got = huntCompute();
     var r = got.res;
-    if (!r || !r.ok) { out.innerHTML = '<p class="ds-hunt__empty">' + esc((r && r.message) || '계산하지 못했어요.') + '</p>'; return; }
+    if (!r || !r.ok) { out.innerHTML = '<p class="ds-hunt__empty">' + esc((r && r.message) || '계산하지 못했어요.') + '</p>'; lastHunt = null; renderSticky(); return; }
+    lastHunt = r;
 
     var perMin = r.killsPerMin;
     var k1 = r.duration >= 60 ? r.kills1m : Math.round(perMin);
@@ -1476,10 +1567,10 @@
 
     /* 버티기 — 받는 DPS · 버티는 시간 · 헌신 회복 · 안전도 */
     var sv = r.survival;
-    var LV = { safe: { t: '여유', cls: 'is-safe' }, warn: { t: '주의', cls: 'is-warn' }, danger: { t: '위험', cls: 'is-danger' } };
+    var stt = huntStatus(r);
+    var lv = stt ? stt.lv : null;
     var survHtml = '';
     if (sv) {
-      var lv = LV[sv.level] || null;
       var line = [];
       if (sv.aggroMode === 'aggro') {
         line.push('몹 반격은 <b>선공</b> — 살아 있는 몹 ' + num(sv.avgAlive, 1) + '마리가 모두 때립니다.');
@@ -1495,7 +1586,7 @@
         var rawSec = sv.dps > 0 ? sv.maxHp / sv.dps : sv.life;
         line.push('체력 ' + group(sv.maxHp) + ' ÷ 초당 ' + num(sv.dps, 0) + ' = <b>' + num(rawSec, 0) + '초</b>' +
           (sv.healCasts || sv.regenTicks ? ' 이상' : '') + ' 버팁니다' +
-          (sv.level === 'safe' ? ' — 1분 사냥은 넉넉합니다.' : ' — 1분은 빠듯합니다.'));
+          (stt && stt.key === 'safe' ? ' — 1분 사냥은 넉넉합니다.' : ' — 1분은 빠듯합니다.'));
       }
       if (sv.healCasts > 0) {
         line.push('헌신 회복 <b>' + sv.healCasts + '회</b> 발동(체력 ' + num(sv.healAtPct, 0) + '% 이하) · 총 <b>+' + group(sv.healed) + ' HP</b> 회복 · 초당 평균 <b>' + group(sv.regen) + ' HP</b>.');
@@ -1524,14 +1615,14 @@
         ? '→ <b>무한 자사 가능</b> (회복이 받는 피해를 따라갑니다).'
         : (sv.diedAt != null ? '→ <b>무한 자사 불가</b> — 초당 ' + num(sv.holdRegen, 0) + ' HP 이상 회복이 필요합니다.'
           : (sv.sustain === false ? '→ 초당 <b>' + num(sv.holdRegen, 0) + ' HP</b> 회복이 있어야 계속 버팁니다.' : '')));
-      survHtml = '<div class="ds-hunt__surv">' +
+      survHtml = '<div class="ds-hunt__surv' + (lv ? ' ' + lv.cls : '') + '">' +
         '<p class="ds-hunt__survhead">버티기 <em>' + (sv.aggroMode === 'aggro' ? '선공 · 살아있는 몹 전부' : '비선공 · 때린 몹만') +
         ' · 때리는 몹 평균 ' + num(sv.avgAggro, 1) + '마리 · 몹 1방 ' + num(sv.mobDmg, 0) + ' · ' + num(sv.atkInterval, 1) + '초마다</em>' +
-        (lv ? '<b class="ds-hunt__lv ' + lv.cls + '">' + lv.t + '</b>' : '') + '</p>' +
+        (lv ? '<b class="ds-hunt__lv ' + lv.cls + '">' + lv.mark + ' ' + lv.t + '</b>' : '') + '</p>' +
         '<div class="ds-cards ds-hunt__cards">' +
         '  <div class="ds-card"><span>받는 피해(초당)</span><strong>' + num(sv.dps, 0) + '<small>HP/초</small></strong></div>' +
         '  <div class="ds-card"><span>1분 동안 받는 피해</span><strong>' + num(sv.dmg60, 0) + '<small>HP</small></strong></div>' +
-        '  <div class="ds-card"><span>버티는 시간</span><strong>' + (sv.diedAt != null ? num(sv.diedAt, 1) : (sv.maxHp > 0 ? '60+' : '–')) + '<small>' + (sv.maxHp > 0 ? '초' : '') + '</small></strong></div>' +
+        '  <div class="ds-card ds-hunt__key"><span>버티는 시간</span><strong>' + (sv.diedAt != null ? num(sv.diedAt, 1) : (sv.maxHp > 0 ? '60+' : '–')) + '<small>' + (sv.maxHp > 0 ? '초' : '') + '</small></strong></div>' +
         '  <div class="ds-card"><span>헌신 회복</span><strong>' + sv.healCasts + '<small>회</small></strong></div>' +
         (sv.hpRegen > 0 ? '  <div class="ds-card"><span>자연 회복 (' + num(sv.regenInterval, 0) + '초마다)</span><strong>' + sv.regenTicks + '<small>회 · +' + num(sv.regenTotal, 0) + ' HP</small></strong></div>' : '') +
         '</div>' +
@@ -1592,6 +1683,7 @@
         '다중 감소는 <b>하늘의 심판 6인↑(10인 50%) · 대폭발 4인↑(30인 20%)</b> 두 개만 공개돼 있고, 나머지 도술은 감소 없음으로 계산합니다. ' +
         '「적을수록 증가」는 <b>난타·요기 폭발(6돌파)</b>을 실제 맞은 인원으로 환산합니다.</p>'
     ].join('\n');
+    renderSticky();
   }
 
   /* 결과 상단의 1분 · 2분 · 5분 빠른 전환 */
@@ -2020,8 +2112,10 @@
   function renderResult() {
     if (!el.result) { return; }
     var r = C.simulate(config());
+    lastRaid = (r && r.ok) ? r : null;
     if (!r.ok) {
       el.result.innerHTML = '<p class="ds-empty">' + esc(r.message || '도술을 넣어 주세요.') + '</p>';
+      renderSticky();
       return;
     }
     el.result.innerHTML = [
@@ -2036,6 +2130,7 @@
       '<p class="ds-sharebar__note">장착 8칸 · 시전 순서 · 스펙 설정과 함께 <b>평타 빈 시간 · DPS</b>가 저장됩니다.</p>' +
       '</div>'
     ].join('\n');
+    renderSticky();
   }
 
   function recompute() {
@@ -2165,6 +2260,12 @@
     el.root.addEventListener('click', function (e) {
       var t = e.target;
       if (!t || !t.closest) { return; }
+      /* v55 — 고정 요약 바: 누르면 결과로, 상태 배지를 누르면 버티기 카드로 부드럽게 이동 */
+      var stk = t.closest('[data-ds-sticky]');
+      if (stk) {
+        stickyJump(t.closest('[data-sticky-jump]') ? 'surv' : 'out');
+        return;
+      }
       /* ⑦/⑧ 모드 전환 — 단일 보스 DPS ↔ 자사계산기 */
       var md = t.closest('[data-calc-mode]');
       if (md) {
@@ -2362,6 +2463,14 @@
         renderTune(); recompute();
         return;
       }
+    });
+
+    /* 고정 요약 바 — 키보드(Enter · Space)로도 결과로 이동 */
+    el.root.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter' && e.key !== ' ') { return; }
+      if (!e.target || e.target.id !== 'ds-sticky') { return; }
+      e.preventDefault();
+      stickyJump('out');
     });
 
     el.root.addEventListener('input', function (e) {
@@ -2602,6 +2711,8 @@
     }
     var num = document.getElementById('ds-hunt-num');
     if (num) { num.textContent = hunt ? '7' : '8'; }
+    /* v55 — 모드에 맞는 고정 요약 바 */
+    renderSticky();
   }
 
   function renderAll() {

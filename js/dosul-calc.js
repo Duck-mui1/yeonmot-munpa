@@ -2293,6 +2293,12 @@
         diedAt: diedAt != null ? round(diedAt, 1) : null,
         life: round(life, 1),
         hpEnd: round(hp, 0), hpMin: round(hpMin, 0), hpAt60: hpAt60,
+        hpMinPct: cfg.maxHp > 0 ? round(Math.max(0, Math.min(100, (hpMin / cfg.maxHp) * 100)), 1) : null,
+        /* v55 — 색으로 바로 보이는 버티기 상태: 여유(녹색) · 주의(노랑) · 위험/사망(빨강).
+           사망은 무조건 위험, 끝까지 살았어도 체력이 35% 밑까지 내려갔으면 주의. */
+        status: cfg.maxHp > 0
+          ? (diedAt != null ? 'danger' : ((hpMin / cfg.maxHp) < 0.35 ? 'warn' : 'safe'))
+          : null,
         regen: round(regen, 1),
         sustain: cfg.maxHp > 0 ? ((regen + natPerSec) >= inDps - 1e-9 && diedAt == null) : null,
         level: diedAt != null ? 'danger' : (surviveSec === Infinity ? 'safe' : 'warn'),
