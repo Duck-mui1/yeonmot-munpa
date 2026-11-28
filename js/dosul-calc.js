@@ -169,6 +169,31 @@
 
   function huntCritRule() { return { per: Number(CRIT_RULE.per) || 0.1, cap: Number(CRIT_RULE.cap) || 80 }; }
 
+  /* ---------------------------------------------------------
+     🛡 기본 공격 회피 → 요귀 공격 빗나감 확률(%) (v67)
+     덱깨비(dekkaebi.com/calc) 「회피율·치명타율」 표와 **같은 식**입니다.
+       확률(%) = (기본 공격 회피 − 그 사냥터 요귀의 공격 정확도) ÷ 18
+       → 0% ~ 90% 로 자르고 소수점 한 자리로 반올림(0.1% 단위)
+     · 회피 18 = 1%p · 상한 90%
+     · 검증(2026-11-28 덱깨비 화면 · 회피 2,408)
+         385K 역병의 부화장(정확도 1,895) → 28.5% · 445K 비탄의 울림(2,490) → 0%
+     · 사냥터 정확도는 dosul-data.js 의 huntGrounds[].dodgeAcc 에 있습니다. */
+  var DODGE_RULE = (HUNT && HUNT.dodgeRule) || { per: 100 / 1800, cap: 90 };
+
+  function huntDodgePct(dodge, acc) {
+    var d = Number(dodge);
+    var a = Number(acc);
+    if (!isFinite(d)) { d = 0; }
+    if (!isFinite(a)) { a = 0; }
+    var p = (d - a) * (Number(DODGE_RULE.per) || (100 / 1800));
+    if (!(p > 0)) { return 0; }
+    var cap = Number(DODGE_RULE.cap) || 90;
+    if (p > cap) { p = cap; }
+    return Math.round(p * 10) / 10;
+  }
+
+  function huntDodgeRule() { return { per: Number(DODGE_RULE.per) || (100 / 1800), cap: Number(DODGE_RULE.cap) || 90 }; }
+
   function clamp(n, lo, hi) { return Math.max(lo, Math.min(hi, n)); }
 
   /* ---------------------------------------------------------
@@ -1746,6 +1771,9 @@
            (1 + p × cd) ÷ (1 + 0.5 × 0.2) */
       critPct: clampNum(c.critPct, 0, 100, 50),
       critDmgPct: clampNum(c.critDmgPct, 0, 500, 20),
+      /* 기본 공격 회피 — 화면에서 (회피 − 요귀 공격 정확도) ÷ 18 로 계산해 넘어오는 빗나감 확률 (v67).
+         맞는 피해에 (1 − 확률)을 곱해 버티기를 계산합니다. */
+      dodgePct: clampNum(c.dodgePct, 0, 90, 0),
       /* 생존 계산 — 내 최대 체력 · 몹 1방 피격 · 몹 공격 주기 (0이면 생존 계산 생략) */
       maxHp: clampNum(c.maxHp, 0, 1e9, 0),
       mobDmg: clampNum(c.mobDmg, 0, 1e9, 0),
@@ -1787,6 +1815,8 @@
     var critFactor = critMode === 'full' ? critBase : critBase / (1 + 0.5 * 0.2);
     /* 일반 요괴 추가 대미지 (v58) — 평타·도술 전부에 같은 배수로 곱합니다 */
     var normalMult = 1 + cfg.normalMobDmgPct / 100;   /* normalMobDmgPct 는 0 이상으로 정리됨 */
+    /* 회피 — 요귀 기본 공격이 빗나갈 확률만큼 맞는 피해를 줄입니다 (v67 · 기대값 적용) */
+    var dodgeMul = 1 - cfg.dodgePct / 100;
     var duration = cfg.duration;
 
     var built = buildEntries(cfg);
@@ -2091,7 +2121,7 @@
         var acAll = aliveCountNow();
         var acHit = aggroCountNow();
         if (hpTrack) {
-          var rate = acHit * cfg.mobDmg / cfg.mobAtkInterval;
+          var rate = acHit * cfg.mobDmg * dodgeMul / cfg.mobAtkInterval;
           if (rate > 0) {
             var need = hp / rate;
             if (need <= span + EPS) {
@@ -2355,7 +2385,7 @@
           if (eh.kind === 'heal' && eh.healPlan && eh.healPlan.on && eh.readyAt <= t + EPS) { healReadyNow = true; break; }
         }
         if (healReadyNow) {
-          var rateH = aggroCountNow() * cfg.mobDmg / cfg.mobAtkInterval;
+          var rateH = aggroCountNow() * cfg.mobDmg * dodgeMul / cfg.mobAtkInterval;
           if (rateH > 0) {
             var crossAt = t + Math.max(0.05, (hp - healLine) / rateH);
             if (crossAt < until - EPS) { until = crossAt; }
@@ -2413,7 +2443,7 @@
     var avgAggroMobs = aggroSec / (life || duration);
     var survival = null;
     if (cfg.mobDmg > 0) {
-      var inDps = avgAggroMobs * (cfg.mobDmg / cfg.mobAtkInterval);
+      var inDps = avgAggroMobs * (cfg.mobDmg * dodgeMul / cfg.mobAtkInterval);
       var surviveSec = diedAt != null ? diedAt : ((cfg.maxHp > 0 && inDps > 0) ? Infinity : null);
       var regen = life > 0 ? healed / life : 0;
       var natPerSec = life > 0 ? regenTotal / life : 0;
@@ -2427,6 +2457,8 @@
         avgAlive: round(avgAliveMobs, 2),
         avgAggro: round(avgAggroMobs, 2),
         aggroMode: cfg.aggroMode,
+        /* v67 — 적용된 빗나감 확률(%) (받는 DPS에 이미 반영) */
+        dodgePct: cfg.dodgePct,
         dps: round(inDps, 1),
         dmg60: round(inDps * 60, 0),
         surviveSec: surviveSec === Infinity ? null : (surviveSec != null ? round(surviveSec, 1) : null),
@@ -2486,6 +2518,8 @@
       autoInterval: cfg.autoInterval,
       critPct: cfg.critPct,
       critDmgPct: cfg.critDmgPct,
+      /* v67 — 버티기에 적용한 요귀 공격 빗나감 확률(%) */
+      dodgePct: cfg.dodgePct,
       critFactor: round(critFactor, 4),
       critMode: critMode,
       /* 일반 요괴 추가 대미지 — 화면에 「+15.25% · ×1.1525」로 표기 (v58) */
@@ -2591,6 +2625,8 @@
     huntGround: huntGround,
     huntCritPct: huntCritPct,
     huntCritRule: huntCritRule,
+    huntDodgePct: huntDodgePct,
+    huntDodgeRule: huntDodgeRule,
     huntTargets: huntTargets,
     huntFalloffMul: huntFalloffMul,
     huntFocusShape: huntFocusShape

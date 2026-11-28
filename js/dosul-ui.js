@@ -175,6 +175,12 @@
            · critRes  「직접 입력(비경)」에서 쓸 요귀 치명타 저항 (모르면 0)
            · critPct  계산된 확률 — 화면·결과 표기가 같은 값을 쓰도록 메모리에도 적어 둡니다 */
         critHit: 2699, critRes: 0, critPct: 50, critDmgPct: 20, duration: 180,
+        /* v67 — 「기본 공격 회피」를 받아 (회피 − 요귀 공격 정확도) ÷ 18 로 빗나감 확률을
+           자동 계산하고, 그만큼 맞는 피해를 줄여 버티기에 적용합니다.
+           · dodge     기본 공격 회피 (기본 2,408 — 덱깨비 예시 값 · 준형 님 값 확인 전 임시)
+           · dodgeAcc  「직접 입력(비경)」에서 쓸 요귀 공격 정확도 (모르면 0)
+           · dodgePct  계산된 빗나감 확률 — 화면·결과 표기가 같은 값을 쓰도록 메모리에도 적어 둡니다 */
+        dodge: 2408, dodgeAcc: 0, dodgePct: 0,
         autoCoeff: 54.5,
         maxHp: 160000, mobDmg: 0, mobAtkInterval: 2, healAtPct: 70,
         /* 몹 반격 방식 — 'passive' 비선공(때린 몹만 · 기본) / 'aggro' 선공(전부) (v53) */
@@ -252,6 +258,8 @@
       /* v57 — 「치명타 확률」 칸 대신 「치명타 적중」. 옛 저장분에 적중(critHit)이 없으면
          기본값 2,699가 들어가고, 저장돼 있던 critPct(50)는 쓰지 않습니다 —
          확률은 매번 (적중 − 요귀 저항) × 0.1 로 다시 계산합니다. */
+      /* v67 — 「기본 공격 회피」 칸. 옛 저장분에 회피(dodge)가 없으면 기본값 2,408이 들어가고,
+         빗나감 확률은 매번 (회피 − 요귀 공격 정확도) ÷ 18 로 다시 계산합니다. */
       /* v56 — 평타 박자를 인게임 실측 평균 0.6초로 통일. 옛 저장분에 없으면 0.6이 들어갑니다 */
       if (!(Number(base.hunt.autoInterval) > 0)) { base.hunt.autoInterval = HUNT_AUTO_INTERVAL; }
       base.hunt.autoInterval = Math.max(0.1, Math.min(3, Number(base.hunt.autoInterval)));
@@ -367,6 +375,11 @@
     var crit = huntCritInfo(h);
     base.critPct = crit.pct;
     if (S.hunt) { S.hunt.critPct = crit.pct; }
+    /* 회피 — 정확도에서 빗나감 확률을 계산해 엔진에 넘깁니다 (v67)
+       화면·힌트·결과 표기가 같은 값을 쓰도록 S.hunt.dodgePct 에도 적어 둡니다 */
+    var dodge = huntDodgeInfo(h);
+    base.dodgePct = dodge.pct;
+    if (S.hunt) { S.hunt.dodgePct = dodge.pct; }
     base.critDmgPct = Number(h.critDmgPct);
     base.maxHp = Number(h.maxHp) || 0;
     base.mobDmg = Number(h.mobDmg) || 0;
@@ -1105,6 +1118,7 @@
       duration: h.duration, hpMode: h.hpMode, groundId: h.groundId,
       killHits: h.killHits, maxMobs: h.maxMobs, respawnSec: h.respawnSec,
       critHit: h.critHit, critRes: h.critRes, critPct: h.critPct, critDmgPct: h.critDmgPct,
+      dodge: h.dodge, dodgeAcc: h.dodgeAcc, dodgePct: h.dodgePct,
       autoCoeff: h.autoCoeff, maxHp: h.maxHp, mobDmg: h.mobDmg,
       mobAtkInterval: h.mobAtkInterval, healAtPct: h.healAtPct, aggroMode: h.aggroMode,
       myAtk: h.myAtk, myAutoDmg: h.myAutoDmg, hpRegen: h.hpRegen,
@@ -1305,6 +1319,8 @@
   var HUNT_DEFAULT_GROUND = '101012';   /* 역병의 부화장 385K — 준형 님 실측 사냥터 */
   /* 치명타 적중 기본값 — 준형 님 「캐릭터 정보 → 상세」의 치명타 적중 (2026-11-27 제보) (v57) */
   var HUNT_CRIT_HIT = 2699;
+  /* 기본 공격 회피 기본값 — 덱깨비 「회피율·치명타율」 예시 값 (v67 · 준형 님 값 확인 전 임시) */
+  var HUNT_DODGE = 2408;
 
   function huntGroundList() {
     return (C.huntGrounds ? C.huntGrounds() : []).slice().sort(function (a, b) {
@@ -1372,6 +1388,48 @@
     if (box) { box.innerHTML = huntCritLineHtml(S.hunt); }
   }
 
+  /* ---------------------------------------------------------
+     🛡 기본 공격 회피 → 요귀 공격 빗나감 확률 (v67)
+     · 식은 덱깨비 「회피율·치명타율」과 같습니다 — (회피 − 요귀 공격 정확도) ÷ 18, 0~90%.
+     · 사냥터 선택: 그 사냥터의 dodgeAcc(요귀 공격 정확도)로 계산해 엔진(dodgePct)에 넘기고,
+       엔진은 맞는 피해에 (1 − 확률)을 곱해 버티기를 계산합니다.
+     · 직접 입력(비경): 정확도를 「요귀 공격 정확도」 칸(기본 0)으로 계산합니다.
+     --------------------------------------------------------- */
+  function huntDodgeInfo(h) {
+    h = h || S.hunt || defaults().hunt;
+    var dodge = Number(h.dodge);
+    if (!(dodge >= 0)) { dodge = HUNT_DODGE; }
+    var groundMode = h.hpMode === 'ground';
+    var g = groundMode && C.huntGround ? C.huntGround(h.groundId || HUNT_DEFAULT_GROUND) : null;
+    var acc = groundMode ? Number((g && g.dodgeAcc) || 0) : Number(h.dodgeAcc || 0);
+    var pct = C.huntDodgePct ? C.huntDodgePct(dodge, acc) : 0;
+    var rule = C.huntDodgeRule ? C.huntDodgeRule() : { per: 100 / 1800, cap: 90 };
+    return {
+      dodge: dodge, acc: acc, pct: pct, cap: rule.cap, per: rule.per,
+      atCap: pct >= rule.cap - 1e-9, atFloor: !(pct > 0),
+      groundMode: groundMode, ground: g
+    };
+  }
+
+  /* 「기본 공격 회피 2,408 → 요귀 공격 빗나감 28.5%」 한 줄 — 정확도·상한·하한을 짧게 덧붙입니다 */
+  function huntDodgeLineHtml(h) {
+    var d = huntDodgeInfo(h);
+    var out = '기본 공격 회피 <b>' + group(d.dodge) + '</b> → <b>요귀 공격 빗나감 ' + critPct(d.pct) + '%</b>';
+    var tail = [];
+    tail.push(d.groundMode
+      ? '요귀 정확도 ' + group(d.acc)
+      : '비경 정확도 ' + group(d.acc) + ' 기준');
+    if (d.atCap) { tail.push('상한 ' + num(d.cap, 0) + '% (더 올려도 그대로)'); }
+    else if (d.atFloor) { tail.push('회피가 정확도보다 낮아 0%'); }
+    tail.push('맞는 피해 ' + critPct(d.pct) + '% 감소로 버티기에 적용');
+    return out + ' <em>· ' + tail.join(' · ') + '</em>';
+  }
+
+  function updateHuntDodgeLine() {
+    var box = document.getElementById('ds-hunt-dodge');
+    if (box) { box.innerHTML = huntDodgeLineHtml(S.hunt); }
+  }
+
   /* 일반 요괴 추가 대미지 줄 — 칸을 고치면 바로 ×배수로 바뀝니다 (v58) */
   function updateHuntNormalLine() {
     var box = document.getElementById('ds-hunt-normal');
@@ -1383,8 +1441,10 @@
     h = h || S.hunt || defaults().hunt;
     var c = huntCritInfo(h);
     var nm = Number(h.normalMobDmgPct) || 0;
+    var dd = huntDodgeInfo(h);
     return num(h.maxMobs, 0) + '마리 · ' + num(h.respawnSec, 1) + '초 · 평타 ' + num(huntAutoInterval(h), 2) +
       '초 · 치명타 적중 ' + group(c.hit) + ' → ' + critPct(c.pct) + '%' +
+      ' · 회피 ' + group(dd.dodge) + ' → 빗나감 ' + critPct(dd.pct) + '%' +
       (nm > 0 ? ' · 일반 요괴 +' + num(nm, 2) + '%' : '');
   }
 
@@ -1551,6 +1611,8 @@
         '    <input type="number" min="0.5" max="120" step="0.5" inputmode="decimal" data-hunt="respawnSec" value="' + num(h.respawnSec, 1) + '"></label>',
         '  <label class="ds-hunt__f"><span>치명타 적중 <em>상세 탭 값</em></span>',
         '    <input type="number" min="0" max="1000000" step="1" inputmode="numeric" data-hunt="critHit" value="' + num(huntCritInfo(h).hit, 0) + '"></label>',
+        '  <label class="ds-hunt__f"><span>기본 공격 회피 <em>상세 탭 값</em></span>',
+        '    <input type="number" min="0" max="1000000" step="1" inputmode="numeric" data-hunt="dodge" value="' + num(huntDodgeInfo(h).dodge, 0) + '"></label>',
         '  <label class="ds-hunt__f"><span>치명타 피해 <em>기본 20%</em></span>',
         '    <input type="number" min="0" max="500" step="0.1" inputmode="decimal" data-hunt="critDmgPct" value="' + num(h.critDmgPct, 1) + '"></label>',
         '  <label class="ds-hunt__f"><span>일반 요괴 추가 대미지 <em>전설 장비 · %</em></span>',
@@ -1560,6 +1622,7 @@
         '</div>',
         '<p class="ds-hunt__gsum" id="ds-hunt-normal">' + huntNormalNoteHtml(h, true) + '</p>',
         '<p class="ds-hunt__calc ds-hunt__crit" id="ds-hunt-crit">' + huntCritLineHtml(h) + '</p>',
+        '<p class="ds-hunt__calc ds-hunt__dodge" id="ds-hunt-dodge">' + huntDodgeLineHtml(h) + '</p>',
         '<p class="ds-hunt__calc" id="ds-hunt-calc">' + (gh
           ? '몹 체력 <b>' + group(gh.ground.hp) + '</b> ÷ 내 평타 <b>' + group(gh.auto) + '</b> = <b>' + num(gh.hits, 2) + '방</b>' + critHitsNote(gh.hits, h)
             + (Number(h.myAutoDmg) > 0 ? '' : ' <em>· 평타를 적으면 내 값으로 바뀝니다 (지금은 예시 ' + group(HUNT_EXAMPLE_AUTO) + ')</em>')
@@ -1589,17 +1652,22 @@
         '    <input type="number" min="0.5" max="120" step="0.5" inputmode="decimal" data-hunt="respawnSec" value="' + num(h.respawnSec, 1) + '"></label>',
         '  <label class="ds-hunt__f"><span>치명타 적중 <em>상세 탭 값</em></span>',
         '    <input type="number" min="0" max="1000000" step="1" inputmode="numeric" data-hunt="critHit" value="' + num(huntCritInfo(h).hit, 0) + '"></label>',
+        '  <label class="ds-hunt__f"><span>기본 공격 회피 <em>상세 탭 값</em></span>',
+        '    <input type="number" min="0" max="1000000" step="1" inputmode="numeric" data-hunt="dodge" value="' + num(huntDodgeInfo(h).dodge, 0) + '"></label>',
         '  <label class="ds-hunt__f"><span>치명타 피해 <em>기본 20%</em></span>',
         '    <input type="number" min="0" max="500" step="0.1" inputmode="decimal" data-hunt="critDmgPct" value="' + num(h.critDmgPct, 1) + '"></label>',
         '  <label class="ds-hunt__f"><span>일반 요괴 추가 대미지 <em>전설 장비 · %</em></span>',
         '    <input type="number" min="0" max="1000" step="0.01" inputmode="decimal" data-hunt="normalMobDmgPct" placeholder="예: 15.25" value="' + num(Number(h.normalMobDmgPct) || 0, 2) + '"></label>',
         '  <label class="ds-hunt__f"><span>요귀 치명타 저항 <em>비경 · 모르면 0</em></span>',
         '    <input type="number" min="0" max="100000" step="1" inputmode="numeric" data-hunt="critRes" placeholder="예: 2,277" value="' + num(h.critRes, 0) + '"></label>',
+        '  <label class="ds-hunt__f"><span>요귀 공격 정확도 <em>비경 · 모르면 0</em></span>',
+        '    <input type="number" min="0" max="100000" step="1" inputmode="numeric" data-hunt="dodgeAcc" placeholder="예: 1,895" value="' + num(h.dodgeAcc, 0) + '"></label>',
         '  <label class="ds-hunt__f"><span>몹 공격 주기(초)</span>',
         '    <input type="number" min="0.2" max="30" step="0.1" inputmode="decimal" data-hunt="mobAtkInterval" value="' + num(h.mobAtkInterval, 1) + '"></label>',
         '</div>',
         '<p class="ds-hunt__gsum" id="ds-hunt-normal">' + huntNormalNoteHtml(h, false) + '</p>',
         '<p class="ds-hunt__calc ds-hunt__crit" id="ds-hunt-crit">' + huntCritLineHtml(h) + '</p>',
+        '<p class="ds-hunt__calc ds-hunt__dodge" id="ds-hunt-dodge">' + huntDodgeLineHtml(h) + '</p>',
         '<p class="ds-hunt__calc ds-hunt__healcalc" id="ds-hunt-heal">' + huntHealLineHtml() + '</p>',
         '<p class="ds-hunt__qnote"><b>치명타 확률</b>은 <b>(치명타 적중 − 요귀 치명타 저항) ÷ 10</b> 입니다 — 적중 1당 <b>0.1%</b> · 최대 <b>' +
           num(huntCritInfo(h).cap, 0) + '%</b> (덱깨비 「회피율·치명타율」과 같은 식). 비경은 요귀 저항이 공개돼 있지 않아 ' +
@@ -1618,7 +1686,8 @@
       '<p class="ds-hunt__qnote"><b>버티기</b> — 내 체력과 <b>몹 1마리 피격 데미지</b>를 적으면 나를 때리는 몹 수만큼 맞는 피해로 버티는 시간을 계산합니다(비우면 생략). ' +
         '기본은 <b>비선공</b> — 처음엔 안 맞고 <b>내가 평타·도술로 한 번이라도 때린 몹만</b> 죽을 때까지 반격합니다(다시 살아나면 또 얌전). ' +
         '체력이 <b>발동 %</b> 이하로 떨어지면 장착한 <b>헌신 회복 도술</b>(생명의 흐름·생명의 축복)을 <b>맨 먼저</b> 씁니다 — 회복량은 위 <b>내 공격력</b>과 그 도술의 <b>강화 단계</b>로 계산합니다. ' +
-        '<b>체력 자연 회복</b>을 적으면 인게임처럼 <b>5초마다</b> 그만큼 즉시 회복합니다.</p>',
+        '<b>체력 자연 회복</b>을 적으면 인게임처럼 <b>5초마다</b> 그만큼 즉시 회복합니다. ' +
+        '<b>기본 공격 회피</b>를 적으면 <b>(회피 − 그 사냥터 요귀의 공격 정확도) ÷ 18</b>로 빗나감 확률이 나와(최대 90%) <b>맞는 피해가 그만큼 줄어든 것</b>으로 버티기를 계산합니다.</p>',
       '<div class="ds-hunt__dur"><span class="ds-hunt__durlabel">몹 반격</span><div class="ds-segs">' + aggroBtns + '</div></div>',
       '<div class="ds-hunt__grid ds-hunt__grid--hp">',
       '  <label class="ds-hunt__f"><span>내 최대 체력 <em>HP</em></span>',
@@ -1832,7 +1901,8 @@
           : (sv.sustain === false ? '→ 초당 <b>' + num(sv.holdRegen, 0) + ' HP</b> 회복이 있어야 계속 버팁니다.' : '')));
       survHtml = '<div class="ds-hunt__surv' + (lv ? ' ' + lv.cls : '') + '">' +
         '<p class="ds-hunt__survhead">버티기 <em>' + (sv.aggroMode === 'aggro' ? '선공 · 살아있는 몹 전부' : '비선공 · 때린 몹만') +
-        ' · 때리는 몹 평균 ' + num(sv.avgAggro, 1) + '마리 · 몹 1방 ' + num(sv.mobDmg, 0) + ' · ' + num(sv.atkInterval, 1) + '초마다</em>' +
+        ' · 때리는 몹 평균 ' + num(sv.avgAggro, 1) + '마리 · 몹 1방 ' + num(sv.mobDmg, 0) + ' · ' + num(sv.atkInterval, 1) + '초마다' +
+        (sv.dodgePct > 0 ? ' · 회피 빗나감 ' + critPct(sv.dodgePct) + '% 적용' : '') + '</em>' +
         (lv ? '<b class="ds-hunt__lv ' + lv.cls + '">' + lv.mark + ' ' + lv.t + '</b>' : '') + '</p>' +
         '<div class="ds-cards ds-hunt__cards">' +
         '  <div class="ds-card"><span>받는 피해(초당)</span><strong>' + num(sv.dps, 0) + '<small>HP/초</small></strong></div>' +
@@ -2725,6 +2795,10 @@
           updateHuntCritLine();
           if (S.hunt.hpMode === 'ground') { updateHuntCalcLine(); }
         }
+        /* 기본 공격 회피·정확도를 고치면 「→ 빗나감 ○○.○%」 줄을 바로 갱신 (v67) */
+        if (hk === 'dodge' || hk === 'dodgeAcc') {
+          updateHuntDodgeLine();
+        }
         /* 일반 요괴 추가 대미지 — 아래 ×배수 줄과 「몇 방」 줄을 바로 갱신 (v58) */
         if (hk === 'normalMobDmgPct') {
           updateHuntNormalLine();
@@ -2826,7 +2900,7 @@
       var hck = t.getAttribute && t.getAttribute('data-hunt');
       if (hck) {
         var lim = { killHits: [0.5, 2000], maxMobs: [1, 60], respawnSec: [0.5, 120],
-          critHit: [0, 1000000], critRes: [0, 100000], critDmgPct: [0, 500], autoCoeff: [10, 3000], autoInterval: [0.1, 3],
+          critHit: [0, 1000000], critRes: [0, 100000], critDmgPct: [0, 500], dodge: [0, 1000000], dodgeAcc: [0, 100000], autoCoeff: [10, 3000], autoInterval: [0.1, 3],
           maxHp: [0, 100000000], mobDmg: [0, 100000000], mobAtkInterval: [0.2, 30],
           healAtPct: [0, 99], myAtk: [0, 1000000000],
           myAutoDmg: [0, 100000000], hpRegen: [0, 100000000] };
@@ -2843,8 +2917,12 @@
           updateHuntCritLine();
           if (S.hunt.hpMode === 'ground') { updateHuntCalcLine(); }
         }
+        /* 회피·정확도가 범위로 다듬어졌으면 빗나감 줄도 다시 (v67) */
+        if (hck === 'dodge' || hck === 'dodgeAcc') {
+          updateHuntDodgeLine();
+        }
         if (el.huntHint) {
-          el.huntHint.textContent = num(S.hunt.maxMobs, 0) + '마리 · ' + num(S.hunt.respawnSec, 1) + '초 · 평타 ' + num(huntAutoInterval(S.hunt), 2) + '초 · 치명타 적중 ' + group(huntCritInfo(S.hunt).hit) + ' → ' + critPct(huntCritInfo(S.hunt).pct) + '%';
+          el.huntHint.textContent = num(S.hunt.maxMobs, 0) + '마리 · ' + num(S.hunt.respawnSec, 1) + '초 · 평타 ' + num(huntAutoInterval(S.hunt), 2) + '초 · 치명타 적중 ' + group(huntCritInfo(S.hunt).hit) + ' → ' + critPct(huntCritInfo(S.hunt).pct) + '% · 회피 ' + group(huntDodgeInfo(S.hunt).dodge) + ' → 빗나감 ' + critPct(huntDodgeInfo(S.hunt).pct) + '%';
         }
         recompute();
         return;
