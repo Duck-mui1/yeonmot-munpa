@@ -181,10 +181,12 @@
   var DODGE_RULE = (HUNT && HUNT.dodgeRule) || { per: 100 / 1800, cap: 90 };
 
   function huntDodgePct(dodge, acc) {
+    /* v68 — 회피나 정확도를 모르면(null · 빈칸 · NaN) 0%: 빗나감을 계산하지 않고 맞는 피해를 그대로 둡니다.
+       명시한 0은 실제 값입니다(회피 0 · 정확도 0도 식에 넣습니다). */
+    if (dodge === null || dodge === undefined || dodge === '' || acc === null || acc === undefined || acc === '') { return 0; }
     var d = Number(dodge);
     var a = Number(acc);
-    if (!isFinite(d)) { d = 0; }
-    if (!isFinite(a)) { a = 0; }
+    if (!isFinite(d) || !isFinite(a)) { return 0; }
     var p = (d - a) * (Number(DODGE_RULE.per) || (100 / 1800));
     if (!(p > 0)) { return 0; }
     var cap = Number(DODGE_RULE.cap) || 90;
