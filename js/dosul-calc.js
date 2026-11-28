@@ -143,6 +143,32 @@
     return null;
   }
 
+  /* 🎯 치명타 적중 → 치명타 확률(%) (v57)
+     ---------------------------------------------------------
+     덱깨비(dekkaebi.com/calc) 「회피율·치명타율」 표와 **같은 식**입니다.
+       확률(%) = (치명타 적중 − 그 사냥터 요귀의 치명타 저항) × 0.1
+       → 0% ~ 80% 로 자르고 소수점 한 자리로 반올림(0.1% 단위)
+     · 적중 1 = 0.1%p · 상한 80%(적중이 저항보다 800 위면 이미 상한)
+     · 검증(2026-11-28 덱깨비 화면 · 적중 2,699)
+         385K 역병의 부화장(저항 979) → 80% · 820K 주술 결계 동굴(1,860) → 80%
+         · 925K 「고독한 귀족 지구 5단계」(2,277 · 비경) → 42.2%
+     · 사냥터 저항은 dosul-data.js 의 huntGrounds[].critRes 에 있습니다. */
+  var CRIT_RULE = (HUNT && HUNT.critRule) || { per: 0.1, cap: 80 };
+
+  function huntCritPct(hit, res) {
+    var h = Number(hit);
+    var r = Number(res);
+    if (!isFinite(h)) { h = 0; }
+    if (!isFinite(r)) { r = 0; }
+    var p = (h - r) * (Number(CRIT_RULE.per) || 0.1);
+    if (!(p > 0)) { return 0; }
+    var cap = Number(CRIT_RULE.cap) || 80;
+    if (p > cap) { p = cap; }
+    return Math.round(p * 10) / 10;
+  }
+
+  function huntCritRule() { return { per: Number(CRIT_RULE.per) || 0.1, cap: Number(CRIT_RULE.cap) || 80 }; }
+
   function clamp(n, lo, hi) { return Math.max(lo, Math.min(hi, n)); }
 
   /* ---------------------------------------------------------
@@ -2465,6 +2491,8 @@
     huntData: huntData,
     huntGrounds: huntGrounds,
     huntGround: huntGround,
+    huntCritPct: huntCritPct,
+    huntCritRule: huntCritRule,
     huntTargets: huntTargets,
     huntFalloffMul: huntFalloffMul,
     huntFocusShape: huntFocusShape

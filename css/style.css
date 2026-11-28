@@ -6020,6 +6020,14 @@ body.is-locked { overflow: hidden; }
 .ds-hunt__grid--hp { grid-template-columns: 1fr 1fr; }
 /* v54 — 「내 공격력」이 위쪽 칸으로 옮겨지고 버티기는 4칸만 남아 마지막 칸도 반폭 */
 .ds-hunt__healcalc { border-style: solid; border-color: rgba(242, 162, 185, .28); }
+/* v57 — 「치명타 적중 → 치명타 확률」 줄 — 바로 눈에 들어오도록 금빛 테두리 */
+.ds-hunt__crit {
+  border-style: solid;
+  border-color: rgba(240, 196, 106, .38);
+  background: linear-gradient(100deg, rgba(52, 40, 12, .72), rgba(6, 28, 34, .72));
+  font-size: 11.5px;
+}
+.ds-hunt__crit b { color: #ffe9a8; }
 .ds-hunt__healwarn { color: #ffd7e2; }
 .ds-hunt__surv {
   padding: 11px 12px;
