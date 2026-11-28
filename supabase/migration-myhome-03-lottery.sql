@@ -141,15 +141,4 @@ grant execute on function public.myhome_lottery_buy(text) to anon, authenticated
 revoke all on function public.myhome_lottery_claim(text, bigint, text) from public;
 grant execute on function public.myhome_lottery_claim(text, bigint, text) to anon, authenticated;
 
--- ---------------------------------------------------------------------------
--- 당첨표 시드 (방 합의: 확률 0.5/1.5/3/20/30% + 꽝 45%, 3등은 남/여 코스튬 선택 수령.
--- ※ 실행 전 확인 2개: ① 준형 님/오둥이 최종 확인 ② shop_items 카탈로그 시드 선행
---    — lottery_prizes.item_id 와 choice_items 가 shop_items 를 참조하므로)
--- ---------------------------------------------------------------------------
--- insert into private.lottery_prizes(tier, weight_permille, kind, item_id, points, choice_items) values
---   (1,   5, 'item',   'set_xmas_2026',   0, null),
---   (2,  15, 'item',   'bg_xmas_2026',    0, null),
---   (3,  30, 'choice', null,              0, array['costume_xmas_m','costume_xmas_f']),
---   (4, 200, 'points', null,            500, null),
---   (5, 300, 'points', null,            100, null)
--- on conflict (tier) do nothing;
+-- 당첨표 시드는 migration-myhome-04-seeds.sql 로 분리됨 (준형 님 11/28 승인 값 반영)
