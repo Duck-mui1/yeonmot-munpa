@@ -785,10 +785,11 @@
     var castsSinceReset = 0;
     var castsSinceUltReset = 0;
     var castSeq = 0;
-    /* 기만 신식 — 궁극기를 제외한 시전 횟수로 눈물(최대 2개)을 세고,
-       3회째(= 눈물 2개를 모은 다음 시전)마다 쿨 중인 도술 1개의 남은 쿨을 50% 줄입니다 */
+    /* 기만 신식 — 궁극기를 제외한 도술을 쓸 때마다 눈물 1개(최대 2개)가 쌓이고,
+       3회째(= 눈물 2개를 모은 다음 시전)마다 **그 3회째 도술 자신**의 이번 쿨타임이 절반이 됩니다.
+       (궁극기는 눈물을 쌓지도, 쿨이 줄지도 않습니다 — 인게임 수동 테스트로 확인, v59) */
     var nonUltSeq = 0;
-    var halfTrig = 0, halfHit = 0, halfCoolSum = 0;
+    var halfTrig = 0, halfSaved = 0;
     /* 파멸 요기범람 — 14회마다 켜지는 30초 피해 +20% 버프 구간 */
     var buffUntil = -Infinity;
     var castsSinceBuff = 0;
@@ -1248,38 +1249,26 @@
         vTrig += 1;
       }
 
-      /* 기만 신식(눈물 2개 소모) — 「쿨타임이 돌고 있는 도술 1개」의 남은 쿨을 50% 줄입니다.
+      /* 기만 신식(눈물 2개 소모) — 「방금 시전한 도술 자신」의 이번 쿨타임이 50%로 줄어듭니다.
          · 눈물은 궁극기를 제외한 도술을 쓸 때마다 1개(최대 2개) 쌓이고,
            눈물 2개일 때 궁극기를 제외한 도술을 쓰면 2개를 소모합니다 → 3회마다 발동
-         · 대상은 그 순간 쿨이 돌고 있는 도술 중 무작위 1개입니다(궁극기·방금 쓴 도술 제외).
-           어느 도술이 걸리느냐에 따라 DPS가 달라지므로, 쿨 중인 도술 k개의 남은 시간을
-           (1 - 0.5 / k)배로 **함께** 줄여 무작위 1개의 평균 기댓값으로 계산합니다.
-           (k=1 → 남은 쿨 절반, k=2 → 각 25% 감소 = 하나가 걸릴 때의 기댓값)
-         · 쿨 중인 도술이 하나도 없으면 눈물만 낭비됩니다(감소 없음). */
+         · 발동한 **3회째 도술 자체**의 이번 재사용 대기시간이 절반이 됩니다
+           (예: 쿨 12초 「하늘의 심판」이 3회째에 걸리면 이번 쿨은 6초).
+           다른 도술의 남은 쿨은 건드리지 않습니다.
+         · 궁극기(R)는 눈물을 쌓지도, 쿨이 줄지도 않습니다.
+         (v59 — 인게임 수동 테스트로 확인한 실제 규칙. v52~v58은 「쿨 중인 다른 도술 1개 무작위 -50%」로
+          계산했는데 그것이 틀렸습니다.) */
+      var halfThis = false;
       if (fx.halfCdEvery > 0 && cur.kind !== 'ult') {
         nonUltSeq += 1;
         if (nonUltSeq % fx.halfCdEvery === 0) {
+          halfThis = true;
           halfTrig += 1;
-          var coolCount = 0;
-          for (j = 0; j < n; j++) {
-            if (j === pick || list[j].kind === 'ult') { continue; }
-            if (list[j].readyAt > t + EPS) { coolCount += 1; }
-          }
-          if (coolCount > 0) {
-            var keepRatio = 1 - 0.5 / coolCount;
-            for (j = 0; j < n; j++) {
-              if (j === pick || list[j].kind === 'ult') { continue; }
-              if (list[j].readyAt > t + EPS) {
-                list[j].readyAt = t + (list[j].readyAt - t) * keepRatio;
-              }
-            }
-            halfHit += 1;
-            halfCoolSum += coolCount;
-          }
+          halfSaved += cd * 0.5;
         }
       }
 
-      cur.readyAt = t + Math.max(0.1, cd);
+      cur.readyAt = t + Math.max(0.1, cd * (halfThis ? 0.5 : 1));
 
       applyFlatCd(t, pick);
 
@@ -1482,13 +1471,11 @@
         triggers: vTrig, activeSec: round(vTime, 1),
         buffedCasts: vCasts, autoSec: round(vIdle, 2)
       } : null,
-      /* 기만 신식 발동 기록 — 화면·테스트가 「쿨 중인 도술을 줄였는지」 확인할 수 있게 남깁니다 */
+      /* 기만 신식 발동 기록 — 화면·테스트가 「3회째 도술의 쿨이 실제로 절반이 됐는지」 확인할 수 있게 남깁니다 */
       halfCd: fx.halfCdEvery > 0 ? {
         every: fx.halfCdEvery,
         triggers: halfTrig,
-        hits: halfHit,
-        wasted: halfTrig - halfHit,
-        avgCooling: halfHit ? round(halfCoolSum / halfHit, 2) : 0
+        savedSec: round(halfSaved, 1)
       } : null,
       dmgMul: round(built.dmgMul, 3),
       ultDmgMul: round(built.ultDmgMul, 3),
@@ -1783,7 +1770,7 @@
        쿨타임 신식 (v52) — 단일 보스 계산기(simulate)와 **같은 규칙**을 자사 루프에도 씁니다.
        예전에는 자사계산기가 시전당 피해 배수(avgMul)만 가져오고 쿨타임은
        「시전 시작 + 도술 쿨」만 계산해서, 아래 신식이 하나도 붙지 않았습니다.
-         · 기만 눈물(halfCdEvery 3)      : 궁극기를 뺀 도술 3회마다 쿨 중인 도술 1개 남은 쿨 -50%
+         · 기만 눈물(halfCdEvery 3)      : 궁극기를 뺀 도술 3회마다 그 3회째 도술 자신의 이번 쿨 -50%
          · 파멸 요기범람(resetEvery 14)  : 14회마다 궁극기를 뺀 도술 쿨 초기화
          · 평면 쿨감(fx.cd)              : 시전마다 다른 도술 남은 쿨 -초
          · 신식 게이지 — 척결 중첩(남은 쿨 -20% · 궁극기 -10%) · 주술 구슬(-0.1/-0.2/-0.3초)
@@ -1798,7 +1785,7 @@
     var castsSinceReset = 0;
     var castsSinceUltReset = 0;
     var nonUltSeq = 0;
-    var cdFx = { halfTrig: 0, halfHit: 0, halfCoolSum: 0, resetTrig: 0, gaugeCuts: 0, ultResetTrig: 0, flatCdCuts: 0 };
+    var cdFx = { halfTrig: 0, halfSaved: 0, resetTrig: 0, gaugeCuts: 0, ultResetTrig: 0, flatCdCuts: 0 };
     /* 신식 게이지 상태 — 쿨에 영향을 주는 부분만 씁니다(피해 배수는 avgMul 몫) */
     var gauges = (built.gauges || []).map(function (g) {
       return { style: g.style, name: g.name, def: g.def, on: g.on || [], v: 0, lastT: 0, stacks: [] };
@@ -2189,32 +2176,19 @@
         if (snipe && sDef) { spTakeArrows(start, cur); }
         cur.targets += hits.length;
         cur.fallHits += 1;
-        /* 기만 신식(눈물 2개 소모) — 궁극기를 뺀 도술 3회마다 「쿨이 도는 도술 1개」의 남은 쿨 -50%.
-           어느 도술이 걸릴지 모르므로 쿨 중인 k개의 남은 시간을 (1 - 0.5/k)배로 함께 줄여
-           무작위 1개의 평균 기댓값으로 계산합니다(simulate 와 같은 방식). */
+        /* 기만 신식(눈물 2개 소모) — 궁극기를 뺀 도술 3회마다 **그 3회째 도술 자신**의
+           이번 쿨타임이 절반이 됩니다(simulate 와 같은 규칙 · v59).
+           궁극기는 눈물을 쌓지도, 쿨이 줄지도 않습니다. */
+        var halfThis = false;
         if (fx.halfCdEvery > 0 && cur.kind !== 'ult') {
           nonUltSeq += 1;
           if (nonUltSeq % fx.halfCdEvery === 0) {
+            halfThis = true;
             cdFx.halfTrig += 1;
-            var coolCount = 0;
-            for (k = 0; k < n; k++) {
-              if (k === pick || list[k].kind === 'ult') { continue; }
-              if (list[k].readyAt > start + EPS) { coolCount += 1; }
-            }
-            if (coolCount > 0) {
-              var keepRatio = 1 - 0.5 / coolCount;
-              for (k = 0; k < n; k++) {
-                if (k === pick || list[k].kind === 'ult') { continue; }
-                if (list[k].readyAt > start + EPS) {
-                  list[k].readyAt = start + (list[k].readyAt - start) * keepRatio;
-                }
-              }
-              cdFx.halfHit += 1;
-              cdFx.halfCoolSum += coolCount;
-            }
+            cdFx.halfSaved += cur.cd * 0.5;
           }
         }
-        cur.readyAt = start + Math.max(0.1, cur.cd);
+        cur.readyAt = start + Math.max(0.1, cur.cd * (halfThis ? 0.5 : 1));
         /* 평면 쿨감 신식 — 시전할 때마다 다른 도술의 남은 쿨을 그만큼 줄입니다 */
         applyFlatCd(start, pick);
         /* 신식 게이지 — 척결 중첩·주술 구슬·절명 형상·강타 강압·기동 연쇄의 쿨 효과
