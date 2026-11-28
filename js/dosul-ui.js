@@ -181,6 +181,10 @@
         myAtk: 0,
         /* 내 기본 평타 데미지(몹 체력 추정용) · 체력 자연 회복(5초마다) */
         myAutoDmg: 0, hpRegen: 0,
+        /* 일반 요괴 추가 대미지 % — 전설 장비 추가 옵션 (v58)
+           · 소수점 2자리(0.01%)까지 · 기본 0(그대로) · 평타와 도술 전부에 곱합니다.
+           · 옛 저장분에는 없으므로 load() 에서 자동으로 0 이 들어갑니다. */
+        normalMobDmgPct: 0,
         /* 평타 속도(초마다 1방) — 385K 영상 실측 평균 0.6초 (v56) */
         autoInterval: 0.6,
         /* 몹 체력 넣는 방식 — 'hits'(직접 입력 몇 방, 기본) / 'ground'(사냥터 선택) */
@@ -371,6 +375,8 @@
     /* 헌신 회복량 — 내 공격력 × 그 도술의 강화 단계별 % (v54) */
     base.myAtk = Number(h.myAtk) || 0;
     base.myAutoDmg = Number(h.myAutoDmg) || 0;
+    /* 일반 요괴 추가 대미지 — 전설 장비 추가 옵션, 0~1000% 안전 범위 (v58) */
+    base.normalMobDmgPct = Math.max(0, Math.min(1000, Number(h.normalMobDmgPct) || 0));
     /* 평타 속도 — 인게임 실측 평균 0.6초가 기본. 레이드 쪽 「평타 속도」 칸과는 따로 둡니다 (v56) */
     base.autoInterval = Math.max(0.1, Math.min(3, Number(h.autoInterval) || HUNT_AUTO_INTERVAL));
     /* 사냥터를 골랐을 때는 예시 평타(2,475)로 환산했더라도 그 값을 결과에 남깁니다 */
@@ -1327,6 +1333,22 @@
     if (box) { box.innerHTML = huntCritLineHtml(S.hunt); }
   }
 
+  /* 일반 요괴 추가 대미지 줄 — 칸을 고치면 바로 ×배수로 바뀝니다 (v58) */
+  function updateHuntNormalLine() {
+    var box = document.getElementById('ds-hunt-normal');
+    if (box) { box.innerHTML = huntNormalNoteHtml(S.hunt, (S.hunt || {}).hpMode === 'ground'); }
+  }
+
+  /* 자사계산기 머리말 한 줄 — 마릿수·부활·평타 속도·치명타·일반 요괴 추가 대미지 */
+  function huntHintText(h) {
+    h = h || S.hunt || defaults().hunt;
+    var c = huntCritInfo(h);
+    var nm = Number(h.normalMobDmgPct) || 0;
+    return num(h.maxMobs, 0) + '마리 · ' + num(h.respawnSec, 1) + '초 · 평타 ' + num(huntAutoInterval(h), 2) +
+      '초 · 치명타 적중 ' + group(c.hit) + ' → ' + critPct(c.pct) + '%' +
+      (nm > 0 ? ' · 일반 요괴 +' + num(nm, 2) + '%' : '');
+  }
+
   function huntGroundSummary(g) {
     if (!g) { return ''; }
     var hp = g.hpMin && g.hpMax && g.hpMin !== g.hpMax
@@ -1385,16 +1407,38 @@
      · v57 — 확률은 「치명타 적중 − 요귀 저항」으로 계산한 값(huntCritInfo)을 쓰고,
        직접 입력(비경)은 50%·+20% 기준 대비 배수로 환산하므로 그 사실을 함께 적습니다. */
   function critHitsNote(hits, h) {
+    h = h || S.hunt || {};
     var c = huntCritInfo(h);
-    var cd = Number((h || S.hunt || {}).critDmgPct);
-    if (!(c.pct > 0) || !(hits > 0)) { return ''; }
-    var mult = 1 + (c.pct / 100) * (cd / 100);
-    if (!(mult > 1)) { return ''; }
-    var head = ' <em>· 치명타 ' + critPct(c.pct) + '%·+' + num(cd, 1) + '% ';
-    if ((h || S.hunt || {}).hpMode === 'ground') {
-      return head + '넣으면 <b>' + num(hits / mult, 2) + '방</b></em>';
+    var cd = Number(h.critDmgPct);
+    /* 일반 요괴 추가 대미지도 같은 줄에서 함께 곱해 «실제 몇 방»을 보여 줍니다 (v58) */
+    var nmPct = Math.max(0, Number(h.normalMobDmgPct) || 0);
+    if (!(hits > 0)) { return ''; }
+    var critMul = c.pct > 0 ? 1 + (c.pct / 100) * (cd / 100) : 1;
+    var normalMul = 1 + nmPct / 100;
+    var parts = [];
+    if (critMul > 1) { parts.push('치명타 ' + critPct(c.pct) + '%·+' + num(cd, 1) + '%'); }
+    if (nmPct > 0) { parts.push('일반 요괴 +' + num(nmPct, 2) + '%'); }
+    if (!parts.length) { return ''; }
+    var head = ' <em>· ' + parts.join(' · ') + ' ';
+    if (h.hpMode === 'ground') {
+      return head + '넣으면 <b>' + num(hits / (critMul * normalMul), 2) + '방</b></em>';
     }
-    return head + '→ 기준(50%·+20%) 대비 <b>×' + num(mult / (1 + 0.5 * 0.2), 3) + '</b></em>';
+    return head + '→ 기준(50%·+20%) 대비 <b>×' + num((critMul / (1 + 0.5 * 0.2)) * normalMul, 3) + '</b></em>';
+  }
+
+  /* 일반 요괴 추가 대미지 — 전설 장비 추가 옵션 (v58)
+     · 준형 님 요청: 「평타·도술 전부」에 적용. 그래서 평타와 도술 피해에 같은 배수로 곱합니다.
+     · 사냥터 선택: 몹 체력 ÷ 내 기본 평타는 이 옵션이 붙지 않은 기준이라 그 위에 곱하면
+       실제로 필요한 방 수가 줄어듭니다.
+     · 직접 입력: 적은 「몇 방」이 이미 그 장비를 낀 채로 센 값이면 두 번 곱해지므로 0으로 두라고 적습니다. */
+  function huntNormalNoteHtml(h, groundMode) {
+    h = h || S.hunt || {};
+    var pct = Math.max(0, Number(h.normalMobDmgPct) || 0);
+    var head = pct > 0
+      ? '일반 요괴 추가 대미지 <b>+' + num(pct, 2) + '%</b> → 평타·도술 전부 <b>×' + num(1 + pct / 100, 4) + '</b>'
+      : '전설 장비 추가 옵션 · <b>평타와 도술 전부</b>에 똑같이 적용합니다 (0%면 그대로)';
+    return head + (groundMode ? ''
+      : ' — 적은 「몇 방」이 이미 그 장비를 낀 채로 센 값이라면 <b>0</b>으로 두세요');
   }
 
   function huntGroundOptions(sel) {
@@ -1470,9 +1514,12 @@
         '    <input type="number" min="0" max="1000000" step="1" inputmode="numeric" data-hunt="critHit" value="' + num(huntCritInfo(h).hit, 0) + '"></label>',
         '  <label class="ds-hunt__f"><span>치명타 피해 <em>기본 20%</em></span>',
         '    <input type="number" min="0" max="500" step="0.1" inputmode="decimal" data-hunt="critDmgPct" value="' + num(h.critDmgPct, 1) + '"></label>',
+        '  <label class="ds-hunt__f"><span>일반 요괴 추가 대미지 <em>전설 장비 · %</em></span>',
+        '    <input type="number" min="0" max="1000" step="0.01" inputmode="decimal" data-hunt="normalMobDmgPct" placeholder="예: 15.25" value="' + num(Number(h.normalMobDmgPct) || 0, 2) + '"></label>',
         '  <label class="ds-hunt__f"><span>몹 공격 주기(초)</span>',
         '    <input type="number" min="0.2" max="30" step="0.1" inputmode="decimal" data-hunt="mobAtkInterval" value="' + num(h.mobAtkInterval, 1) + '"></label>',
         '</div>',
+        '<p class="ds-hunt__gsum" id="ds-hunt-normal">' + huntNormalNoteHtml(h, true) + '</p>',
         '<p class="ds-hunt__calc ds-hunt__crit" id="ds-hunt-crit">' + huntCritLineHtml(h) + '</p>',
         '<p class="ds-hunt__calc" id="ds-hunt-calc">' + (gh
           ? '몹 체력 <b>' + group(gh.ground.hp) + '</b> ÷ 내 평타 <b>' + group(gh.auto) + '</b> = <b>' + num(gh.hits, 2) + '방</b>' + critHitsNote(gh.hits, h)
@@ -1505,11 +1552,14 @@
         '    <input type="number" min="0" max="1000000" step="1" inputmode="numeric" data-hunt="critHit" value="' + num(huntCritInfo(h).hit, 0) + '"></label>',
         '  <label class="ds-hunt__f"><span>치명타 피해 <em>기본 20%</em></span>',
         '    <input type="number" min="0" max="500" step="0.1" inputmode="decimal" data-hunt="critDmgPct" value="' + num(h.critDmgPct, 1) + '"></label>',
+        '  <label class="ds-hunt__f"><span>일반 요괴 추가 대미지 <em>전설 장비 · %</em></span>',
+        '    <input type="number" min="0" max="1000" step="0.01" inputmode="decimal" data-hunt="normalMobDmgPct" placeholder="예: 15.25" value="' + num(Number(h.normalMobDmgPct) || 0, 2) + '"></label>',
         '  <label class="ds-hunt__f"><span>요귀 치명타 저항 <em>비경 · 모르면 0</em></span>',
         '    <input type="number" min="0" max="100000" step="1" inputmode="numeric" data-hunt="critRes" placeholder="예: 2,277" value="' + num(h.critRes, 0) + '"></label>',
         '  <label class="ds-hunt__f"><span>몹 공격 주기(초)</span>',
         '    <input type="number" min="0.2" max="30" step="0.1" inputmode="decimal" data-hunt="mobAtkInterval" value="' + num(h.mobAtkInterval, 1) + '"></label>',
         '</div>',
+        '<p class="ds-hunt__gsum" id="ds-hunt-normal">' + huntNormalNoteHtml(h, false) + '</p>',
         '<p class="ds-hunt__calc ds-hunt__crit" id="ds-hunt-crit">' + huntCritLineHtml(h) + '</p>',
         '<p class="ds-hunt__calc ds-hunt__healcalc" id="ds-hunt-heal">' + huntHealLineHtml() + '</p>',
         '<p class="ds-hunt__qnote"><b>치명타 확률</b>은 <b>(치명타 적중 − 요귀 치명타 저항) ÷ 10</b> 입니다 — 적중 1당 <b>0.1%</b> · 최대 <b>' +
@@ -1633,7 +1683,7 @@
 
   function huntCompute() {
     var cfg = huntConfig();
-    var key = [cfg.killHits, cfg.maxMobs, cfg.respawnSec, cfg.huntAutoCoeff, cfg.critPct, cfg.critDmgPct, cfg.duration,
+    var key = [cfg.killHits, cfg.maxMobs, cfg.respawnSec, cfg.huntAutoCoeff, cfg.critPct, cfg.critDmgPct, cfg.normalMobDmgPct, cfg.duration,
       cfg.slots.join(','), cfg.castOrder.join(','), JSON.stringify(cfg.toggles), JSON.stringify(cfg.enhance),
       JSON.stringify(cfg.trans), JSON.stringify(cfg.tr6), JSON.stringify(cfg.override), cfg.allDosulDmgPct,
       JSON.stringify(cfg.styleDmgPct), cfg.cdReducePct, cfg.castMode, cfg.chargeFull, cfg.autoInterval,
@@ -1653,9 +1703,7 @@
     var out = $('#ds-hunt-out');
     if (!out) { return; }
     var h = S.hunt || defaults().hunt;
-    if (el.huntHint) {
-      el.huntHint.textContent = num(h.maxMobs, 0) + '마리 · ' + num(h.respawnSec, 1) + '초 · 평타 ' + num(huntAutoInterval(h), 2) + '초 · 치명타 적중 ' + group(huntCritInfo(h).hit) + ' → ' + critPct(huntCritInfo(h).pct) + '%';
-    }
+    if (el.huntHint) { el.huntHint.textContent = huntHintText(h); }
     /* 회복량 안내 줄 — 장착·강화·공격력이 바뀌면 바로 갱신 (v54) */
     var healBox = document.getElementById('ds-hunt-heal');
     if (healBox) { healBox.innerHTML = huntHealLineHtml(); }
@@ -1801,6 +1849,9 @@
             '%</b> 기대 피해(×' + num(r.critFactor, 3) + ')를 그 위에 그대로 곱합니다. '
           : '입력한 방 수는 <b>치명타 ' + critPct(r.critPct) + '% · 치명타 피해 +' + num(r.critDmgPct, 1) +
             '%</b>에서 잰 값으로 보고 기준(50% · +20%) 대비 ×' + num(r.critFactor, 3) + ' 로 환산합니다. ') +
+        (r.normalMobDmgPct > 0
+          ? '일반 요괴 추가 대미지 <b>+' + num(r.normalMobDmgPct, 2) + '%</b>는 <b>평타와 모든 도술</b>에 똑같이 곱했습니다(×' + num(r.normalMult, 4) + '). '
+          : '') +
         '도술 피해는 <b>계수 × 레이드 계산기의 시전당 평균 배수 ÷ 평타 1타 계수(' + num(r.autoCoeff, 0) + '%)</b>이고, ' +
         '맞는 대상은 <b>남은 체력이 가장 적은 몹부터</b> 최대 대상 수만큼입니다. ' +
         '죽은 몹은 <b>죽은 순간 +' + num(r.respawnSec, 1) + '초</b>에 그 몹만 풀피로 돌아오고, 시작할 때는 ' + num(r.maxMobs, 0) + '마리가 모두 살아 있습니다' +
@@ -2616,9 +2667,12 @@
           updateHuntCritLine();
           if (S.hunt.hpMode === 'ground') { updateHuntCalcLine(); }
         }
-        if (el.huntHint) {
-          el.huntHint.textContent = num(S.hunt.maxMobs, 0) + '마리 · ' + num(S.hunt.respawnSec, 1) + '초 · 평타 ' + num(huntAutoInterval(S.hunt), 2) + '초 · 치명타 적중 ' + group(huntCritInfo(S.hunt).hit) + ' → ' + critPct(huntCritInfo(S.hunt).pct) + '%';
+        /* 일반 요괴 추가 대미지 — 아래 ×배수 줄과 「몇 방」 줄을 바로 갱신 (v58) */
+        if (hk === 'normalMobDmgPct') {
+          updateHuntNormalLine();
+          if (S.hunt.hpMode === 'ground') { updateHuntCalcLine(); }
         }
+        if (el.huntHint) { el.huntHint.textContent = huntHintText(S.hunt); }
         recomputeSoon();
         return;
       }

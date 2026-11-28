@@ -1631,6 +1631,7 @@
      · 몹 체력 = 평타 N방 = N × 평타 1타 (계산 단위 「타」)
      · 평타는 평균 0.6초마다 1방 — 준형 님 385K 영상 0.25초 프레임 실측(0.50·1.00·1.50·2.25초) (v56)
      · 사냥터 선택이면 몹 체력이 「치명타 없는 평타」 기준이라 치명타 기대 피해를 온전히 곱함 (v56)
+     · 일반 요괴 추가 대미지(전설 장비 옵션)는 평타와 모든 도술에 똑같이 곱함 (v58)
      · 도술 1회가 한 마리에게 넣는 피해 = (계수 × 평균 배수 ÷ 평타 1타 계수) 타
      · 맞는 대상 = 살아 있는 몹 가운데 남은 체력이 가장 적은 몹부터 최대 대상 수만큼
      · 죽은 몹은 죽은 순간 + respawnSec 초에 그 몹만 풀피로 부활(개별 리스폰)
@@ -1704,6 +1705,13 @@
       /* 내 기본 평타 데미지 — 몹 체력 추정에만 쓰고 계산 자체는 평타 계수 그대로입니다.
          사냥터를 골랐을 때는 killHits 를 「몹 체력 ÷ 내 평타」로 만들어 넘깁니다. */
       myAutoDmg: clampNum(c.myAutoDmg, 0, 1e9, 0),
+      /* 일반 요괴 추가 대미지 % — 전설 장비의 추가 옵션 (v58)
+         · 준형 님: 「나중에 전설 장비 끼게 되면 추가 옵션으로 그것도 추가되거든
+           그건 소수점 2자리까지 있더라구」 → 0.01% 단위로 받습니다.
+         · 「전부 다 적용」 — 평타와 모든 도술(일반·궁극기·연계기) 피해에 똑같이 곱합니다.
+         · 몹 체력(몇 방)은 이 옵션이 붙지 않은 「내 기본 평타」 기준이라, 그 위에 곱하면
+           실제로 필요한 방 수가 줄고 처치 속도가 올라갑니다. */
+      normalMobDmgPct: clampNum(c.normalMobDmgPct, 0, 1000, 0),
       groundInfo: c.groundInfo || null,
       /* 체력 자연 회복 — 인게임처럼 5.0초마다 한 번, 입력한 만큼 즉시 회복합니다.
          (초당으로 나눠 붙이지 않고 5·10·15…초 시점에 한꺼번에) */
@@ -1719,6 +1727,8 @@
     var critBase = 1 + (cfg.critPct / 100) * (cfg.critDmgPct / 100);
     var critMode = cfg.groundInfo ? 'full' : 'relative';
     var critFactor = critMode === 'full' ? critBase : critBase / (1 + 0.5 * 0.2);
+    /* 일반 요괴 추가 대미지 (v58) — 평타·도술 전부에 같은 배수로 곱합니다 */
+    var normalMult = 1 + cfg.normalMobDmgPct / 100;   /* normalMobDmgPct 는 0 이상으로 정리됨 */
     var duration = cfg.duration;
 
     var built = buildEntries(cfg);
@@ -2143,7 +2153,7 @@
         var alive = aliveList();
         var cap = Math.min(cur.tgt || 1, alive.length);
         var hits = cap > 0 ? alive.slice(0, cap) : [];
-        var baseDmg = ((cur.coeff || 0) + (cur.chain ? cur.chain.coeff : 0)) * (avgMul[cur.id] || 1) / cfg.huntAuto * critFactor;
+        var baseDmg = ((cur.coeff || 0) + (cur.chain ? cur.chain.coeff : 0)) * (avgMul[cur.id] || 1) / cfg.huntAuto * critFactor * normalMult;
         var fallMul = huntFalloffMul(cur.id, hits.length);
         var focMul = cur.focusD ? (1 + (cur.focusD / 100) * huntFocusShape(cur.id, hits.length)) : 1;
         var perHit = baseDmg * fallMul * focMul;
@@ -2284,7 +2294,7 @@
           aMul *= 1 + (sDef.aimPerStack || 0) * aimN;
           aimAutoHits += 1;
         }
-        if (aliveA.length) { applyHit([aliveA[0]], critFactor * aMul, null, at); }
+        if (aliveA.length) { applyHit([aliveA[0]], critFactor * aMul * normalMult, null, at); }
         else { autoMiss += 1; }
         at += iv;
       }
@@ -2393,6 +2403,9 @@
       critDmgPct: cfg.critDmgPct,
       critFactor: round(critFactor, 4),
       critMode: critMode,
+      /* 일반 요괴 추가 대미지 — 화면에 「+15.25% · ×1.1525」로 표기 (v58) */
+      normalMobDmgPct: cfg.normalMobDmgPct,
+      normalMult: round(normalMult, 4),
       mobHpUnits: round(mobHp, 2),
       /* 내 기본 평타 데미지를 적었으면 몹 1마리 체력을 어림합니다 (평타 몇 방 × 내 평타) */
       myAutoDmg: cfg.myAutoDmg,
